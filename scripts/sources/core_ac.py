@@ -102,6 +102,6 @@ class CoreAcSource(SourceSearcher):
                     "topics": [],  # No topic classification in CORE free tier
                     "is_oa": bool(oa_url),
                     "oa_url": oa_url,
-                    "url": "",
+                    "url": download_url or oa_url or "",
                 })
         return results

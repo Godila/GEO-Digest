@@ -54,14 +54,14 @@ arxiv_specific_queries:
   - "unsupervised learning landslide detection"
   - "remote sensing deep learning soil contamination"
 
-# ── Scoring Weights ───────────────────────────────────
+# ── Scoring Weights (keys MUST match score_article() in digest.py) ──
 scoring_weights:
   methodological_transferability: 0.25
-  geo_relevance: 0.25
-  thematic_alignment: 0.20
+  geographic_analogy: 0.25
+  thematic_relevance: 0.20
   publication_potential: 0.15
   practical_output: 0.10
-  novelty: 0.05
+  novelty_of_approach: 0.05
 
 # ── Source Reliability Weights (multiplier for total score) ──
 source_weights:

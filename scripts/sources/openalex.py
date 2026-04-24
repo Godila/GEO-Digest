@@ -95,8 +95,8 @@ class OpenAlexSource(SourceSearcher):
                     "citations": w.get("cited_by_count", 0),
                     "references": w.get("referenced_works_count", 0),
                     "topics": topics,
-                    "is_oa": oa.get("oa_url") is not None,
-                    "oa_url": oa.get("oa_url", ""),
+                    "is_oa": bool(oa.get("is_oa") or oa.get("oa_url")),
+                    "oa_url": oa.get("oa_url", "") or "",
                     "url": w.get("id", ""),
                 })
         return results

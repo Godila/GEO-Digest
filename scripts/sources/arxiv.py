@@ -26,12 +26,15 @@ class ArxivSource(SourceSearcher):
     def rate_limit(self) -> float:
         return 2.5  # arXiv recommends 3s; 2.5s is safe for burst
 
-    # Categories we search within
+    # Categories we search within — expanded for broader ML/geophysics coverage
     CATEGORIES = [
         "physics.geo-ph",       # Geophysics
         "cond-mat.stat-mech",   # Statistical mechanics
         "cs.LG",                # Machine Learning
+        "stat.ML",              # Statistics / Machine Learning (NEW)
+        "cs.CV",                # Computer Vision — satellite/remote sensing (NEW)
         "eess.GV",              # Geoscience & Remote Sensing
+        "eess.SP",              # Signal Processing — seismic/DAS (NEW)
     ]
 
     def _build_query(self, query: str) -> str:

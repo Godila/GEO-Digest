@@ -8,7 +8,6 @@ import json
 import os
 import sys
 import time
-import hashlib
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -58,13 +57,9 @@ def add_seen_dois(dois: list[str]):
             f.write(doi + "\n")
 
 
-def title_hash(title: str, year: str) -> str:
-    """Fallback ID for articles without DOI."""
-    return hashlib.md5(f"{title}|{year}".encode()).hexdigest()[:12]
-
+# title_hash imported from sources.base (single source of truth)
 
 # ── Articles DB (JSONL) ────────────────────────────────────────
-def save_article(record: dict):
     """Append article record to JSONL."""
     record["_saved_at"] = datetime.now(timezone.utc).isoformat()
     with open(ARTICLES_DB, "a", encoding="utf-8") as f:
@@ -153,43 +148,73 @@ def lookup_unpaywall(doi: str, email: str = None) -> dict:
 
 
 # ── Relevance Gate ───────────────────────────────────────────────
+# Covers ALL 7 topic domains from config.yaml.
+# Terms are ordered by topic domain for maintainability.
 GEO_KEYWORDS = [
-    # Seismology
+    # ── Seismology & monitoring ──────────────────────────────
     "seismic", "earthquake", "aftershock", "fault", "tectonic", "magnitude",
     "hypocenter", "epicenter", "p-wave", "s-wave", "ground motion", "seismogram",
     "radon", "electromagnetic precursor",
-    # Geophysics
+    "seismic hazard", "peak ground acceleration", "site response",
+    "basin resonance", "tectonic deformation", "crustal stress",
+    "fault rupture", "precursory", "seismic sequence",
+
+    # ── Geophysics & geothermal ───────────────────────────────
     "geophysical", "gravity", "magnetic", "resistivity", "velocity model",
     "seismic reflection", "seismic refraction", "well logging", "borehole",
-    "mud volcano", "geothermal",
-    # Landslide/hazards
+    "mud volcano", "geothermal", "geothermal gradient",
+    "methane emission", "paroxysm", "pore pressure", "subsurface fluid",
+
+    # ── Landslide & slope hazards ────────────────────────────
     "landslide", "slope stability", "debris flow", "rockfall", "mass movement",
     "hillslope", "soil slip", "creep", "liquefaction",
-    # Geoecology / mining
+
+    # ── Hydrology & water resources ──────────────────────────
+    "groundwater", "aquifer", "water quality", "vulnerability assessment",
+    "recharge", "drawdown", "infiltration", "hydrochemistry",
+    "hydrology", "watershed", "river basin", "catchment",
+    "precipitation", "evapotranspiration", "runoff",
+
+    # ── Geoecology / contamination / mining ───────────────────
     "heavy metal", "contamination", "soil pollution", "mine tailing",
     "remediation", "phytoremediation", "bioavailability", "geochemical",
     "mining impact", "environmental assessment", "ecological risk",
-    # Climate / remote sensing
+    "ecotoxicology", "bioaccumulation", "phytostabilization",
+    "contaminant transport", "adsorption", "speciation", "bioaccessibility",
+    "pfas", "forever chemical", "microplastic",
+
+    # ── Climate / remote sensing / surface processes ──────────
     "climate trend", "temperature trend", "precipitation change", "aridification",
     "remote sensing", "satellite", "sentinel", "landsat", "inSAR", "insar",
     "ndvi", "land cover", "drought monitoring", "atmospheric monitoring",
     "aerosol", "no2", "pm2.5",
-    # Oil & gas
+    "permafrost", "deglaciation", "cryosphere",
+    "sea-level rise", "storm surge", "coastal protection", "wave action",
+    "soil erosion", "sediment yield", "coastal erosion",
+
+    # ── Oil & gas / reservoir ────────────────────────────────
     "hydrocarbon", "petroleum", "reservoir", "permeability", "porosity",
     "well test", "basin modeling", "sedimentary basin", "fluid dynamics",
     "formation damage", "near-wellbore",
-    # Mineralogy
+
+    # ── Mineralogy / petrology ───────────────────────────────
     "mineral", "granite", "zircon", "titanite", "apatite", "geochronolog",
     "u-pb dating", "magmatic belt", "provenance",
-    # General geo
-    "geological", "geomorphology", "hydrology", "watershed", "river basin",
-    "mountain region", "orogeny", "crustal", "subsurface", "stratigraph",
+
+    # ── General geological ───────────────────────────────────
+    "geological", "geomorphology", "subsurface", "stratigraph",
     "quaternary", "holocene", "pleistocene",
+    "mountain region", "orogeny", "crustal",
 ]
 
 
 def passes_relevance_gate(article: dict) -> bool:
-    """Filter out papers that are clearly off-topic."""
+    """Filter out papers that are clearly off-topic.
+
+    Relaxed: 1 keyword hit is enough (was 2). Articles that came from
+    our targeted topic queries get automatic pass — the search engine
+    already determined relevance.
+    """
     text = (
         article.get("title", "") + " " +
         article.get("abstract", "") + " " +
@@ -197,11 +222,15 @@ def passes_relevance_gate(article: dict) -> bool:
         " ".join(article.get("topics", []))
     ).lower()
 
+    # Auto-pass: if article has a topic tag from our config, trust the search
+    if article.get("_topic_key") or article.get("_topic_name_ru"):
+        return True
+
     hits = sum(1 for kw in GEO_KEYWORDS if kw in text)
 
-    # Need at least 2 geo keywords OR 1 very specific one
+    # Need at least 1 geo keyword OR 1 very specific one (len > 10)
     strong_hits = [kw for kw in GEO_KEYWORDS if kw in text and len(kw) > 10]
-    return hits >= 2 or len(strong_hits) >= 1
+    return hits >= 1 or len(strong_hits) >= 1
 
 
 # ── Scoring Engine ─────────────────────────────────────────────
@@ -260,7 +289,7 @@ def score_article(article: dict, config: dict) -> dict:
     Score an article on 6 criteria.
     Returns scores dict + total + explanations (for UI transparency).
     """
-    weights = config.get("scoring", {})
+    weights = config.get("scoring_weights", {})
     text_parts = [
         article.get("title", ""),
         article.get("abstract", ""),
@@ -305,7 +334,7 @@ def score_article(article: dict, config: dict) -> dict:
     explanations["transferability"] = "; ".join(trans_parts) if trans_parts else "Методы не идентифицированы"
 
     # 2. Geographic analogy (20%) — [FIX C] улучшенная логика
-    geo_score = 0.0
+    geo_score = 0.2  # Floor: unknown region ≠ irrelevant (was 0.0)
     geo_hits = find_matches(ANALOGOUS_REGIONS_KEYWORDS, all_text)
     direct_russia = any(kw in all_text for kw in ["russia", "caucasus", "post-soviet"])
 
@@ -348,10 +377,22 @@ def score_article(article: dict, config: dict) -> dict:
 
     # 3. Thematic relevance (20%) — [FIX D] расширенный диапазон
     # Базовый score зависит от качества совпадения топика
-    theme_score = 0.4  # [FIX D] было 0.7 → теперь 0.4
+    theme_score = 0.55  # Floor: passed gate = somewhat relevant (was 0.4)
 
     # Бонус за точное совпадение ключевых слов из запроса
-    topic_query_text = " ".join(config.get("topics", [])).lower() if isinstance(config.get("topics", list), list) else ""
+    # [FIX] topics в config.yaml — это dict {topic_key: {queries: [...], ...}}
+    #       а не список строк! Извлекаем queries из каждого топика.
+    topics_cfg = config.get("topics", {})
+    if isinstance(topics_cfg, dict):
+        query_parts = []
+        for tk, tv in topics_cfg.items():
+            if isinstance(tv, dict):
+                query_parts.extend(tv.get("queries", []))
+            elif isinstance(tv, list):
+                query_parts.extend(tv)
+        topic_query_text = " ".join(query_parts).lower()
+    else:
+        topic_query_text = str(topics_cfg).lower() if topics_cfg else ""
     if topic_query_text:
         query_in_title = sum(1 for q in topic_query_text.split() if len(q) > 3 and q in title_lower)
         query_in_abstract = sum(1 for q in topic_query_text.split() if len(q) > 3 and q in abstract)
@@ -461,6 +502,17 @@ def score_article(article: dict, config: dict) -> dict:
         "europe_pmc":       1.00,
     }
     src_weight = SOURCE_WEIGHTS.get(src, 1.0)
+
+    # Metadata-poverty compensation: sources like DOAJ/CORE lack citations
+    # and institutions. Don't penalize them for what the API doesn't provide.
+    poor_metadata = (
+        (src in ("doaj", "core_ac", "arxiv")) and
+        article.get("citations", 0) == 0 and
+        not article.get("institutions")
+    )
+    if poor_metadata:
+        total += 0.08  # small lift to offset missing citation/institution scores
+
     total_adj = min(1.0, total * src_weight)  # cap at 1.0
 
     article["scores"] = {
@@ -968,9 +1020,9 @@ def build_digest(config: dict) -> str:
     Returns formatted digest string.
     """
     topics_cfg = config.get("topics", {})
-    digest_cfg = config.get("digest", {})
-    n_articles = digest_cfg.get("articles_per_run", 4)
-    min_year = digest_cfg.get("min_year", 2023)
+    # Read from top-level config (NOT nested under "digest" key)
+    n_articles = config.get("articles_per_run", 25)
+    min_year = config.get("min_year", 2023)
 
     print(f"[*] Loading seen DOIs...")
     seen = load_seen_dois()
@@ -992,6 +1044,7 @@ def build_digest(config: dict) -> str:
     _source_fails = {}         # source -> consecutive fail count
     # ── Search via sources module ─────────────────────────────
     from sources import get_active_sources, search_all_sources, dedup_and_merge
+    from sources.base import title_hash
 
     active_sources = get_active_sources()
     src_names = [s.name() for s in active_sources]
@@ -1066,19 +1119,66 @@ def build_digest(config: dict) -> str:
     # Sort by total score descending
     candidates.sort(key=lambda x: x.get("scores", {}).get("total", 0), reverse=True)
 
-    # Select top N, ensure diversity (max 2 per topic)
+    # Select top N with diversity-aware capping
+    n_topics = len(topics_cfg)
+    per_topic_cap = max(3, n_articles // n_topics) if n_topics > 0 else n_articles
+    quality_floor = 0.20  # minimum total score to be selected
+
     selected = []
     topic_counts = {}
     for art in candidates:
         tk = art.get("_topic_key", "")
-        if topic_counts.get(tk, 0) >= 2 and len(topics_cfg) > 2:
+        score = art.get("scores", {}).get("total", 0)
+
+        # Quality floor: skip clearly irrelevant articles
+        if score < quality_floor:
             continue
+
+        # Dynamic topic cap — but allow overflow for exceptional articles
+        at_cap = topic_counts.get(tk, 0) >= per_topic_cap
+        is_exceptional = score >= 0.65  # top-tier articles always get in
+        if at_cap and not is_exceptional and n_topics > 2:
+            continue
+
         selected.append(art)
         topic_counts[tk] = topic_counts.get(tk, 0) + 1
         if len(selected) >= n_articles:
             break
 
-    print(f"[*] Selected: {len(selected)} articles")
+    print(f"[*] Selected: {len(selected)} articles (cap={per_topic_cap}/topic, floor={quality_floor})")
+
+    # ── Funnel Stats (observability) ───────────────────────────
+    from collections import Counter
+    src_raw = Counter(a.get("source", "?") for a in all_candidates)
+    src_deduped = Counter(a.get("source", "?") for a in candidates)
+    src_selected = Counter(a.get("source", "?") for a in selected)
+    topic_sel = Counter(a.get("_topic_key", "?") for a in selected)
+
+    stats = {
+        "funnel": {
+            "raw_results": len(all_candidates),
+            "after_dedup": len(candidates),
+            "after_relevance_gate_filtered": before_gate - len(candidates),
+            "scored": len(candidates),
+            "selected": len(selected),
+            "target": n_articles,
+        },
+        "by_source": {src: {"raw": src_raw.get(src, 0), "deduped": src_deduped.get(src, 0), "selected": src_selected.get(src, 0)} for src in sorted(set(list(src_raw.keys()) + list(src_selected.keys())))},
+        "by_topic_selected": dict(topic_sel.most_common()),
+        "config": {"n_articles": n_articles, "per_topic_cap": per_topic_cap, "quality_floor": quality_floor, "n_topics": n_topics},
+        "score_range": {"min": round(min((a.get("scores", {}).get("total", 0) for a in selected), default=0), 3), "max": round(max((a.get("scores", {}).get("total", 0) for a in selected), default=0), 3)} if selected else {},
+    }
+    print(f"[*] FUNNEL: {json.dumps(stats, ensure_ascii=False, indent=2)}")
+    # Save stats file for dashboard
+    try:
+        Path(DATA_DIR / "last_run_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
+
+    # Per-topic selection detail
+    if topic_sel:
+        top_parts = [f"{k}:{v}" for k, v in topic_sel.most_common()]
+        print(f"[*] By topic: {', '.join(top_parts)}")
 
     # LLM Enrichment — generate summaries, analysis, find similar articles
     print("\n[*] LLM Enrichment — generating article summaries...")
