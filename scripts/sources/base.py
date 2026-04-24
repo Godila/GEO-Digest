@@ -102,9 +102,20 @@ FIELD_PRIORITY = {
 
 
 def title_hash(title: str, year: str = "") -> str:
-    """Generate stable ID from title + year for dedup without DOI."""
+    """Generate stable ID from title + year for dedup without DOI.
+
+    Canonical form: lowercase, stripped, normalized year.
+    Year normalization: None/""/"unknown"/"n.d." → "" (empty).
+    This ensures same article gets same hash regardless of source quirks.
+    """
     import hashlib
-    canonical = f"{(title or '').strip().lower()}|{year}"
+
+    # Normalize year — treat missing/invalid as empty
+    _year = str(year).strip().lower() if year else ""
+    if _year in ("none", "null", "unknown", "n.d.", "n/a", "-"):
+        _year = ""
+
+    canonical = f"{(title or '').strip().lower()}|{_year}"
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
