@@ -215,6 +215,11 @@
         .tag-topic { border-color: rgba(88,166,255,.3); color: var(--accent); }
         .tag-type { border-color: rgba(188,140,255,.3); color: var(--purple); }
         .tag-oa { border-color: rgba(63,185,80,.3); color: var(--green); }
+        .tag-new { border-color: rgba(255,170,0,.4); color: #ffaa00; font-weight: 700; animation: pulse-new 2s infinite; }
+        @keyframes pulse-new {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .6; }
+        }
         .card-abstract {
             font-size: 11.5px;
             line-height: 1.5;
@@ -707,6 +712,8 @@
                 <select class="filter-select" id="fSort" onchange="loadArticles()">
                     <option value="total_score">Сорт: Балл ↓</option>
                     <option value="total_score_asc">Сорт: Балл ↑</option>
+                    <option value="_saved_at">Сорт: Дата ↓ (новые)</option>
+                    <option value="_saved_at_asc">Сорт: Дата ↑ (старые)</option>
                     <option value="year">Сорт: Год ↓</option>
                     <option value="citations">Сорт: Цитирования ↓</option>
                 </select>
@@ -1036,12 +1043,31 @@ function renderArticles(articles) {
             ? a.llm_summary.split('\n').filter(l => l.trim() && !l.match(/^[📝🔬🇷💡]/))[0]
             : (a.abstract_ru || a.abstract || '').substring(0, 120);
 
+        // Дата добавления
+        const savedAt = a._saved_at || a.added_at || '';
+        const isNew = savedAt ? (Date.now() - new Date(savedAt).getTime()) < 86400000 : false;
+        let dateStr = '';
+        if (savedAt) {
+            try {
+                const d = new Date(savedAt);
+                const now = new Date();
+                const diffMs = now - d;
+                const diffH = Math.floor(diffMs / 3600000);
+                if (diffH < 1) dateStr = 'только что';
+                else if (diffH < 24) dateStr = `${diffH}ч назад`;
+                else if (diffH < 48) dateStr = 'вчера';
+                else dateStr = d.toLocaleDateString('ru-RU', {day:'numeric', month:'short'});
+            } catch { dateStr = ''; }
+        }
+
         return `<div class="article-card" onclick="openArticleModal(${i})" data-id="${i}">
             <div class="card-header">
                 <div class="card-title">${esc(displayTitle)}</div>
                 <div class="card-score ${scoreCls}">${total.toFixed(1)}</div>
+                ${isNew ? '<span class="tag tag-new">НОВЫЙ</span>' : ''}
             </div>
             <div class="card-meta">
+                ${dateStr ? `<span>📅 ${esc(dateStr)}</span>` : ''}
                 <span>${a.year || '?'}</span>
                 <span>${esc((a.journal || '').split(';')[0] || '')}</span>
                 ${a.citations ? `<span>📎${a.citations}</span>` : ''}

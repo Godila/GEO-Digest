@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # ── Paths ───────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ def load_graph() -> dict:
 #  DATA ENDPOINTS (read from shared volume, no worker needed)
 # ══════════════════════════════════════════════════════════════════
 
-@app.get("/api/articles")
+@app.get("/api/articles", response_class=JSONResponse)
 async def api_articles(
     sort_by: str = Query("total_score"),
     order: str = Query("desc"),
@@ -123,13 +123,37 @@ async def api_articles(
         "score_transferability", "score_geographic",
         "score_thematic", "score_publication",
     }
-    sort_field = sort_by if sort_by in valid_fields else "_total_score"
-    articles.sort(key=lambda a: a.get(sort_field, 0), reverse=reverse)
+    # Strip _asc/_desc suffix from sort field name, override order
+    if sort_by.endswith("_asc"):
+        reverse = False
+    elif sort_by.endswith("_desc"):
+        reverse = True
+    sort_base = sort_by.rsplit("_asc", 1)[0].rsplit("_desc", 1)[0]
+    sort_field = sort_base if sort_base in valid_fields else "_total_score"
+
+    def _sort_key(a):
+        val = a.get(sort_field)
+        if sort_field == "_saved_at" and val:
+            try:
+                return val  # ISO string sorts lexicographically = chronologically
+            except:
+                return ""
+        return val if val is not None else 0
+
+    articles.sort(key=_sort_key, reverse=reverse)
 
     total = len(articles)
     articles = articles[offset : offset + limit]
 
-    return {"total": total, "offset": offset, "limit": limit, "articles": articles}
+    # Use raw Response to bypass FastAPI's jsonable_encoder
+    # (which strips datetime-like string fields like _saved_at)
+    return Response(
+        content=json.dumps(
+            {"total": total, "offset": offset, "limit": limit, "articles": articles},
+            ensure_ascii=False,
+        ),
+        media_type="application/json",
+    )
 
 
 @app.get("/api/articles/{article_id}")

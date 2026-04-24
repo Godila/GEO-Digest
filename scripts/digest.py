@@ -536,6 +536,83 @@ _VALIDATE = {
 }
 
 
+def _extract_fallback_title(response: str) -> str:
+    """
+    Try to extract a Russian title from unstructured LLM response.
+    
+    Patterns tried (in order):
+    1. First line that looks like a title (Russian, 10-200 chars, no emoji prefix)
+    2. Text between start and first === or 📝 marker
+    """
+    if not response:
+        return ""
+    
+    lines = response.strip().split("\n")
+    
+    # Pattern 1: first substantive Russian line (before any section marker)
+    for line in lines:
+        stripped = line.strip()
+        # Skip empty, markers, emoji-prefixed, too short/long
+        if not stripped:
+            continue
+        if stripped.startswith("===") or stripped.startswith("📝") or \
+           stripped.startswith("🔬") or stripped.startswith("🇷🇺") or \
+           stripped.startswith("💡") or stripped.startswith("-"):
+            continue
+        if len(stripped) < 10 or len(stripped) > 300:
+            continue
+        # Must contain Cyrillic (Russian text)
+        if any('\u0400' <= c <= '\u04FF' for c in stripped):
+            return stripped
+    
+    return ""
+
+
+def _translate_title_fallback(title_en: str) -> str:
+    """
+    Fallback: call MiniMax to translate just the article title.
+    Used when main enrichment didn't produce title_ru.
+    """
+    api_key = os.environ.get("MINIMAX_API_KEY", "")
+    if not api_key or not title_en:
+        return ""
+    
+    prompt = f"""Переведи название научной статьи на русский язык (1 предложение, научно):
+
+{title_en}
+
+Ответ только переводом, без пояснений:"""
+    
+    try:
+        data = json.dumps({
+            "model": "MiniMax-Text-01",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 150,
+            "temperature": 0.3,
+        }).encode()
+        
+        req = urllib.request.Request(
+            "https://api.minimax.chat/v1/text/chatcompletion_v2",
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            translated = (result.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+            
+            if translated and len(translated) >= 10:
+                print(f"  [LLM] ✅ Fallback title: {translated[:60]}...", file=sys.stderr)
+                return translated
+    except Exception as e:
+        print(f"  [LLM] ⚠ Fallback title translation failed: {e}", file=sys.stderr)
+    
+    return ""
+
+
 def _parse_llm_response(response: str) -> dict:
     """
     Parse structured LLM response into sections using regex.
@@ -558,7 +635,12 @@ def _parse_llm_response(response: str) -> dict:
     result["title_ru"] = raw.get("title_ru", "")
     result["abstract_ru"] = raw.get("abstract_ru", "")
     result["overview"] = raw.get("overview", "")
-    
+
+    # Fallback: if no structured title, try to extract from raw response
+    # Some LLM responses skip ===ЗАГОЛОВОК_RU=== but still have Russian text
+    if not result["title_ru"] and response:
+        result["title_ru"] = _extract_fallback_title(response)
+
     # Parse topics: split by comma or newline/bullet
     topics_raw = raw.get("topics_ru", "")
     if topics_raw:
@@ -675,6 +757,14 @@ def enrich_article(article: dict, db_articles: list[dict]) -> dict:
 
     if title_ru:
         enriched["title_ru"] = title_ru
+    elif not title_ru and article.get("title"):
+        # Fallback: translate English title if LLM didn't produce Russian title
+        fb_title = _translate_title_fallback(article["title"])
+        if fb_title:
+            enriched["title_ru"] = fb_title
+        else:
+            print(f"  [LLM] ⚠ No title_ru (no fallback either): {article['title'][:40]}...",
+                  file=sys.stderr)
     if abstract_ru:
         enriched["abstract_ru"] = abstract_ru
     if topics_ru:
