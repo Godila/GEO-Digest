@@ -356,15 +356,96 @@ def _poll_job_log(log_file: Path, keywords: dict, job_type: str = "digest"):
             }
             pct = pct_map.get(job_type, {}).get(step, 50)
 
-            # Extract last N meaningful lines as log_lines
-            log_lines = [l.strip() for l in lines[-30:] if l.strip()]
+            # Smart log extraction for UI:
+            # - Take more lines (80 vs 30) for better context
+            # - Filter out repetitive noise (Unpaywall 404s for arXiv)
+            # - Keep meaningful lines: steps, results, topics, scores, errors
+            raw_tail = [l.strip() for l in lines[-80:] if l.strip()]
+            log_lines = _filter_log_lines(raw_tail, job_type)
 
             _update_job(job_type,
                 progress={"step": step, "message": msg, "pct": pct},
-                log_lines=log_lines[-15:],
+                log_lines=log_lines[-40:],  # send up to 40 filtered lines
             )
     except Exception:
         pass  # don't crash the poller
+
+
+def _filter_log_lines(lines: list[str], job_type: str = "digest") -> list[str]:
+    """Filter log lines for UI display.
+
+    Removes repetitive noise and keeps meaningful information:
+    - Collapses consecutive identical error patterns into summaries
+    - Always keeps step markers ([*], [STEP], topic headers)
+    - Keeps result counts and key metrics
+    - Limits noise to max 3 consecutive same-type errors
+    """
+    import re
+
+    filtered = []
+    consecutive_errors = 0
+    prev_error_type = None
+    error_summary_count = 0
+
+    # Patterns to classify lines
+    STEP_MARKERS = ("[*]", "[STEP]", "[GRAPH_STEP]", "Topic:", "GEO-ECOLOGY",
+                    "Started:", "Total raw", "After dedup", "Selected:",
+                    "relevance gate", "Scoring", "LLM Enrichment",
+                    "[LLM]", "DIGEST COMPLETE", "Delivery", "FUNNEL")
+    RESULT_PATTERNS = ("results", "articles", "saved", "scored",
+                       "enriched", "selected", "skipped")
+
+    for line in lines:
+        # Always keep important markers
+        if any(mk in line for mk in STEP_MARKERS):
+            filtered.append(line)
+            consecutive_errors = 0
+            prev_error_type = None
+            continue
+
+        # Keep result/summary lines
+        if any(rp in line.lower() for rp in RESULT_PATTERNS):
+            filtered.append(line)
+            consecutive_errors = 0
+            prev_error_type = None
+            continue
+
+        # Classify error/noise lines
+        is_unpaywall_404 = "Unpaywall error" in line and "404" in line
+        is_rate_limit = "429" in line or "Too Many Requests" in line
+        is_server_error = "500" in line and "Internal Server Error" in line
+        is_generic_error = ("error" in line.lower() or "Error" in line
+                           or "Traceback" in line)
+
+        if is_unpaywall_404 or is_rate_limit or is_server_error:
+            error_type = "unpaywall_404" if is_unpaywall_404 else \
+                        "rate_limit" if is_rate_limit else "server_error"
+
+            if error_type == prev_error_type:
+                consecutive_errors += 1
+                # Only show first 3 of each consecutive error type
+                if consecutive_errors <= 3:
+                    filtered.append(line)
+                elif consecutive_errors == 4:
+                    # Replace 4th+ with summary note
+                    filtered.append(f"  ... (+{len(lines) - len(filtered)} more {error_type} messages suppressed)")
+            else:
+                # New error type — reset counter
+                prev_error_type = error_type
+                consecutive_errors = 1
+                filtered.append(line)
+        elif is_generic_error:
+            # Keep genuine errors (tracebacks, real failures)
+            filtered.append(line)
+            consecutive_errors = 0
+            prev_error_type = None
+        else:
+            # Regular info line — keep it
+            filtered.append(line)
+            consecutive_errors = 0
+            prev_error_type = None
+
+    return filtered
 
 
 # ── API Endpoints ──────────────────────────────────────────────

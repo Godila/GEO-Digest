@@ -268,7 +268,7 @@ async def api_digest_status():
         try:
             file_status = json.loads(STATUS_FILE.read_text())
             worker_status["progress"] = file_status.get("progress", {})
-            worker_status["log_lines"] = file_status.get("log_lines", [])[-30:]
+            worker_status["log_lines"] = file_status.get("log_lines", [])[-50:]
         except Exception:
             pass
 
