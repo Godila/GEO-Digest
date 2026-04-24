@@ -15,6 +15,9 @@ seen_dois.txt.bak
 run_status.json
 run_status.json.lock
 
+# Shared data volume (runtime)
+data/
+
 # ── Run logs & artifacts ───────────────────────
 runs/
 graphify-out/

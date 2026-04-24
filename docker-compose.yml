@@ -1,19 +1,22 @@
-version: "3.8"
-
 services:
+  # ── Dashboard (pure UI) ──────────────────────────────
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dashboard
     container_name: geo-digest-dashboard
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      - .:/app
-      - /root/.hermes/geo_digest/.env:/app/.env:ro
+      - geo-data:/app/data:rw
+      - ./dashboard/templates:/app/dashboard/templates:ro
+      - ./dashboard/static:/app/dashboard/static:ro
     environment:
       - DASHBOARD_PORT=3000
+      - WORKER_URL=http://worker:3001
+    depends_on:
+      - worker
     networks:
       - geo-net
     healthcheck:
@@ -22,6 +25,29 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Worker (compute backend) ────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: geo-digest-worker
+    restart: unless-stopped
+    volumes:
+      - geo-data:/app/data:rw
+      - .:/app/src:ro           # source code (scripts, config)
+      - /root/.hermes/geo_digest/.env:/app/.env:ro
+    environment:
+      - WORKER_PORT=3001
+    networks:
+      - geo-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── Caddy (reverse proxy) ──────────────────────────
   caddy:
     image: caddy:2-alpine
     container_name: geo-digest-caddy
@@ -39,6 +65,8 @@ services:
       - geo-net
 
 volumes:
+  geo-data:
+    external: false
   caddy_data:
   caddy_config:
 
