@@ -974,7 +974,17 @@ def build_digest(config: dict) -> str:
 
     print(f"[*] Loading seen DOIs...")
     seen = load_seen_dois()
-    print(f"[*] Already shown: {len(seen)} articles")
+
+    # Also load DOIs from existing articles.jsonl (catch orphans from crashed runs)
+    existing = load_articles()
+    for art in existing:
+        doi = art.get("doi", "")
+        if doi:
+            seen.add(doi)
+        else:
+            seen.add(title_hash(art.get("title", ""), str(art.get("year", ""))))
+
+    print(f"[*] Already shown: {len(seen)} articles (seen_dois.txt + articles.jsonl)")
 
     # ── Source health tracking ─────────────────────────────────
     # Skip sources that return rate-limit / server errors consecutively
@@ -1099,8 +1109,12 @@ def build_digest(config: dict) -> str:
         else:
             new_dois.append(title_hash(art.get("title", ""), str(art.get("year", ""))))
 
-        # Save to DB
+        # Save to DB (atomic: record DOI in seen_dois immediately)
         save_article(art)
+        if doi:
+            add_seen_dois([doi])
+        else:
+            add_seen_dois([title_hash(art.get("title", ""), str(art.get("year", "")))])
 
         # Save article text for Graphify
         art_text = f"""# {art.get('title', 'N/A')}
@@ -1126,8 +1140,8 @@ def build_digest(config: dict) -> str:
         art_file = ARTICLES_DIR / f"{safe_title}.md"
         art_file.write_text(art_text, encoding="utf-8")
 
-    # Update seen DOIs
-    add_seen_dois(new_dois)
+    # (seen DOIs already updated atomically per-article above)
+    # new_dois kept for summary only
 
     digest_body = "\n".join(cards)
 
