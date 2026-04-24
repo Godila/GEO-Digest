@@ -36,7 +36,6 @@ class DoajSource(SourceSearcher):
         import urllib.parse
         params = {
             "pageSize": page_size,
-            "sort": "relevance:desc",
         }
         safe_query = urllib.parse.quote(query)
         url = f"https://doaj.org/api/v1/search/articles/{safe_query}"
