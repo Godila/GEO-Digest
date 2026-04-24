@@ -64,6 +64,7 @@ def add_seen_dois(dois: list[str]):
 # title_hash imported from sources.base (single source of truth)
 
 # ── Articles DB (JSONL) ────────────────────────────────────────
+def save_article(record: dict):
     """Append article record to JSONL."""
     record["_saved_at"] = datetime.now(timezone.utc).isoformat()
     with open(ARTICLES_DB, "a", encoding="utf-8") as f:
