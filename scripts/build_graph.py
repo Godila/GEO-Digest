@@ -17,8 +17,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
-import urllib.error
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timezone
 from itertools import combinations
@@ -250,6 +250,115 @@ Example response:
 [{"type":"method_overlap","description":"Both use InSAR for ground deformation monitoring","strength":0.8}] 
 
 If no meaningful connection exists, respond: []"""
+# ── Topic filter ─────────────────────────────────────────────
+def share_topics(art_a: dict, art_b: dict) -> bool:
+    """Check if two articles share at least one topic.
+    Pairs without common topics are extremely unlikely to have
+    meaningful semantic connections — skip LLM call entirely."""
+    topics_a = set(t.lower().strip() for t in art_a.get("topics", []) if t)
+    topics_b = set(t.lower().strip() for t in art_b.get("topics", []) if t)
+    if not topics_a or not topics_b:
+        return True  # No topic info → don't filter, let LLM decide
+    return bool(topics_a & topics_b)
+
+
+# ── Batch relation extraction ────────────────────────────────
+BATCH_SYSTEM_PROMPT = """You are a research paper relationship analyzer.
+Given MULTIPLE pairs of academic papers about geology, ecology, seismology,
+remote sensing, or environmental science, identify meaningful connections.
+
+Respond ONLY with valid JSON object: {"results": [{"pair_idx": N, "relations": [...]}]}
+Each relations array contains objects with:
+- "type": one of: method_overlap, shared_region, builds_on, contrasting_approach,
+  same_authors, complementary_data, citation_link, thematic_cluster
+- "description": brief explanation (one sentence)
+- "strength": float 0.1-1.0
+
+If no meaningful connection for a pair, use empty relations array: []
+Include ALL pair indices from the input (0 to N-1).
+
+Example:
+{"results": [{"pair_idx": 0, "relations": [{"type":"method_overlap","description":"Both use InSAR","strength":0.8}]}, {"pair_idx": 1, "relations": []}]}"""
+
+BATCH_SIZE = 8   # pairs per API call
+MAX_CONCURRENT = 3  # parallel batch requests
+
+
+def batch_extract_relations(pairs: list) -> dict:
+    """Extract relations for multiple article pairs in ONE API call."""
+    if not pairs:
+        return {}
+
+    pair_texts = []
+    for idx, (art_a, art_b, _, _) in enumerate(pairs):
+        pair_texts.append(
+            f"Pair {idx}:\n"
+            f"Paper A:\n"
+            f"  Title: {art_a.get('title', 'N/A')}\n"
+            f"  Topics: {', '.join(art_a.get('topics', []))}\n"
+            f"  Abstract: {(art_a.get('abstract') or '')[:300]}\n"
+            f"  Type: {art_a.get('article_type', 'N/A')}\n\n"
+            f"Paper B:\n"
+            f"  Title: {art_b.get('title', 'N/A')}\n"
+            f"  Topics: {', '.join(art_b.get('topics', []))}\n"
+            f"  Abstract: {(art_b.get('abstract') or '')[:300]}\n"
+            f"  Type: {art_b.get('article_type', 'N/A')}"
+        )
+
+    prompt = (
+        "Analyze these paper pairs for meaningful research connections:\n\n"
+        + "\n\n---\n\n".join(pair_texts)
+    )
+
+    try:
+        response = call_minimax(
+            messages=[{"role": "user", "content": prompt}],
+            system=BATCH_SYSTEM_PROMPT,
+            max_tokens=2000,
+        )
+        return _parse_batch_response(response, len(pairs))
+    except Exception as e:
+        print(f"  [Batch Error] {e}")
+        return {i: [] for i in range(len(pairs))}
+
+
+def _parse_batch_response(text: str, expected_pairs: int) -> dict:
+    """Parse batch LLM response into per-pair relations."""
+    text = text.strip()
+    if "```" in text:
+        start = text.find("```")
+        newline = text.find("\n", start)
+        if newline >= 0:
+            text = text[newline + 1:]
+        end = text.rfind("```")
+        if end >= 0:
+            text = text[:end]
+        text = text.strip()
+
+    valid_types = {
+        "method_overlap", "shared_region", "builds_on",
+        "contrasting_approach", "same_authors", "complementary_data",
+        "citation_link", "thematic_cluster",
+    }
+    try:
+        data = json.loads(text)
+        results = {}
+        for item in data.get("results", []):
+            idx = item.get("pair_idx")
+            relations = []
+            for r in item.get("relations", []):
+                if isinstance(r, dict) and r.get("type") in valid_types:
+                    relations.append({
+                        "type": r["type"],
+                        "description": r.get("description", "")[:200],
+                        "strength": min(1.0, max(0.1, float(r.get("strength", 0.5)))),
+                    })
+            results[idx] = relations
+        return results
+    except (json.JSONDecodeError, AttributeError):
+        print(f"  [Batch Parse Warning] Could not parse structured response")
+        return {i: [] for i in range(expected_pairs)}
+
 
 def extract_relation(art_a: dict, art_b: dict) -> list[dict]:
     """Ask MiniMax to find relationships between two articles."""
@@ -327,20 +436,12 @@ def build_llm_edges(articles: list[dict], existing_edges: list[dict],
                      min_strength: float = 0.3,
                      skip_pairs: set = None) -> tuple[list[dict], set]:
     """
-    Use MiniMax to find semantic edges between ALL article pairs.
+    Use MiniMax to find semantic edges between article pairs.
 
-    Strategy: compare each pair once, only keep relations above min_strength.
-    Rate-limit: ~1.7 calls per second to stay within API limits.
-
-    Full graph is built for knowledge base cross-query capability:
-    every article connects to every other via LLM-analyzed relations.
-
-    Args:
-        skip_pairs: set of (doi_a, doi_b) tuples that already have LLM edges.
-                    These pairs will be SKIPPED (incremental mode).
-
-    Returns:
-        (llm_edges, processed_pairs) — edges + set of processed DOI pairs
+    OPTIMIZED (v2):
+    1. Topic filter: skip pairs without common topics (~60-80% reduction)
+    2. Batching: 8 pairs per API call (8x fewer network round-trips)
+    3. Concurrent: up to 3 parallel batch requests
     """
     n = len(articles)
     if n < 2:
@@ -348,90 +449,100 @@ def build_llm_edges(articles: list[dict], existing_edges: list[dict],
         return [], set()
 
     skip_pairs = skip_pairs or set()
-    llm_edges = []
-    processed_pairs = set()   # track what we've done (for next incremental run)
-    pair_count = 0
     total_pairs = n * (n - 1) // 2
+    REL_NAMES = {
+        "method_overlap": "Общие методы",
+        "shared_region": "Общий регион",
+        "builds_on": "Развивает",
+        "contrasting_approach": "Контрастный подход",
+        "same_authors": "Общие авторы",
+        "complementary_data": "Доп. данные",
+        "citation_link": "Цитирование",
+        "thematic_cluster": "Тематический кластер",
+    }
 
-    # Count how many we'll skip vs compute
-    will_compute = 0
-    for i in range(n):
-        for j in range(i + 1, n):
-            doi_i = (articles[i].get("doi") or f"idx_{i}").strip().lower()
-            doi_j = (articles[j].get("doi") or f"idx_{j}").strip().lower()
-            pair_key = tuple(sorted([doi_i, doi_j]))
-            if pair_key not in skip_pairs:
-                will_compute += 1
-
-    skipped_count = total_pairs - will_compute
-    if skipped_count > 0:
-        print(f"[LLM] Incremental: {skipped_count}/{total_pairs} pairs already built, "
-              f"computing {will_compute} new...")
-    else:
-        print(f"[LLM] Analyzing {total_pairs} article pairs for full graph...")
-
-    if will_compute == 0:
-        print("[LLM] All pairs already have semantic edges — nothing to do")
-        return [], skip_pairs
+    # Phase 1: Collect candidate pairs with topic filter
+    candidates = []
+    skipped_incremental = 0
+    filtered_no_topic = 0
 
     for i, j in combinations(range(n), 2):
         art_a, art_b = articles[i], articles[j]
         art_id_a = f"article_{i+1}"
         art_id_b = f"article_{j+1}"
-
-        # Check if this pair was already processed
         doi_i = (art_a.get("doi") or f"idx_{i}").strip().lower()
         doi_j = (art_b.get("doi") or f"idx_{j}").strip().lower()
         pair_key = tuple(sorted([doi_i, doi_j]))
 
         if pair_key in skip_pairs:
-            processed_pairs.add(pair_key)  # mark as present
+            skipped_incremental += 1
             continue
-        
-        pair_count += 1
-        print(f"  [{pair_count}/{total_pairs}] {art_id_a} <-> {art_id_b}...", end=" ", flush=True)
-        
-        relations = extract_relation(art_a, art_b)
-        
-        # Russian labels for relation types
-        REL_NAMES = {
-            "method_overlap": "Общие методы",
-            "shared_region": "Общий регион",
-            "builds_on": "Развивает",
-            "contrasting_approach": "Контрастный подход",
-            "same_authors": "Общие авторы",
-            "complementary_data": "Доп. данные",
-            "citation_link": "Цитирование",
-            "thematic_cluster": "Тематический кластер",
-        }
+        if not share_topics(art_a, art_b):
+            filtered_no_topic += 1
+            continue
+        candidates.append((i, j, art_a, art_b, art_id_a, art_id_b, pair_key))
 
-        for rel in relations:
-            if rel["strength"] >= min_strength:
-                edge_id = f"{art_id_a}_{art_id_b}_{rel['type']}"
-                llm_edges.append({
-                    "data": {
-                        "id": edge_id,
-                        "source": art_id_a,
-                        "target": art_id_b,
-                        "relation": rel["type"],
-                        "label": REL_NAMES.get(rel["type"], rel["type"].replace("_", " ").title()),
-                        "confidence": rel["strength"],
-                        "description": rel["description"],
-                        "llm_generated": True,
-                    }
-                })
-                print(f"+{rel['type']}({rel['strength']:.1f})", end="", flush=True)
-        
-        print()  # newline after each pair
+    print(f"[LLM] Pairs: {total_pairs} total, "
+          f"{skipped_incremental} incremental-skip, "
+          f"{filtered_no_topic} topic-filtered, "
+          f"{len(candidates)} to analyze")
 
-        # Track this pair as processed (success or not — we tried it)
-        processed_pairs.add(pair_key)
+    if not candidates:
+        print("[LLM] No pairs need analysis")
+        return [], skip_pairs
 
-        # Rate limiting: ~1.7 calls/sec for API safety
-        time.sleep(0.6)
+    # Phase 2: Batch + concurrent LLM calls
+    llm_edges = []
+    processed_pairs = set()
+    batches = [candidates[i:i+BATCH_SIZE] for i in range(0, len(candidates), BATCH_SIZE)]
+    total_batches = len(batches)
 
-    print(f"[LLM] Done: {len(llm_edges)} semantic edges from {pair_count} pairs "
-          f"({skipped_count} skipped)")
+    print(f"[LLM] {len(candidates)} pairs in {total_batches} batches "
+          f"(BATCH_SIZE={BATCH_SIZE}, MAX_CONCURRENT={MAX_CONCURRENT})")
+
+    def process_batch(batch_idx_and_batch):
+        batch_idx, batch = batch_idx_and_batch
+        pairs_for_api = [(art_a, art_b, art_id_a, art_id_b)
+                          for (_, _, art_a, art_b, art_id_a, art_id_b, _) in batch]
+        results = batch_extract_relations(pairs_for_api)
+        edges = []
+        local_processed = set()
+        for local_idx, (_, _, _, _, art_id_a, art_id_b, pair_key) in enumerate(batch):
+            relations = results.get(local_idx, [])
+            for rel in relations:
+                if rel["strength"] >= min_strength:
+                    edge_id = f"{art_id_a}_{art_id_b}_{rel['type']}"
+                    edges.append({
+                        "data": {
+                            "id": edge_id,
+                            "source": art_id_a,
+                            "target": art_id_b,
+                            "relation": rel["type"],
+                            "label": REL_NAMES.get(rel["type"], rel["type"].replace("_", " ").title()),
+                            "confidence": rel["strength"],
+                            "description": rel["description"],
+                            "llm_generated": True,
+                        }
+                    })
+            local_processed.add(pair_key)
+        return batch_idx, edges, local_processed
+
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT) as executor:
+        futures = {executor.submit(process_batch, (bi, b)): bi for bi, b in enumerate(batches)}
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            try:
+                batch_idx, batch_edges, batch_processed = future.result()
+                llm_edges.extend(batch_edges)
+                processed_pairs.update(batch_processed)
+                print(f"  [Batch {completed}/{total_batches}] "
+                      f"+{len(batch_edges)} edges from batch #{batch_idx+1}")
+            except Exception as e:
+                print(f"  [Batch {completed}/{total_batches}] Error: {e}")
+
+    print(f"[LLM] Done: {len(llm_edges)} semantic edges from {len(candidates)} pairs "
+          f"({skipped_incremental} incremental-skip, {filtered_no_topic} topic-filtered)")
     return llm_edges, processed_pairs
 
 
