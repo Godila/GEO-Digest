@@ -1502,12 +1502,6 @@ def main():
     # Print digest to stdout (for cron delivery)
     print(digest)
 
-    # ── Send to all subscribers via @GeoDigestBot ──
-    try:
-        send_digest_to_users(digest)
-    except Exception as e:
-        print(f"[Delivery error] {e}", file=sys.stderr)
-
     # ── Build knowledge graph for dashboard ──
     try:
         print("[Graph] Building knowledge graph...", file=sys.stderr)
@@ -1537,70 +1531,6 @@ def main():
             pass
 
     return digest
-
-
-# ── Digest Delivery ────────────────────────────────────────
-DIGEST_CHAT_IDS = [532793793, 619934231]  # You + colleague
-
-def send_digest_to_users(digest_text: str):
-    """Send digest to all subscribed users via @GeoDigestBot."""
-    # Load bot token
-    token = ""
-    env_file = BASE / ".env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("DIGEST_BOT_TOKEN=") and not line.startswith("#"):
-                token = line.split("=", 1)[1].strip().strip("'\"")
-                break
-    if not token:
-        print("[Delivery] No DIGEST_BOT_TOKEN found in .env", file=sys.stderr)
-        return
-
-    api_base = f"https://api.telegram.org/bot{token}"
-    max_len = 4096
-
-    # Split digest into chunks by separator
-    parts = digest_text.split("=====")
-    chunks = []
-    current = ""
-    for part in parts:
-        candidate = (current + "=====" + part).strip() if current else part.strip()
-        if len(candidate) > max_len:
-            if current:
-                chunks.append(current)
-            current = part
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-
-    # If no separators found, split by size
-    if len(chunks) <= 1 and len(digest_text) > max_len:
-        chunks = []
-        for i in range(0, len(digest_text), max_len):
-            chunks.append(digest_text[i:i+max_len])
-
-    # Send to each subscriber
-    for chat_id in DIGEST_CHAT_IDS:
-        sent = 0
-        for chunk in chunks:
-            payload = json.dumps({
-                "chat_id": chat_id,
-                "text": chunk,
-            }).encode()
-            req = urllib.request.Request(
-                f"{api_base}/sendMessage",
-                data=payload,
-                headers={"Content-Type": "application/json"}
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    result = json.loads(resp.read())
-                    sent += 1
-            except Exception as e:
-                print(f"[Delivery] Failed to send to {chat_id}: {e}", file=sys.stderr)
-        print(f"[Delivery] Sent {sent} messages to chat_id {chat_id}")
 
 
 if __name__ == "__main__":

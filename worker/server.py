@@ -46,7 +46,6 @@ GRAPH_DATA = DATA_DIR / "graph_data.json"
 STATUS_FILE = DATA_DIR / "run_status.json"
 RUNS_DIR = WORKER_DIR / "runs"
 CONFIG_PATH = WORKER_DIR / "config.yaml"
-ENV_FILE = WORKER_DIR / ".env"
 
 RUNS_DIR.mkdir(exist_ok=True)
 
@@ -246,47 +245,6 @@ def _run_graph_bg(job_id: str, use_llm: bool, incremental: bool):
                     finished_at=datetime.now(timezone.utc).isoformat())
 
 
-# ── Telegram Bot (background thread) ────────────────────────────
-_tg_bot_thread = None
-
-
-def start_tg_bot():
-    """Start Telegram bot polling in background thread."""
-    global _tg_bot_thread
-    if _tg_bot_thread and _tg_bot_thread.is_alive():
-        return False
-
-    def _run():
-        env = {**os.environ}
-        if ENV_FILE.exists():
-            load_dotenv_result = _load_env(ENV_FILE)
-            if load_dotenv_result:
-                env.update(load_dotenv_result)
-        subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "tg_bot.py"), "poll"],
-            cwd=str(WORKER_DIR),
-            env=env,
-        )
-
-    _tg_bot_thread = threading.Thread(target=_run, daemon=True)
-    _tg_bot_thread.start()
-    return True
-
-
-def _load_env(env_file: Path) -> dict | None:
-    """Load .env file into dict."""
-    try:
-        env_vars = {}
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env_vars[k.strip()] = v.strip().strip('"').strip("'")
-        return env_vars
-    except Exception:
-        return None
-
-
 # ── API Endpoints ──────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -452,12 +410,6 @@ async def dedup_stats():
         return get_dedup_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.on_event("startup")
-async def on_startup():
-    """Start TG bot on worker startup."""
-    start_tg_bot()
 
 
 if __name__ == "__main__":
