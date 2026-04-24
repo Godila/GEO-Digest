@@ -521,10 +521,14 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     print(f"  Mode: {'INCREMENTAL' if incremental else 'FULL REBUILD'}")
     print("=" * 60)
 
+    # ── Step markers for worker log polling ──────────────
+    print("[GRAPH_STEP] loading", file=sys.stderr, flush=True)
+
     # Load articles
     articles = load_articles()
     if not articles:
         print("[ERROR] No articles found. Run digest first.")
+        print("[GRAPH_STEP] error", file=sys.stderr, flush=True)
         return {}
 
     print(f"\nLoaded {len(articles)} articles")
@@ -556,6 +560,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
         print("[Full rebuild] All LLM edges will be recomputed from scratch")
     
     # Step 1: Metadata nodes + edges
+    print("[GRAPH_STEP] metadata", file=sys.stderr, flush=True)
     print("\n--- Step 1: Building metadata graph ---")
     nodes, meta_edges = build_metadata_nodes(articles)
     print(f"  {len(nodes)} nodes, {len(meta_edges)} metadata edges")
@@ -563,6 +568,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     all_edges = list(meta_edges)
     
     # Step 2: Topic co-occurrence edges
+    print("[GRAPH_STEP] cooccurrence", file=sys.stderr, flush=True)
     print("\n--- Step 2: Topic co-occurrence ---")
     cooccur_edges = build_topic_cooccurrence_edges(articles)
     all_edges.extend(cooccur_edges)
@@ -572,6 +578,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     llm_edges = []
     all_processed_pairs = set(processed_pairs)  # start with existing
     if use_llm:
+        print("[GRAPH_STEP] llm_semantic", file=sys.stderr, flush=True)
         print("\n--- Step 3: MiniMax semantic extraction ---")
         try:
             new_llm_edges, new_processed = build_llm_edges(
@@ -618,6 +625,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     }
     
     # Save outputs
+    print("[GRAPH_STEP] saving", file=sys.stderr, flush=True)
     GRAPH_OUTPUT.write_text(json.dumps(graph, indent=2, ensure_ascii=False))
     print(f"\nSaved: {GRAPH_OUTPUT} ({GRAPH_OUTPUT.stat().st_size} bytes)")
     
@@ -653,6 +661,8 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     print(f"    - metadata:    {len(meta_edges)}")
     print(f"    - co-occurrence: {len(cooccur_edges)}")
     print(f"    - LLM semantic: {len(llm_edges)}")
+
+    print("[GRAPH_COMPLETE]", file=sys.stderr, flush=True)
     
     return graph
 

@@ -473,6 +473,33 @@
         .rebuild-btn:hover { opacity: .9; }
         .rebuild-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+        /* Graph Build Status Panel */
+        .graph-build-status {
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(51, 65, 85, 0.8);
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-top: 8px;
+        }
+        .gb-title {
+            font-size: 12px; font-weight: 600; color: var(--accent);
+            margin-bottom: 6px;
+        }
+        .gb-progress-track {
+            height: 6px; background: rgba(51, 65, 85, 0.6);
+            border-radius: 3px; overflow: hidden;
+        }
+        .gb-progress-fill {
+            height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border-radius: 3px; transition: width 0.3s ease;
+        }
+        .gb-progress-text {
+            font-size: 11px; color: var(--text-muted); margin-top: 4px;
+        }
+        .gb-log {
+            max-height: 120px; font-size: 11px; margin-top: 6px;
+        }
+
         /* Empty state */
         .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
         .empty-state h3 { color: var(--text); margin-bottom: 8px; }
@@ -635,6 +662,19 @@
     <div class="header-actions">
         <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
         <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
+    </div>
+
+    <!-- Graph Build Status (shown during graph build) -->
+    <div id="graphBuildStatus" class="graph-build-status" style="display:none">
+        <div class="gb-title">📊 Построение графа</div>
+        <div class="gb-progress-track">
+            <div class="gb-progress-fill" id="graphProgressFill" style="width:0%"></div>
+        </div>
+        <div class="gb-progress-text"><span id="graphPct">0%</span> · <span id="graphStep">Готовимся...</span></div>
+        <div class="log-container gb-log" id="graphLog">
+            <div class="log-line log-info">Ожидание запуска...</div>
+        </div>
+        <button class="btn-danger btn-sm" onclick="stopGraphBuild()" id="stopGraphBtn">⏹ Остановить</button>
     </div>
 </div>
 
@@ -1535,8 +1575,9 @@ function switchTab(tabName, el) {
 // ── Rebuild (full) ───────────────────────────
 async function rebuildGraph() {
     const btn = document.getElementById('rebuildBtn');
-    btn.disabled = true;
-    btn.textContent = 'Построение...';
+    const incBtn = document.getElementById('rebuildIncBtn');
+    btn.disabled = true; incBtn.disabled = true;
+    showGraphBuildPanel();
 
     try {
         const result = await api('/graph/rebuild?use_llm=false', 'POST');
@@ -1544,16 +1585,17 @@ async function rebuildGraph() {
         await pollGraphStatus(btn, 'Перестроить граф');
     } catch(e) {
         alert('Ошибка перестроения графа: ' + e.message);
-        btn.disabled = false;
-        btn.textContent = 'Перестроить граф';
+        hideGraphBuildPanel();
+        btn.disabled = false; incBtn.disabled = false;
     }
 }
 
 // ── Rebuild (incremental) ─────────────────────
 async function rebuildGraphIncremental() {
     const btn = document.getElementById('rebuildIncBtn');
-    btn.disabled = true;
-    btn.textContent = 'Обновление...';
+    const fullBtn = document.getElementById('rebuildBtn');
+    btn.disabled = true; fullBtn.disabled = true;
+    showGraphBuildPanel();
 
     try {
         const result = await api('/graph/rebuild?use_llm=true&incremental=true', 'POST');
@@ -1561,51 +1603,97 @@ async function rebuildGraphIncremental() {
         await pollGraphStatus(btn, '🔄 Обновить граф');
     } catch(e) {
         alert('Ошибка обновления графа: ' + e.message);
-        btn.disabled = false;
-        btn.textContent = '🔄 Обновить граф';
+        hideGraphBuildPanel();
+        btn.disabled = false; fullBtn.disabled = false;
     }
 }
 
-// ── Poll graph build status ───────────────────
-async function pollGraphStatus(btn, label) {
-    const startTime = Date.now();
-    while (true) {
-        await new Promise(r => setTimeout(r, 3000)); // poll every 3s
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        btn.textContent = `${label} (${elapsed}s)...`;
+// ── Graph build panel show/hide ───────────────
+function showGraphBuildPanel() {
+    document.getElementById('graphBuildStatus').style.display = 'block';
+    document.getElementById('graphProgressFill').style.width = '0%';
+    document.getElementById('graphPct').textContent = '0%';
+    document.getElementById('graphStep').textContent = 'Готовимся...';
+    document.getElementById('graphLog').innerHTML = '<div class="log-line log-step">📊 Запуск построения...</div>';
+}
 
+function hideGraphBuildPanel() {
+    document.getElementById('graphBuildStatus').style.display = 'none';
+    document.getElementById('rebuildBtn').disabled = false;
+    document.getElementById('rebuildIncBtn').disabled = false;
+}
+
+async function stopGraphBuild() {
+    try { await api('/digest/stop', 'POST'); } catch {}
+    // Graph doesn't have a dedicated stop endpoint yet — just hide
+    hideGraphBuildPanel();
+}
+
+// ── Poll graph build status (with live progress) ─
+let graphPoller = null;
+async function pollGraphStatus(btn, label) {
+    if (graphPoller) clearInterval(graphPoller);
+    graphPoller = setInterval(async () => {
         try {
-            const st = await api('/graph/status', 'GET');
+            const st = await api('/graph/status');
+
+            // Update progress bar
+            if (st.progress) {
+                const pct = st.progress.pct || 0;
+                document.getElementById('graphProgressFill').style.width = pct + '%';
+                document.getElementById('graphPct').textContent = pct + '%';
+                document.getElementById('graphStep').textContent = st.progress.message || '';
+            }
+
+            // Update log lines
+            if (st.log_lines && st.log_lines.length > 0) {
+                const logEl = document.getElementById('graphLog');
+                const html = st.log_lines.map(l =>
+                    '<div class="log-line ' + (l.includes('[ERROR]') ? 'log-error' :
+                        l.includes('[STEP]') || l.includes('[GRAPH_STEP]') ? 'log-step' :
+                        l.includes('Complete') || l.includes('complete') ? 'log-success' : 'log-info') +
+                    '">' + esc(l) + '</div>'
+                ).join('');
+                logEl.innerHTML = html;
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+
+            // Done or error
             if (st.status === 'done') {
+                clearInterval(graphPoller);
+                graphPoller = null;
                 const gd = st.graph_data || {};
-                alert('Граф построен!\nУзлов: ' + (gd.node_count || '?') +
-                      '\nСвязей: ' + (gd.edge_count || '?') +
-                      '\nИИ-связей: ' + (gd.llm_edge_count || 0));
-                await Promise.all([loadStats(), loadArticles(), initGraph()]);
-                btn.disabled = false;
-                btn.textContent = label;
+                document.getElementById('graphLog').innerHTML +=
+                    '<div class="log-line log-success">✅ Граф готов! Узлов: ' +
+                    (gd.node_count || '?') + ', связей: ' + (gd.edge_count || '?') +
+                    ', ИИ-связей: ' + (gd.llm_edge_count || 0) + '</div>';
+                setTimeout(() => {
+                    hideGraphBuildPanel();
+                    Promise.all([loadStats(), loadArticles(), initGraph()]);
+                }, 2000);
                 return;
             }
             if (st.status === 'error') {
-                alert('Ошибка построения графа:\n' + (st.stderr || 'Unknown error'));
-                btn.disabled = false;
-                btn.textContent = label;
+                clearInterval(graphPoller);
+                graphPoller = null;
+                document.getElementById('graphLog').innerHTML +=
+                    '<div class="log-line log-error">❌ Ошибка: ' + esc(st.stderr || 'Unknown') + '</div>';
+                setTimeout(hideGraphBuildPanel, 3000);
                 return;
             }
-            // still running
         } catch(e) {
-            // network error during poll, keep trying
             console.warn('Graph status poll error:', e);
         }
+    }, 2500);
 
-        // Safety timeout: 15 min
-        if (elapsed > 900) {
-            alert('Таймаут построения графа (>15 мин)');
-            btn.disabled = false;
-            btn.textContent = label;
-            return;
+    // Safety timeout: 15 min
+    setTimeout(() => {
+        if (graphPoller) {
+            clearInterval(graphPoller);
+            graphPoller = null;
+            hideGraphBuildPanel();
         }
-    }
+    }, 900000);
 }
 
 // ── Utils ─────────────────────────────────────

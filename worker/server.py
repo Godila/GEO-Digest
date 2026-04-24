@@ -80,8 +80,15 @@ _jobs = {
 
 
 def _update_job(job_type: str, **kwargs):
-    """Update job state entry."""
+    """Update job state entry (in-memory + persist to file)."""
     _jobs[job_type].update(kwargs)
+    # Persist full state to file so it survives container restarts
+    try:
+        status = dict(_jobs["digest"])
+        status["graph"] = dict(_jobs["graph"])
+        STATUS_FILE.write_text(json.dumps(status, indent=2, ensure_ascii=False))
+    except Exception:
+        pass
 
 
 def _get_job(job_type: str) -> dict:
@@ -129,7 +136,6 @@ def _run_digest_bg(job_id: str):
                 "[LLM] Enriching": ("enriching", None),
                 "Selected:": ("selecting", "Отбор лучших статей"),
                 "DIGEST COMPLETE": ("complete", "Дайджест готов!"),
-                "Graph": ("building_graph", "Построение графа знаний..."),
                 "Delivery": ("delivering", "Отправка в Telegram..."),
             }
 
@@ -159,43 +165,8 @@ def _run_digest_bg(job_id: str):
 
 
 def _poll_digest_log(log_file: Path, keywords: dict):
-    """Read latest lines from digest log and update status file."""
-    try:
-        lines = log_file.read_text(errors="ignore").splitlines()
-        if not lines:
-            return
-
-        # Find last meaningful progress line
-        current_step = "starting"
-        msg = ""
-        for line in reversed(lines[-50:]):
-            stripped = line.strip()
-            for kw, (step, step_msg) in keywords.items():
-                if kw in stripped:
-                    current_step = step
-                    msg = step_msg if step_msg else stripped
-                    break
-            if current_step != "starting":
-                break
-
-        step_order = ["starting", "searching", "dedup", "enriching_oa",
-                      "filtering", "scoring", "selecting", "enriching",
-                      "building_graph", "delivering", "complete"]
-        pct = 0
-        if current_step in step_order:
-            pct = int((step_order.index(current_step) + 1) / len(step_order) * 100)
-
-        # Write status file (shared with dashboard)
-        STATUS_FILE.write_text(json.dumps({
-            "status": "running" if _jobs["digest"]["status"] == "running" else _jobs["digest"]["status"],
-            "run_id": _jobs["digest"]["job_id"],
-            "started_at": _jobs["digest"]["started_at"],
-            "progress": {"step": current_step, "message": msg, "pct": pct},
-            "log_lines": lines[-50:],
-        }, ensure_ascii=False, indent=2))
-
-    except Exception:
-        pass
+    """Backward-compatible wrapper for digest log polling."""
+    _poll_job_log(log_file, keywords, job_type="digest")
 
 
 def _tail_file(path: Path, max_chars: int = 2000) -> str:
@@ -210,7 +181,7 @@ def _tail_file(path: Path, max_chars: int = 2000) -> str:
 # ── Graph Build ─────────────────────────────────────────────────
 
 def _run_graph_bg(job_id: str, use_llm: bool, incremental: bool):
-    """Run build_graph.py as background process."""
+    """Run build_graph.py as background process with live log streaming."""
     _update_job("graph", status="running", started_at=datetime.now(timezone.utc).isoformat())
 
     cmd = [sys.executable, str(SCRIPTS_DIR / "build_graph.py")]
@@ -219,30 +190,92 @@ def _run_graph_bg(job_id: str, use_llm: bool, incremental: bool):
     if incremental:
         cmd.append("--update")
 
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "GEO_DATA_DIR": str(DATA_DIR)}
+
+    # Graph step detection keywords
+    graph_steps = {
+        "[GRAPH_STEP] loading":      ("loading",     "Загрузка статей..."),
+        "[GRAPH_STEP] metadata":     ("metadata",    "Построение метаданных..."),
+        "[GRAPH_STEP] cooccurrence": ("cooccurrence","Топики co-occurrence..."),
+        "[GRAPH_STEP] llm_semantic": ("llm_semantic","LLM семантика..."),
+        "[GRAPH_STEP] saving":       ("saving",      "Сохранение графа..."),
+        "[GRAPH_COMPLETE]":          ("complete",    "Граф построен!"),
+    }
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(WORKER_DIR),
-            env=env,
-            timeout=900,
-        )
-        _update_job("graph",
-            status="done" if result.returncode == 0 else "error",
-            finished_at=datetime.now(timezone.utc).isoformat(),
-            stdout=result.stdout[-3000:] if result.stdout else "",
-            stderr=result.stderr[-500:] if result.stderr else "",
-        )
+        log_file = RUNS_DIR / f"graph_{job_id}.log"
+        with open(log_file, "w") as log_f:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(WORKER_DIR),
+                env=env,
+            )
+            _update_job("graph", pid=proc.pid)
 
-    except subprocess.TimeoutExpired:
-        _update_job("graph", status="error", stderr="Timeout (900s)",
-                    finished_at=datetime.now(timezone.utc).isoformat())
+            # Poll log file for live progress
+            import time
+            while proc.poll() is None:
+                time.sleep(3)
+                _poll_job_log(log_file, graph_steps, job_type="graph")
+
+            returncode = proc.wait()
+            _poll_job_log(log_file, graph_steps, job_type="graph")  # final update
+
+            _update_job("graph",
+                status="done" if returncode == 0 else "error",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                stdout=_tail_file(log_file, 3000),
+            )
+
     except Exception as e:
         _update_job("graph", status="error", stderr=str(e),
                     finished_at=datetime.now(timezone.utc).isoformat())
+
+
+def _poll_job_log(log_file: Path, keywords: dict, job_type: str = "digest"):
+    """Read latest lines from log and update status file with progress."""
+    try:
+        lines = log_file.read_text(errors="ignore").splitlines()
+        if not lines:
+            return
+
+        # Find last matching keyword
+        last_match = None
+        last_idx = -1
+        for kw, (step, msg) in keywords.items():
+            for i, line in enumerate(lines):
+                if kw in line and i > last_idx:
+                    last_match = (step, msg)
+                    last_idx = i
+
+        if last_match:
+            step, msg = last_match
+            pct_map = {
+                "digest": {
+                    "starting": 5, "searching": 15, "dedup": 30,
+                    "enriching_oa": 40, "filtering": 55, "scoring": 65,
+                    "enriching": 80, "selecting": 90, "complete": 100,
+                    "building_graph": 95,
+                },
+                "graph": {
+                    "loading": 10, "metadata": 35, "cooccurrence": 50,
+                    "llm_semantic": 70, "saving": 95, "complete": 100,
+                },
+            }
+            pct = pct_map.get(job_type, {}).get(step, 50)
+
+            # Extract last N meaningful lines as log_lines
+            log_lines = [l.strip() for l in lines[-30:] if l.strip()]
+
+            _update_job(job_type,
+                progress={"step": step, "message": msg, "pct": pct},
+                log_lines=log_lines[-15:],
+            )
+    except Exception:
+        pass  # don't crash the poller
 
 
 # ── API Endpoints ──────────────────────────────────────────────

@@ -27,6 +27,7 @@ BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("GEO_DATA_DIR", BASE / "data"))
 ARTICLES_DB = DATA_DIR / "articles.jsonl"
 SEEN_DOIS = DATA_DIR / "seen_dois.txt"
+ARTICLES_DIR = DATA_DIR / "articles"
 GRAPHIFY_OUT = BASE / "graphify-out"
 CONFIG_PATH = BASE / "config.yaml"
 
@@ -1120,25 +1121,6 @@ def main():
 
     # Print digest to stdout (for cron delivery)
     print(digest)
-
-    # ── Build knowledge graph for dashboard ──
-    try:
-        print("[Graph] Building knowledge graph...", file=sys.stderr)
-        import subprocess
-        result = subprocess.run(
-            [sys.executable, str(BASE / "scripts" / "build_graph.py"), "--no-llm"],
-            capture_output=True, text=True, cwd=str(BASE), timeout=120,
-        )
-        if result.returncode == 0:
-            print(f"[Graph] {result.stdout.strip().split(chr(10))[-1]}", file=sys.stderr)
-        else:
-            print(f"[Graph] Warning: build returned {result.returncode}", file=sys.stderr)
-            if result.stderr:
-                print(f"[Graph] {result.stderr[-300:]}", file=sys.stderr)
-    except subprocess.TimeoutExpired:
-        print("[Graph] Timeout — will be available on next rebuild", file=sys.stderr)
-    except Exception as e:
-        print(f"[Graph] Skipped: {e}", file=sys.stderr)
 
     # ── Remove lockfile (allow next run) ──
     lock_file = BASE / "digest.lock"
