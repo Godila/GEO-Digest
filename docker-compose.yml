@@ -1,5 +1,5 @@
 services:
-  # ── Dashboard (pure UI) ──────────────────────────────
+  # ── Dashboard (pure UI + API gateway) ──────────
   dashboard:
     build:
       context: .
@@ -15,6 +15,7 @@ services:
     environment:
       - DASHBOARD_PORT=3000
       - WORKER_URL=http://worker:3001
+      - DATA_DIR=/app/data
     depends_on:
       - worker
     networks:
@@ -25,7 +26,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── Worker (compute backend) ────────────────────────
+  # ── Worker (compute backend) ───────────────────
   worker:
     build:
       context: .
@@ -34,7 +35,7 @@ services:
     restart: unless-stopped
     volumes:
       - geo-data:/app/data:rw
-      - .:/app/src:ro           # source code (scripts, config)
+      - .:/app/src:ro
       - /root/.hermes/geo_digest/.env:/app/.env:ro
     environment:
       - WORKER_PORT=3001
@@ -47,28 +48,9 @@ services:
       start_period: 10s
       retries: 3
 
-  # ── Caddy (reverse proxy) ──────────────────────────
-  caddy:
-    image: caddy:2-alpine
-    container_name: geo-digest-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - dashboard
-    networks:
-      - geo-net
-
 volumes:
   geo-data:
     external: false
-  caddy_data:
-  caddy_config:
 
 networks:
   geo-net:

@@ -6,8 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl && rm -rf /var/lib/apt/lists/*
 
-# Copy scripts & configs
+# Copy scripts, worker & configs
 COPY scripts/ /app/scripts/
+COPY worker/ /app/worker/
 COPY config.yaml /app/config.yaml
 COPY .env.example /app/.env.example
 

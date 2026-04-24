@@ -26,6 +26,11 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
 
+# ── Add scripts to path for run_manager import ────────────────
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 # ── Paths ───────────────────────────────────────────────────────
 # Worker runs scripts from /app/scripts, data lives in /app/data
 WORKER_DIR = Path(__file__).resolve().parent.parent  # /app or project root
@@ -369,6 +374,84 @@ async def graph_status():
             pass
 
     return result
+
+
+# ── Digest Management Endpoints (via run_manager) ────────────
+
+@app.post("/api/digest/stop")
+async def digest_stop():
+    """Stop current running digest."""
+    try:
+        from run_manager import stop_run
+        return stop_run()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/digest/runs")
+async def digest_runs(limit: int = 20):
+    """List historical digest runs."""
+    try:
+        from run_manager import list_runs
+        return {"runs": list_runs(limit)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/digest/runs/{run_id}")
+async def digest_run_detail(run_id: str):
+    """Get single run details with full log."""
+    try:
+        from run_manager import get_run
+        run = get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return run
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/digest/config")
+async def config_get():
+    """Get current digest configuration."""
+    try:
+        from run_manager import get_config
+        cfg = get_config()
+        return {
+            "digest": cfg.get("digest", {}),
+            "scoring": cfg.get("scoring", {}),
+            "topics": {k: {"name_ru": v.get("name_ru", k), "queries_count": len(v.get("queries", []))}
+                       for k, v in cfg.get("topics", {}).items()},
+            "sources": {k: {"enabled": v.get("enabled", True), "priority": v.get("priority", 0)}
+                        for k, v in cfg.get("sources", {}).items()},
+            "article_types": cfg.get("article_types", {}),
+            "analogous_regions": cfg.get("analogous_regions", []),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/digest/config")
+async def config_update(updates: dict):
+    """Update digest configuration."""
+    try:
+        from run_manager import update_config
+        updated = update_config(updates)
+        return {"ok": True, "config": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/digest/dedup")
+async def dedup_stats():
+    """Get deduplication statistics."""
+    try:
+        from run_manager import get_dedup_stats
+        return get_dedup_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.on_event("startup")
