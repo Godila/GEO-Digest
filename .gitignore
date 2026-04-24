@@ -1,6 +1,9 @@
 # ── Secrets / Credentials ──────────────────────
 .env
-.env.*
+.env.local
+.env.production
+# Keep example file in repo
+# !.env.example
 
 # ── Runtime data (generated each run) ──────────
 articles.jsonl
