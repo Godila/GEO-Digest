@@ -13,6 +13,10 @@ import urllib.parse
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
+from collections import Counter
+
+# Import title_hash from sources.base (single source of truth — no duplicate)
+from sources.base import title_hash
 
 # ── LLM client (MiniMax M2.7) ───────────────────────────────────
 import sys, os as _os
@@ -1044,7 +1048,6 @@ def build_digest(config: dict) -> str:
     _source_fails = {}         # source -> consecutive fail count
     # ── Search via sources module ─────────────────────────────
     from sources import get_active_sources, search_all_sources, dedup_and_merge
-    from sources.base import title_hash
 
     active_sources = get_active_sources()
     src_names = [s.name() for s in active_sources]
