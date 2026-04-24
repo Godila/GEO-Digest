@@ -1765,8 +1765,8 @@ async function startDigest() {
             body: JSON.stringify(configOverrides),
         }).then(r => r.json());
 
-        if (!result.ok) {
-            alert('Ошибка запуска: ' + (result.error || 'неизвестная ошибка'));
+        if (result.success === false || result.error) {
+            alert('Ошибка запуска: ' + (result.error || result.detail || 'неизвестная ошибка'));
             return;
         }
 

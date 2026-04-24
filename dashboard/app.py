@@ -19,7 +19,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import requests
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -59,10 +59,10 @@ def _worker_get(path: str, timeout: int = 10) -> dict:
         raise HTTPException(status_code=502, detail=f"Worker error: {e}")
 
 
-def _worker_post(path: str, params: dict | None = None, timeout: int = 10) -> dict:
+def _worker_post(path: str, json_body: dict | None = None, timeout: int = 10) -> dict:
     """POST request to worker."""
     try:
-        r = requests.post(f"{WORKER_URL}{path}", params=params, timeout=timeout)
+        r = requests.post(f"{WORKER_URL}{path}", json=json_body, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except requests.ConnectionError:
@@ -216,9 +216,15 @@ async def api_health():
 # ══════════════════════════════════════════════════════════════════
 
 @app.post("/api/digest/start")
-async def api_digest_start():
+async def api_digest_start(request: Request):
     """Start digest pipeline → proxy to worker."""
-    return _worker_post("/api/digest/run")
+    # Read config overrides from UI and forward to worker
+    body = None
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    return _worker_post("/api/digest/run", json_body=body)
 
 
 @app.get("/api/digest/status")
