@@ -108,7 +108,11 @@ async def api_articles(
 
     for art in articles:
         scores = art.get("scores", {})
-        art["_total_score"] = round(sum(scores.values()), 2) if scores else 0
+        # Use pre-computed total_5 (0-5 scale) or total (0-1), fallback to sum
+        art["_total_score"] = round(
+            scores.get("total_5", scores.get("total", sum(scores.values()) * 5 / len(scores) if scores else 0)),
+            2,
+        ) if scores else 0
 
     if topic:
         articles = [a for a in articles if a.get("_topic_key") == topic]
@@ -190,7 +194,10 @@ async def api_stats():
     total_scores = []
     for art in articles:
         scores = art.get("scores", {})
-        total_scores.append(sum(scores.values()) if scores else 0)
+        # Use pre-computed total_5 (0-5 scale), not sum() of all fields
+        total_scores.append(
+            scores.get("total_5", scores.get("total", sum(scores.values()) * 5 / len(scores) if scores else 0))
+        )
 
     sources, types = {}, {}
     for art in articles:
