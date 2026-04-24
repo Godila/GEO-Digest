@@ -1,142 +1,159 @@
-# Geo-Ecology Digest Agent Configuration
-# Journal: Geology and Geophysics of Russian South (ISSN 2221-3198)
-# Goal: find world papers implementable for Russian South context
+# Geo-Ecology Digest — Configuration
+# ====================================
 
-digest:
-  articles_per_run: 25   # First run: fill KB with 25-30; then revert to 4 for daily updates
-  language: en          # only English (no Russian papers)
-  min_year: 2023        # priority: last 2-3 years
-  max_results_per_topic: 25  # raw results before scoring
+# ── LLM Settings ──────────────────────────────────────
+llm:
+  model: "MiniMax-M2.7"
+  base_url: "https://api.minimax.chat/v1"
+  api_key_env: "MINIMAX_API_KEY"
+  disable_thinking: true
+  max_tokens: 4096
 
-scoring:
-  methodological_transferability: 0.25
-  geographic_analogy: 0.20
-  thematic_relevance: 0.20
-  publication_potential: 0.20
-  practical_output: 0.10
-  novelty_of_approach: 0.05
-
-analogous_regions:
-  # Regions similar to South Russia for geographic analogy scoring
-  - Caucasus region (Georgia, Armenia, Azerbaijan)
-  - Alpine region (Italy, Switzerland, Austria, France)
-  - Iranian Plateau
-  - Central Asia (Kazakhstan, Kyrgyzstan, Uzbekistan)
-  - Andean region (Chile, Argentina, Peru)
-  - Mediterranean (Turkey, Greece, Balkans)
-  - Carpathians (Romania, Ukraine, Poland)
-
-article_types:
-  # Three types of valuable findings
-  reproduction:
-    label: "воспроизведение"
-    desc: "Method/experiment reproducible on South Russia material"
-  review:
-    label: "обзор"
-    desc: "Base for review article with Russian context"
-  method_transfer:
-    label: "метод"
-    desc: "New methodology not yet applied in Russia for this task"
-
-topics:
-  seismology:
-    name_ru: "Сейсмология"
-    queries:
-      - "seismic monitoring mountain regions machine learning"
-      - "earthquake source parameters inversion"
-      - "aftershock sequence analysis ETAS model"
-      - "seismic hazard assessment active faults"
-      - "induced seismicity mining injection"
-      - "radon earthquake precursor monitoring"
-      - "electromagnetic emission earthquake precursor"
-      - "seismic wave propagation complex media"
-      - "microseismic monitoring mining areas"
-
-  geophysics_methods:
-    name_ru: "Геофизические методы"
-    queries:
-      - "mud volcano geophysical monitoring Caspian"
-      - "seismic velocity model tectonic structure basin"
-      - "geophysical exploration gold mineralization"
-      - "thermal hydrodynamic reservoir characterization"
-      - "permeability impairment zone well testing"
-
-  landslide_hazards:
-    name_ru: "Опасные геологические процессы"
-    queries:
-      - "landslide monitoring rainfall trigger early warning"
-      - "hillslope stability hydrology InSAR"
-      - "slope failure prediction machine learning"
-      - "debris flow monitoring mountain regions"
-      - "rockfall risk assessment methods"
-
-  geoecology_mining:
-    name_ru: "Геоэкология и горнодобыча"
-    queries:
-      - "heavy metals soil contamination mining remediation"
-      - "lead zinc mine soil pollution mobility"
-      - "gold mining environmental impact assessment"
-      - "mine tailings geochemical risk"
-      - "agricultural soil heavy metal bioavailability"
-      - "phytoremediation heavy metal contaminated soils"
-
-  climate_remote_sensing:
-    name_ru: "Климат и дистанционное зондирование"
-    queries:
-      - "climate trends mountain regions temperature precipitation"
-      - "aridification mountain ecosystems remote sensing"
-      - "satellite atmospheric monitoring NO2 aerosol PM2.5"
-      - "river basin land cover change dynamics Sentinel"
-      - "drought monitoring satellite data mountainous"
-
-  oil_gas:
-    name_ru: "Нефть и газ"
-    queries:
-      - "fluid dynamics sedimentary basin hydrocarbon accumulation"
-      - "thermohydrodynamic well test interpretation"
-      - "reservoir permeability damage near-wellbore"
-      - "basin modeling petroleum system evaluation"
-
-  mineralogy_petrology:
-    name_ru: "Минералогия и петрология"
-    queries:
-      - "accessory mineral geochronometry titanite zircon apatite"
-      - "magmatic belt U-Pb dating granite"
-      - "mineral chemistry provenance reconstruction"
-
+# ── Source Configuration ──────────────────────────────
 sources:
-  crossref:
-    enabled: true
-    base_url: "https://api.crossref.org/works"
-    priority: 0          # PRIMARY: fastest, broadest, 140M DOI, no key
   openalex:
     enabled: true
-    base_url: "https://api.openalex.org"
-    priority: 1           # concepts/topics, free, no key
-  europe_pmc:
-    enabled: true
-    base_url: "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
-    priority: 2           # full-text OA, earth sciences
+    per_page: 10
+
   semantic_scholar:
     enabled: true
-    base_url: "https://api.semanticscholar.org/graph/v1"
-    priority: 3
+    limit: 5
+    # If SEMANTIC_SCHOLAR_API_KEY is set in .env → stable 1 req/s
+    # If not set → shared pool (flaky, may get 429)
+
+  core_ac:
+    enabled: true
+    per_page: 10
+
+  doaj:
+    enabled: true
+    per_page: 5
+
   arxiv:
     enabled: true
-    base_url: "https://export.arxiv.org/api/query"
-    priority: 4
-    categories:
-      - "physics.geo-ph"   # geophysics
-      - "cond-mat.stat-mech"  # statistical mechanics (relevant for some geo methods)
-  unpaywall:
-    enabled: true
-    base_url: "https://api.unpaywall.org/v2"
-    role: "enrichment"     # not a search source — enriches found DOIs with OA info
+    max_results: 5
+    mode: "all"  # "all" = search all queries, "specific" = only arxiv_specific_queries
 
-paths:
-  base: "~/.hermes/geo_digest"
-  articles_dir: "articles"
-  seen_dois: "seen_dois.txt"
-  articles_db: "articles.jsonl"
-  graphify_output: "graphify-out"
-  octopoda_agent_name: "geo_digest"
+  crossref:
+    role: "enrich"  # Not used for search, only DOI/ISSN lookup
+    enabled: true
+
+  unpaywall:
+    role: "enrich"  # OA status + PDF URL lookup
+    enabled: true
+
+# ── arXiv-specific queries (used when arxiv.mode == "specific") ──
+# These are ML/methods-focused queries that match arXiv's domain well.
+arxiv_specific_queries:
+  - "machine learning seismic phase picking"
+  - "deep learning InSAR deformation monitoring"
+  - "neural network earthquake detection"
+  - "physics-informed neural network geophysics"
+  - "transformer seismic signal processing"
+  - "graph neural network geophysical inversion"
+  - "unsupervised learning landslide detection"
+  - "remote sensing deep learning soil contamination"
+
+# ── Scoring Weights ───────────────────────────────────
+scoring_weights:
+  methodological_transferability: 0.25
+  geo_relevance: 0.25
+  thematic_alignment: 0.20
+  publication_potential: 0.15
+  practical_output: 0.10
+  novelty: 0.05
+
+# ── Source Reliability Weights (multiplier for total score) ──
+source_weights:
+  doaj:              1.08   # peer-reviewed OA journals
+  semantic_scholar:  1.10   # best abstracts + citation data
+  openalex:          1.05   # good metadata + topics
+  core_ac:           1.05   # verified OA content
+  crossref:          1.00   # baseline (enrich only)
+  arxiv:             0.95   # preprint, not peer-reviewed
+
+# ── Digest Settings ───────────────────────────────────
+articles_per_run: 25
+min_year: 2023
+relevance_threshold: 2.5
+
+# ── Topics & Queries ──────────────────────────────────
+topics:
+  seismology_and_monitoring:
+    name_ru: "Сейсмика и мониторинг"
+    queries:
+      - "seismic monitoring South Russia"
+      - "earthquake prediction Caucasus"
+      - "seismic hazard assessment North Caucasus"
+      - "induced seismicity oil gas field"
+      - "microseismic monitoring mining"
+      - "radon precursor earthquake"
+      - "electromagnetic precursors seismic activity"
+      - "ground motion prediction site effect"
+      - "seismic tomography crustal structure Caucasus"
+
+  landslides_and_hazards:
+    name_ru: "Оползни и геологические опасности"
+    queries:
+      - "landslide monitoring remote sensing Black Sea coast"
+      - "slope stability analysis rainfall trigger"
+      - "debris flow modeling prediction"
+      - "InSAR ground deformation landslide"
+      - "rockfall risk assessment highway"
+      - "soil creep gravitational slope"
+      - "liquefaction soil earthquake"
+      - "early warning system landslide"
+
+  geoecology_and_contamination:
+    name_ru: "Геоэкология и загрязнение"
+    queries:
+      - "heavy metals soil contamination mining"
+      - "gold mine tailings environmental impact"
+      - "soil remediation phytoremediation heavy metal"
+      - "bioavailability heavy metal soil plant"
+      - "geochemical anomaly exploration environment"
+      - "acid mine drainage treatment"
+      - "urban soil pollution trace element"
+      - "agricultural soil heavy metal accumulation"
+
+  mud_volcanoes_and_geothermal:
+    name_ru: "Грязевые вулканы и геотермал"
+    queries:
+      - "mud volcano eruption mechanism"
+      - "mud volcano monitoring geodesy"
+      - "geothermal gradient basin sedimentary"
+      - "mud volcano fluid geochemistry"
+      - "methane emission mud volcano"
+      - "mud volcano paroxysm eruption"
+
+  climate_and_coastal:
+    name_ru: "Климат и береговые процессы"
+    queries:
+      - "Black Sea level change coastal erosion"
+      - "coastal vulnerability climate change"
+      - "storm surge flooding Black Sea"
+      - "shoreline change detection remote sensing"
+      - "delta evolution sediment transport"
+      - "sea level rise impact coastal infrastructure"
+
+  ml_and_data_methods:
+    name_ru: "ML и методы данных в геологии"
+    queries:
+      - "machine learning geological data analysis"
+      - "deep learning mineral prospectivity mapping"
+      - "neural network seismic interpretation"
+      - "random forest landslide susceptibility"
+      - "satellite image classification geological feature"
+      - "physics-informed neural network subsurface"
+      - "transfer learning remote sensing geoscience"
+      - "anomaly detection geochemical exploration"
+
+  water_resources_and_hydrogeology:
+    name_ru: "Водные ресурсы и гидрогеология"
+    queries:
+      - "groundwater contamination heavy metal"
+      - "aquifer vulnerability assessment"
+      - "water quality monitoring river basin"
+      - "drought prediction hydrological model"
+      - "subsurface flow modeling fractured rock"
+      - "seawater intrusion coastal aquifer"

@@ -103,204 +103,6 @@ def reconstruct_abstract(inv_index: dict) -> str:
     # Sort by position and join
     return " ".join(positions[k] for k in sorted(positions.keys()))
 
-
-def search_openalex(query: str, per_page: int = 25, min_year: int = 2023) -> list[dict]:
-    """Search OpenAlex API. Free, no key required."""
-    filters = [f"publication_year:>{min_year}", "type:article"]
-    params = {
-        "search": query,
-        "filter": ",".join(filters),
-        "sort": "cited_by_count:desc",
-        "per_page": per_page,
-        "select": "doi,title,publication_year,authorships,institutions,"
-                  "primary_location,cited_by_count,open_access,topics,type,"
-                  "abstract_inverted_index",
-    }
-    url = f"https://api.openalex.org/works?{urllib.parse.urlencode(params)}"
-    results = []
-    req = urllib.request.Request(url, headers={"User-Agent": "GeoDigest/1.0 (mailto:research@example.com)"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        for w in data.get("results", []):
-            # Guard: skip malformed entries where w is None or missing fields
-            if not w or not isinstance(w, dict):
-                continue
-            # Filter None elements from lists (OpenAlex sometimes returns null in arrays)
-            authorships = [a for a in w.get("authorships", []) if a and isinstance(a, dict)]
-            authors = [a.get("author", {}).get("display_name", "")
-                       for a in authorships]
-            institutions_raw = []
-            for a in authorships:
-                for inst in a.get("institutions", []):
-                    if inst and isinstance(inst, dict):
-                        institutions_raw.append(inst.get("display_name", ""))
-            topics_list = [t for t in w.get("topics", []) if t and isinstance(t, dict)]
-            topics = [t.get("display_name", "") for t in topics_list]
-            oa = w.get("open_access", {}) or {}
-            # Reconstruct abstract from inverted index
-            inv_idx = w.get("abstract_inverted_index")
-            abstract = reconstruct_abstract(inv_idx) if inv_idx else ""
-
-            # Fix: OpenAlex may return title as array of chars or words
-            raw_title = w.get("title", [])
-            if isinstance(raw_title, list):
-                # If most elements are single characters, join without space
-                if raw_title and len(str(raw_title[0])) <= 2:
-                    title_clean = "".join(str(p) for p in raw_title)
-                else:
-                    title_clean = " ".join(str(p) for p in raw_title)
-            else:
-                title_clean = str(raw_title)
-            title_clean = title_clean.replace("  ", " ").strip()
-
-            results.append({
-                "source": "openalex",
-                "doi": (w.get("doi") or "").replace("https://doi.org/", ""),
-                "title": title_clean,
-                "year": w.get("publication_year"),
-                "authors": "; ".join(authors[:6]),
-                "institutions": list(set(institutions_raw))[:5],
-                "journal": (w.get("primary_location") or {}).get("source", {}).get("display_name", ""),
-                "abstract": abstract,
-                "citations": w.get("cited_by_count", 0),
-                "references": w.get("referenced_works_count", 0),
-                "topics": topics,
-                "is_oa": oa.get("oa_url") is not None,
-                "oa_url": oa.get("oa_url", ""),
-                "url": w.get("id", ""),
-            })
-    return results
-
-
-# ── Semantic Scholar Search ────────────────────────────────────
-def search_semantic_scholar(query: str, limit: int = 25, min_year: int = 2023) -> list[dict]:
-    """Search Semantic Scholar API. Free tier, no key needed."""
-    params = {
-        "query": query,
-        "limit": limit,
-        "year": f"{min_year}-2026",
-        "fields": "externalIds,title,year,authors,abstract,journal,"
-                  "citationCount,referenceCount,openAccessPaper,"
-                  "fieldsOfStudy,publicationTypes,venue,isOpenAccess",
-    }
-    url = f"https://api.semanticscholar.org/graph/v1/paper/search?{urllib.parse.urlencode(params)}"
-    results = []
-    req = urllib.request.Request(url, headers={"User-Agent": "GeoDigest/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        for p in data.get("data", []):
-            ext_ids = p.get("externalIds", {}) or {}
-            authors = [a.get("name", "") for a in p.get("authors", [])]
-            fos = p.get("fieldsOfStudy", []) or []
-            pub_types = p.get("publicationTypes", []) or []
-            oa = p.get("openAccessPaper") or {}
-            results.append({
-                "source": "semantic_scholar",
-                "doi": ext_ids.get("DOI", ""),
-                "title": p.get("title", ""),
-                "year": p.get("year"),
-                "authors": "; ".join(authors[:6]),
-                "institutions": [],
-                "journal": p.get("venue", ""),
-                "abstract": p.get("abstract", "") or "",
-                "citations": p.get("citationCount", 0),
-                "references": p.get("referenceCount", 0),
-                "topics": fos,
-                "is_oa": p.get("isOpenAccess", False),
-                "oa_url": oa.get("url", ""),
-                "url": "",
-                "pub_types": pub_types,
-            })
-    return results
-
-
-# ── CrossRef Search ────────────────────────────────────────────
-def search_crossref(query: str, rows: int = 15, min_year: int = 2023) -> list[dict]:
-    """Search CrossRef API. Free, no key needed, 140M+ DOI records.
-    Best for: broadest metadata coverage across all publishers."""
-    date_from = f"from-pub-date:{min_year}-01-01"
-    params = {
-        "query": query,
-        "filter": f"{date_from},type:journal-article",
-        "rows": rows,
-        "sort": "published",
-        "order": "desc",
-        "select": "DOI,title,abstract,author,published-print,published-online,"
-                  "container-title,URL,is-referenced-by-count,"
-                  "link,subject",
-    }
-    url = f"https://api.crossref.org/works?{urllib.parse.urlencode(params)}"
-    results = []
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "GeoDigest/1.0 (mailto:research@example.com)"
-    })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        for item in data.get("message", {}).get("items", []):
-            # Title — may be list
-            raw_title = item.get("title", [""])[0] if item.get("title") else ""
-
-            # Abstract — CrossRef returns JATS XML tags, strip them
-            abstract_raw = item.get("abstract", "") or ""
-            import re
-            abstract = re.sub(r"<[^>]+>", "", abstract_raw).strip()
-
-            # Authors
-            authors_list = item.get("author", []) or []
-            authors = "; ".join(
-                f"{a.get('given', '')} {a.get('family', '')}".strip()
-                for a in authors_list[:6]
-            )
-
-            # Date — prefer print over online
-            pub_date = (
-                item.get("published-print") or
-                item.get("published-online") or {}
-            )
-            date_parts = pub_date.get("date-parts", [[None]])[0]
-            year = date_parts[0] if date_parts else None
-
-            # Journal
-            journal = (item.get("container-title") or [""])[0]
-
-            # Citation counts
-            cited = item.get("is-referenced-by-count", 0)
-            refs = len(item.get("reference", []) or [])
-
-            # Links — extract PDF/HTML URLs from link array
-            links = item.get("link", []) or []
-            pdf_url = ""
-            html_url = item.get("URL", "")
-            for link in links:
-                content_type = link.get("content-type", "")
-                if "pdf" in content_type:
-                    pdf_url = link.get("URL", "")
-
-            # Subjects
-            subjects = []
-            for s in (item.get("subject") or []):
-                if isinstance(s, str):
-                    subjects.append(s)
-
-            results.append({
-                "source": "crossref",
-                "doi": (item.get("DOI") or "").replace("https://doi.org/", ""),
-                "title": raw_title.strip(),
-                "year": year,
-                "authors": authors,
-                "institutions": [],
-                "journal": journal,
-                "abstract": abstract,
-                "citations": cited,
-                "references": refs,
-                "topics": subjects,
-                "is_oa": bool(pdf_url),
-                "oa_url": pdf_url or html_url,
-                "url": html_url,
-            })
-    return results
-
-
 # ── Unpaywall Lookup ──────────────────────────────────────────
 def lookup_unpaywall(doi: str, email: str = None) -> dict:
     """Lookup OA status and PDF URL for a DOI via Unpaywall.
@@ -347,106 +149,6 @@ def lookup_unpaywall(doi: str, email: str = None) -> dict:
     except Exception as e:
         print(f"  [Unpaywall error for {doi[:20]}...] {e}", file=sys.stderr)
         return {}
-
-
-# ── Europe PMC Search ──────────────────────────────────────────
-def search_europe_pmc(query: str, page_size: int = 10, min_year: int = 2023) -> list[dict]:
-    """Search Europe PMC API. Free, no key. Good for full-text OA + earth sciences."""
-    params = {
-        "query": query,
-        "format": "json",
-        # "resultType": "core",       # Removed: too restrictive, miss geo papers
-        "pageSize": page_size,
-        "sort": "P_DATE desc",
-        "src": "all",
-    }
-    url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?{urllib.parse.urlencode(params)}"
-    results = []
-    req = urllib.request.Request(url, headers={"User-Agent": "GeoDigest/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        for res in data.get("resultList", {}).get("result", []):
-            authors_list = res.get("authorList", {}).get("author", []) or []
-            authors = "; ".join(a.get("fullName", "") for a in authors_list[:6])
-
-            # Full-text URLs
-            ft_urls = res.get("fullTextUrlList", {}).get("fullTextUrl", []) or []
-            pdf_url = ""
-            for ft in ft_urls:
-                if ft.get("documentStyle") == "pdf":
-                    pdf_url = ft.get("url", "")
-                    break
-
-            results.append({
-                "source": "europe_pmc",
-                "doi": res.get("doi", ""),
-                "title": res.get("title", ""),
-                "year": (res.get("firstPublicationDate", "") or "")[:4],
-                "authors": authors,
-                "institutions": [],
-                "journal": res.get("journalTitle", ""),
-                "abstract": res.get("abstractText", ""),
-                "citations": res.get("citedByCount", 0),
-                "references": 0,
-                "topics": [],
-                "is_oa": bool(pdf_url),
-                "oa_url": pdf_url,
-                "url": "",
-                "pmcid": res.get("pmcid", ""),
-                "has_fulltext": bool(ft_urls),
-            })
-    return results
-
-
-# ── arXiv Search ───────────────────────────────────────────────
-def search_arxiv(query: str, max_results: int = 15) -> list[dict]:
-    """Search arXiv API. Good for preprints + ML methods in geophysics."""
-    # Restrict to geophysics + relevant cross-disciplinary categories
-    cats = "cat:physics.geo-ph OR cat:cond-mat.stat-mech OR cat:cs.LG OR cat:eess.GV"
-    params = {
-        "search_query": f"({cats}) AND all:{query}",
-        "start": 0,
-        "max_results": max_results,
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    url = f"http://export.arxiv.org/api/query?{urllib.parse.urlencode(params)}"
-    results = []
-    import xml.etree.ElementTree as ET
-    req = urllib.request.Request(url, headers={"User-Agent": "GeoDigest/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        root = ET.fromstring(resp.read())
-        ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-        for entry in root.findall("atom:entry", ns):
-            title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
-            summary = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
-            published = entry.find("atom:published", ns).text[:4]
-            authors = [a.find("atom:name", ns).text for a in entry.findall("atom:author", ns)]
-            cats = [c.get("term", "") for c in entry.findall("atom:category", ns)]
-            arxiv_id = entry.find("atom:id", ns).text
-            links = entry.findall("atom:link", ns)
-            pdf_url = ""
-            for link in links:
-                if link.get("title") == "pdf":
-                    pdf_url = link.get("href", "")
-            results.append({
-                "source": "arxiv",
-                "doi": arxiv_id.replace("http://arxiv.org/abs/", "arXiv:"),
-                "title": title,
-                "year": int(published) if published.isdigit() else 2024,
-                "authors": "; ".join(authors[:6]),
-                "institutions": [],
-                "journal": "arXiv preprint",
-                "abstract": summary,
-                "citations": 0,
-                "references": 0,
-                "topics": cats,
-                "is_oa": True,
-                "oa_url": pdf_url,
-                "url": arxiv_id,
-                "categories": cats,
-            })
-    return results
 
 
 # ── Relevance Gate ───────────────────────────────────────────────
@@ -746,6 +448,20 @@ def score_article(article: dict, config: dict) -> dict:
     total = (trans_score * w_trans + geo_score * w_geo + theme_score * w_theme +
              pub_score * w_pub + practical_score * w_pract + novelty_score * w_novel)
 
+    # Source reliability multiplier (from source weight config)
+    src = article.get("source", "")
+    SOURCE_WEIGHTS = {
+        "semantic_scholar": 1.10,
+        "doaj":             1.08,
+        "openalex":         1.05,
+        "core_ac":          1.05,
+        "crossref":         1.00,
+        "arxiv":            0.95,
+        "europe_pmc":       1.00,
+    }
+    src_weight = SOURCE_WEIGHTS.get(src, 1.0)
+    total_adj = min(1.0, total * src_weight)  # cap at 1.0
+
     article["scores"] = {
         "transferability": round(trans_score, 3),
         "geographic_analogy": round(geo_score, 3),
@@ -753,8 +469,8 @@ def score_article(article: dict, config: dict) -> dict:
         "publication_potential": round(pub_score, 3),
         "practical_output": round(practical_score, 3),
         "novelty": round(novelty_score, 3),
-        "total": round(total, 3),  # взвешенная сумма 0-1
-        "total_5": round(total * 5, 2),  # шкала 0-5 для UI [FIX A]
+        "total": round(total_adj, 3),  # взвешенная сумма 0-1 (с source weight)
+        "total_5": round(total_adj * 5, 2),  # шкала 0-5 для UI [FIX A]
     }
     # [FIX B] Обоснования для каждого критерия
     article["score_explanations"] = explanations
@@ -1173,60 +889,14 @@ def build_digest(config: dict) -> str:
     # Skip sources that return rate-limit / server errors consecutively
     _skipped_sources = set()   # sources disabled for this run
     _source_fails = {}         # source -> consecutive fail count
-    # Per-source tolerance: S2 (shared pool) gets more chances before disabling
-    _SOURCE_MAX_FAILS = {
-        "S2": 3,               # shared pool is flaky, give 3 chances
-        "OpenAlex": 2,
-        "CrossRef": 2,
-        "Europe PMC": 2,
-        "arXiv": 2,
-    }
-    _DEFAULT_MAX_FAILS = 2
+    # ── Search via sources module ─────────────────────────────
+    from sources import get_active_sources, search_all_sources, dedup_and_merge
 
-    def _call_source(name, fn, *args, **kwargs):
-        """Call a search source with skip-on-failure + exponential backoff."""
-        if name in _skipped_sources:
-            return []
-        try:
-            results = fn(*args, **kwargs)
-            _source_fails[name] = 0  # reset on success
-            return results
-        except Exception as e:
-            err_str = str(e)
-            code = ""
-            if hasattr(e, "code"):
-                code = str(e.code)
-            elif "HTTP" in err_str:
-                import re
-                m = re.search(r'(\d{3})', err_str)
-                code = m.group(1) if m else ""
-
-            # Transient errors: 429, 5xx, timeouts, connection errors
-            is_transient = (
-                code in ("429", "502", "503", "504")
-                or "429" in err_str
-                or "rate" in err_str.lower()
-                or "timeout" in err_str.lower()
-                or "timed out" in err_str.lower()
-                or "connection" in err_str.lower()
-                or "urlopen" in err_str.lower()
-            )
-
-            _source_fails[name] = _source_fails.get(name, 0) + 1
-            max_fails = _SOURCE_MAX_FAILS.get(name, _DEFAULT_MAX_FAILS)
-
-            if is_transient and _source_fails[name] >= max_fails:
-                _skipped_sources.add(name)
-                print(f"    [{name} DISABLED] {e} (failed {_source_fails[name]}x, skipping remaining queries)",
-                      file=sys.stderr)
-            else:
-                print(f"    [{name} error {_source_fails[name]}/{max_fails}] {e}", file=sys.stderr)
-                # Exponential backoff: wait before next call to same source
-                if is_transient:
-                    backoff = min(2 ** _source_fails[name], 15)  # 2s, 4s, 8s... max 15s
-                    print(f"    [{name} backing off {backoff}s...]", file=sys.stderr)
-                    time.sleep(backoff)
-            return []
+    active_sources = get_active_sources()
+    src_names = [s.name() for s in active_sources]
+    print(f"[*] Active sources: {', '.join(src_names)}")
+    if not src_names:
+        print("[!] No sources available! Check API keys in .env", file=sys.stderr)
 
     all_candidates = []
 
@@ -1238,43 +908,16 @@ def build_digest(config: dict) -> str:
         for q in queries:
             print(f"  Searching: {q[:60]}...")
 
-            # Search all sources (with auto-skip on repeated failures)
-            results = []
+            # Run all active sources with built-in rate limiting
+            results = search_all_sources(active_sources, q, min_year=min_year)
 
-            # 1. CrossRef — primary metadata source (fastest, broadest)
-            cr_results = _call_source("CrossRef", search_crossref, q, rows=10, min_year=min_year)
-            results.extend(cr_results)
-            if cr_results:
-                print(f"    CrossRef: {len(cr_results)} results")
-            time.sleep(0.5)
-
-            # 2. OpenAlex
-            oa_results = _call_source("OpenAlex", search_openalex, q, per_page=10, min_year=min_year)
-            results.extend(oa_results)
-            if oa_results:
-                print(f"    OpenAlex: {len(oa_results)} results")
-            time.sleep(2.0)
-
-            # 3. Europe PMC — full-text OA + earth sciences
-            pmc_results = _call_source("Europe PMC", search_europe_pmc, q, page_size=5, min_year=min_year)
-            results.extend(pmc_results)
-            if pmc_results:
-                print(f"    Europe PMC: {len(pmc_results)} results")
-            time.sleep(1.5)
-
-            # 4. Semantic Scholar (shared pool without API key — keep requests minimal)
-            s2_results = _call_source("S2", search_semantic_scholar, q, limit=5, min_year=min_year)
-            results.extend(s2_results)
-            if s2_results:
-                print(f"    S2: {len(s2_results)} results")
-            time.sleep(2.5 if "S2" not in _skipped_sources else 0.2)  # S2 shared pool: conservative
-
-            # 5. arXiv
-            ax_results = _call_source("arXiv", search_arxiv, q, max_results=5)
-            results.extend(ax_results)
-            if ax_results:
-                print(f"    arXiv: {len(ax_results)} results")
-            time.sleep(2.5)  # arXiv recommends 3s delay; 2.5s is safe for burst usage
+            if results:
+                src_counts: dict[str, int] = {}
+                for r in results:
+                    sn = r.get("source", "?")
+                    src_counts[sn] = src_counts.get(sn, 0) + 1
+                for sn, cnt in sorted(src_counts.items()):
+                    print(f"    {sn}: {cnt} results")
 
             for r in results:
                 r["_topic_key"] = topic_key
@@ -1283,36 +926,12 @@ def build_digest(config: dict) -> str:
 
             all_candidates.extend(results)
 
-    # ── Source health summary ───────────────────────────────────
-    if _skipped_sources:
-        print(f"\n[!] Sources disabled (rate limit / errors): {', '.join(sorted(_skipped_sources))}")
-    if _source_fails:
-        for src, fails in sorted(_source_fails.items()):
-            if fails > 0 and src not in _skipped_sources:
-                print(f"    {src}: {fails} error(s) (recovered)")
-
     print(f"\n[*] Total raw results: {len(all_candidates)}")
 
-    # Dedup by DOI (or title hash)
-    unique = {}
-    for art in all_candidates:
-        doi = art.get("doi", "")
-        if not doi:
-            id_key = title_hash(art.get("title", ""), str(art.get("year", "")))
-        else:
-            id_key = doi
+    # ── Field-level dedup & merge (via sources module) ────────
+    unique_articles, unique_index = dedup_and_merge(all_candidates, seen)
 
-        if id_key in seen:
-            continue
-        if id_key in unique:
-            # Keep the one with more info (prefer S2 for abstracts)
-            existing = unique[id_key]
-            if not existing.get("abstract") and art.get("abstract"):
-                unique[id_key] = art
-            continue
-        unique[id_key] = art
-
-    candidates = list(unique.values())
+    candidates = list(unique_articles)
     print(f"[*] After dedup: {len(candidates)} new articles")
 
     # ── Unpaywall Enrichment: check OA status for all unique articles ──
