@@ -153,11 +153,15 @@ def _run_digest_bg(job_id: str):
             returncode = proc.wait()
             _poll_digest_log(log_file, step_keywords)  # final update
 
+            status = "done" if returncode == 0 else "error"
             _update_job("digest",
-                status="done" if returncode == 0 else "error",
+                status=status,
                 finished_at=datetime.now(timezone.utc).isoformat(),
                 stdout=_tail_file(log_file, 2000),
             )
+
+            # Save run summary for history (fix: was never called!)
+            _save_digest_run_summary(job_id, log_file, status)
 
     except Exception as e:
         _update_job("digest", status="error", stderr=str(e),
@@ -167,6 +171,91 @@ def _run_digest_bg(job_id: str):
 def _poll_digest_log(log_file: Path, keywords: dict):
     """Backward-compatible wrapper for digest log polling."""
     _poll_job_log(log_file, keywords, job_type="digest")
+
+
+def _save_digest_run_summary(job_id: str, log_file: Path, status: str):
+    """Parse digest log and save run summary for history display.
+
+    Extracts key metrics from log output (articles found/selected,
+    duplicates skipped, sources used, topics searched) and writes
+    run_{job_id}.json via run_manager.save_run_summary().
+    """
+    try:
+        from run_manager import save_run_summary
+        import re
+
+        log_text = log_file.read_text(errors="ignore") if log_file.exists() else ""
+
+        # Parse metrics from log lines
+        articles_found = 0
+        articles_selected = 0
+        duplicates_skipped = 0
+        sources_used = {}
+        topics_searched = []
+
+        for line in log_text.splitlines():
+            # "Total raw results: N"
+            m = re.search(r"Total raw results:\s*(\d+)", line)
+            if m:
+                articles_found = int(m.group(1))
+
+            # "Selected: N articles"
+            m = re.search(r"Selected:\s*(\d+)\s*articles?", line)
+            if m:
+                articles_selected = int(m.group(1))
+
+            # "After dedup: N (skipped X)"
+            m = re.search(r"After dedup:\s*\d+\s*\(skipped\s*(\d+)", line)
+            if m:
+                duplicates_skipped = int(m.group(1))
+
+            # Source counts: "openalex: 42 results"
+            m = re.search(r"\s+(\w[\w_]*):\s*(\d+)\s*results", line)
+            if m:
+                src_name = m.group(1)
+                found = int(m.group(2))
+                if src_name not in sources_used:
+                    sources_used[src_name] = {"found": 0}
+                sources_used[src_name]["found"] += found
+
+            # Topic header: "[*] Topic: Name (N queries)"
+            m = re.search(r"Topic:\s*(.+?)\s*\(", line)
+            if m and "Topic:" in line:
+                topics_searched.append(m.group(1).strip())
+
+        # Calculate duration
+        started_at = _get_job("digest").get("started_at")
+        finished_at = _get_job("digest").get("finished_at")
+        duration_sec = 0
+        if started_at and finished_at:
+            try:
+                t0 = datetime.fromisoformat(started_at)
+                t1 = datetime.fromisoformat(finished_at)
+                duration_sec = int((t1 - t0).total_seconds())
+            except Exception:
+                pass
+
+        run_data = {
+            "id": job_id,
+            "status": status,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_sec": duration_sec,
+            "articles_found": articles_found,
+            "articles_selected": articles_selected,
+            "duplicates_skipped": duplicates_skipped,
+            "sources_used": sources_used,
+            "topics_searched": topics_searched,
+            "log_lines": len(log_text.splitlines()) if log_text else 0,
+        }
+
+        save_run_summary(run_data)
+        print(f"[run_history] Saved summary for {job_id}: "
+              f"found={articles_found} selected={articles_selected} "
+              f"dups={duplicates_skipped} status={status}")
+
+    except Exception as e:
+        print(f"[run_history] WARNING: Failed to save run summary: {e}", file=sys.stderr)
 
 
 def _tail_file(path: Path, max_chars: int = 2000) -> str:
