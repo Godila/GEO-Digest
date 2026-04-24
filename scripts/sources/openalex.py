@@ -90,7 +90,7 @@ class OpenAlexSource(SourceSearcher):
                     "year": w.get("publication_year"),
                     "authors": "; ".join(authors[:6]),
                     "institutions": list(set(institutions_raw))[:5],
-                    "journal": (w.get("primary_location") or {}).get("source", {}).get("display_name", ""),
+                    "journal": ((w.get("primary_location") or {}).get("source") or {}).get("display_name", ""),
                     "abstract": abstract,
                     "citations": w.get("cited_by_count", 0),
                     "references": w.get("referenced_works_count", 0),

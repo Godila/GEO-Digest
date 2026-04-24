@@ -30,12 +30,16 @@ class DoajSource(SourceSearcher):
         return 0.5  # Very generous: 10 req/sec allowed
 
     def search(self, query: str, page_size: int = 15, min_year: int = 2023, **kwargs) -> list[dict]:
+        # DOAJ API v1: query is in the PATH, not a query param
+        # Correct: /api/v1/search/articles/{query}?pageSize=5
+        # Wrong:   /api/v1/search/articles?query={query}  → 404
+        import urllib.parse
         params = {
-            "query": query,
             "pageSize": page_size,
             "sort": "relevance:desc",
         }
-        url = f"https://doaj.org/api/v1/search/articles"
+        safe_query = urllib.parse.quote(query)
+        url = f"https://doaj.org/api/v1/search/articles/{safe_query}"
         results = []
         resp = requests.get(url, params=params, timeout=30, headers={
             "User-Agent": "GeoDigest/1.0 (https://github.com/Godila/GEO-Digest)",
