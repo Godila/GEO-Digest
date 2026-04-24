@@ -102,7 +102,7 @@ def _run_digest_bg(job_id: str):
         "--run-id", job_id,
     ]
 
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "GEO_DATA_DIR": str(DATA_DIR)}
 
     try:
         log_file = RUNS_DIR / f"run_{job_id}.log"

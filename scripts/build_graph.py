@@ -32,8 +32,9 @@ from llm_client import call_minimax
 
 # ── Paths ───────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parent.parent
-ARTICLES_DB = BASE / "articles.jsonl"
-GRAPH_OUTPUT = BASE / "graph_data.json"
+DATA_DIR = Path(os.environ.get("GEO_DATA_DIR", BASE / "data"))
+ARTICLES_DB = DATA_DIR / "articles.jsonl"
+GRAPH_OUTPUT = DATA_DIR / "graph_data.json"
 CORPUS_DIR = BASE / "corpus"
 GRAPHIFY_OUT = BASE / "graphify-out"
 

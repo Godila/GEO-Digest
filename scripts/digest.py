@@ -22,11 +22,11 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 from llm_client import call_llm as call_llm
 
-# ── Paths ──────────────────────────────────────────────────────
+# ── Paths ───────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parent.parent
-ARTICLES_DIR = BASE / "articles"
-SEEN_DOIS = BASE / "seen_dois.txt"
-ARTICLES_DB = BASE / "articles.jsonl"
+DATA_DIR = Path(os.environ.get("GEO_DATA_DIR", BASE / "data"))
+ARTICLES_DB = DATA_DIR / "articles.jsonl"
+SEEN_DOIS = DATA_DIR / "seen_dois.txt"
 GRAPHIFY_OUT = BASE / "graphify-out"
 CONFIG_PATH = BASE / "config.yaml"
 
