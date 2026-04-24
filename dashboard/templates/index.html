@@ -52,20 +52,49 @@
         }
         .stat-badge b { color: var(--text); }
 
-        /* ── Layout ─────────────────── */
-        .layout { display: grid;
-            grid-template-columns: 1fr 420px;
-            height: calc(100vh - 53px); }
-        @media (max-width: 1024px) {
-            .layout { grid-template-columns: 1fr; }
-            .graph-panel { display: none; }
+        /* ── Layout (resizable split) ────── */
+        .layout {
+            display: flex;
+            height: calc(100vh - 53px);
+            overflow: hidden;
         }
-        .side-panel { overflow-y: auto; padding: 12px; }
+        .side-panel {
+            flex: 0 0 var(--split-pos, 45%);
+            min-width: 300px;
+            max-width: 70%;
+            overflow-y: auto;
+            padding: 12px;
+            border-right: 1px solid var(--border);
+        }
+        /* Drag handle */
+        .resize-handle {
+            flex: 0 0 5px;
+            cursor: col-resize;
+            background: var(--border);
+            transition: background 0.15s;
+            position: relative;
+            z-index: 20;
+        }
+        .resize-handle:hover,
+        .resize-handle.dragging { background: var(--blue); }
+        .resize-handle::after {
+            content: '⋮';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-muted);
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .resize-handle:hover::after { opacity: 1; }
 
         /* ── Graph Panel (right side) ── */
         .graph-panel {
             position: relative;
-            border-left: 1px solid var(--border);
+            flex: 1;
+            min-width: 400px;
             overflow: hidden;
         }
         #cy { width: 100%; height: 100%; background: var(--bg); }
@@ -808,6 +837,9 @@
         </div>
     </div>
 
+    <!-- Resize Handle -->
+    <div class="resize-handle" id="resizeHandle"></div>
+
     <!-- Graph Panel (right side) -->
     <div class="graph-panel">
         <div id="cy"></div>
@@ -857,8 +889,63 @@ const TYPE_COLORS = {
 
 // ── Init ──────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+    initResizeHandle();
     await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources(), initGraph()]);
 });
+
+// ── Resizable Split Panel ───────────────────
+function initResizeHandle() {
+    const handle = document.getElementById('resizeHandle');
+    const layout = document.querySelector('.layout');
+    const sidePanel = document.querySelector('.side-panel');
+    if (!handle || !layout || !sidePanel) return;
+
+    // Restore saved position
+    const saved = localStorage.getItem('geo_split_pos');
+    if (saved) {
+        document.documentElement.style.setProperty('--split-pos', saved + '%');
+    }
+
+    let dragging = false;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rect = layout.getBoundingClientRect();
+        let pct = ((e.clientX - rect.left) / rect.width) * 100;
+        // Clamp: side 30-70%, graph gets the rest
+        pct = Math.max(30, Math.min(70, pct));
+        document.documentElement.style.setProperty('--split-pos', pct + '%');
+        // Resize cytoscape
+        if (window.cy) cy.resize();
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        // Save position
+        const pos = getComputedStyle(document.documentElement).getPropertyValue('--split-pos');
+        localStorage.setItem('geo_split_pos', pos.replace('%', '').trim());
+        if (window.cy) cy.resize();
+    });
+
+    // Double-click to reset to 45/55
+    handle.addEventListener('dblclick', () => {
+        document.documentElement.style.setProperty('--split-pos', '45%');
+        localStorage.setItem('geo_split_pos', '45');
+        if (window.cy) cy.resize();
+    });
+}
 
 // ── API helpers ────────────────────────────────
 async function api(path, method = 'GET', body = null) {
@@ -1251,6 +1338,11 @@ async function initGraph() {
         showEdgeTooltip(evt.target, evt.renderedPosition);
     });
 
+    // Resize on window resize
+    window.addEventListener('resize', () => { cy.resize(); });
+}
+
+function buildLegend() {
     cy.on('tap', function(evt) {
         if (evt.target === cy) {
             closeArticleModal();
@@ -1258,11 +1350,9 @@ async function initGraph() {
             hideTooltip();
         }
     });
-}
 
-function buildLegend() {
     const items = [
-        { color: COLORS.article, label: 'Статья' },
+         { color: COLORS.article, label: 'Статья' },
         { color: COLORS.topic, label: 'Тема' },
         { color: COLORS.article_type, label: 'Тип' },
         { color: COLORS.source, label: 'Источник' },
