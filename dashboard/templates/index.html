@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ГЕО-Дайджест — Граф знаний</title>
+    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #1c2333;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --orange: #d29922;
+            --red: #f85149;
+            --purple: #bc8cff;
+            --cyan: #39d2c0;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ── Header ─────────────────── */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header h1 { font-size: 18px; font-weight: 600; }
+        .header h1 span { color: var(--accent); }
+        .header-stats { display: flex; gap: 16px; font-size: 13px; }
+        .stat-badge {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 4px 10px;
+            border-radius: 12px;
+            color: var(--text-muted);
+        }
+        .stat-badge b { color: var(--text); }
+        .header-actions { display: flex; gap: 8px; }
+
+        /* ── Layout ─────────────────── */
+        .layout { display: grid;
+            grid-template-columns: 1fr 420px;
+            height: calc(100vh - 53px); }
+        @media (max-width: 1024px) {
+            .layout { grid-template-columns: 1fr; grid-template-rows: 50vh auto; }
+        }
+
+        /* ── Graph Panel ────────────── */
+        .graph-panel {
+            position: relative;
+            border-right: 1px solid var(--border);
+            overflow: hidden;
+        }
+        #cy { width: 100%; height: 100%; background: var(--bg); }
+        .graph-overlay {
+            position: absolute;
+            top: 12px; left: 12px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .graph-btn {
+            background: rgba(22,27,34,.85);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            backdrop-filter: blur(4px);
+        }
+        .graph-btn:hover { background: var(--bg-hover); }
+        .graph-legend {
+            position: absolute;
+            bottom: 12px; left: 12px;
+            z-index: 10;
+            background: rgba(22,27,34,.88);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11px;
+            backdrop-filter: blur(4px);
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+        /* ── Side Panel ─────────────── */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg-card);
+        }
+
+        /* Tabs */
+        .tabs { display: flex; border-bottom: 1px solid var(--border); }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            border-bottom: 2px solid transparent;
+            transition: all .15s;
+        }
+        .tab:hover { color: var(--text); background: var(--bg-hover); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        /* Tab content */
+        .tab-content { display: none; flex-direction: column; flex: 1; overflow-y: auto; }
+        .tab-content.active { display: flex; }
+
+        /* Filters bar */
+        .filters {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .filter-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            outline: none;
+        }
+        .filter-select:focus { border-color: var(--accent); }
+
+        /* Article table */
+        .article-list { flex: 1; overflow-y: auto; padding: 8px; }
+        .article-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all .15s;
+        }
+        .article-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+        .article-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+        .card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px; }
+        .card-title { font-size: 13px; font-weight: 600; line-height: 1.35; flex: 1; margin-right: 8px;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+        .card-score {
+            font-size: 12px; font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            white-space: nowrap;
+        }
+        .score-high { background: rgba(63,185,80,.15); color: var(--green); }
+        .score-mid { background: rgba(210,153,34,.15); color: var(--orange); }
+        .score-low { background: rgba(139,148,158,.15); color: var(--text-muted); }
+
+        .card-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+        .card-meta span { display: flex; align-items: center; gap: 3px; }
+        .tag {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 10px;
+        }
+        .tag-topic { border-color: rgba(88,166,255,.3); color: var(--accent); }
+        .tag-type { border-color: rgba(188,140,255,.3); color: var(--purple); }
+        .tag-oa { border-color: rgba(63,185,80,.3); color: var(--green); }
+        .card-abstract {
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: var(--text-muted);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* Card preview line (compact mode) */
+        .card-preview {
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--text-muted);
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* Action buttons (PDF/DOI) — used in modal header */
+        .action-btn {
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 8px;
+            text-decoration: none; cursor: pointer;
+            transition: opacity .15s; white-space: nowrap;
+        }
+        .action-btn:hover { opacity: .8; }
+        .action-pdf {
+            background: rgba(63,185,80,.15); color: var(--green);
+            border: 1px solid rgba(63,185,80,.3);
+        }
+        .action-doi {
+            background: rgba(88,166,255,.15); color: var(--accent);
+            border: 1px solid rgba(88,166,255,.3);
+        }
+
+        /* ════════════════════════════════════════
+           FULLSCREEN ARTICLE MODAL
+           Replaces old detail-panel
+           ════════════════════════════════════════ */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 40px 20px;
+            overflow-y: auto;
+        }
+        .modal-overlay.open { display: flex; }
+
+        .article-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            width: 100%;
+            max-width: 960px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: modalIn .25s ease-out;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(20px) scale(.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 24px 28px 16px;
+            border-bottom: 1px solid var(--border);
+            gap: 16px;
+        }
+        .modal-title-area { flex: 1; min-width: 0; }
+        .modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.4;
+            color: var(--text);
+        }
+        .modal-original {
+            font-size: 12.5px;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 4px;
+            word-break: break-word;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .modal-close-btn {
+            width: 32px; height: 32px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text-muted);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .15s;
+            flex-shrink: 0;
+        }
+        .modal-close-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text);
+            border-color: #f85149;
+        }
+
+        .modal-body {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 0;
+        }
+        @media (max-width: 768px) {
+            .modal-body { grid-template-columns: 1fr; }
+        }
+
+        .modal-col {
+            padding: 20px 28px;
+        }
+        .modal-col-left {
+            border-right: 1px solid var(--border);
+            background: rgba(13,17,23,0.3);
+        }
+        @media (max-width: 768px) {
+            .modal-col-left { border-right: none; border-bottom: 1px solid var(--border); }
+        }
+
+        .modal-section {
+            margin-bottom: 18px;
+        }
+        .modal-section:last-child { margin-bottom: 0; }
+
+        .modal-label {
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .modal-text {
+            font-size: 13px;
+            line-height: 1.65;
+            color: #d0d7de;
+        }
+        .modal-value {
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+        }
+
+        /* Score explanation in modal */
+        .score-explain {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .score-explain-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .score-explain-name {
+            font-size: 11.5px;
+            color: var(--text-muted);
+            min-width: 120px;
+            flex-shrink: 0;
+        }
+        .score-explain-bar {
+            flex: 1;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .score-explain-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width .4s ease;
+        }
+        .score-explain-val {
+            font-size: 12px;
+            font-weight: 700;
+            min-width: 30px;
+            text-align: right;
+            color: var(--accent);
+        }
+        .score-explain-hint {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            padding-left: 130px;
+        }
+
+        /* LLM content sections */
+        .llm-block {
+            background: rgba(56,139,253,0.06);
+            border: 1px solid rgba(56,139,253,0.15);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+        .llm-block-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .llm-block-body {
+            font-size: 13px;
+            line-height: 1.7;
+            color: #d0d7de;
+            white-space: pre-wrap;
+        }
+
+        /* Similar articles list */
+        .similar-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .similar-item {
+            font-size: 12px;
+            color: var(--accent);
+            text-decoration: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            background: rgba(56,139,253,0.05);
+            border: 1px solid transparent;
+            transition: all .15s;
+            cursor: pointer;
+        }
+        .similar-item:hover {
+            background: rgba(56,139,253,0.1);
+            border-color: rgba(56,139,253,0.2);
+        }
+        .similar-journal {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+        .score-bar-item { font-size: 10px; color: var(--text-muted); }
+        .score-bar-track { height: 3px; background: var(--border); border-radius: 2px; margin-top: 2px; overflow: hidden; }
+        .score-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .3s; }
+
+        /* Stats tab */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 16px; }
+        .stat-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .stat-card-value { font-size: 24px; font-weight: 700; color: var(--accent); }
+        .stat-card-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+        /* Loading */
+        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+        .spinner {
+            display: inline-block; width: 24px; height: 24px;
+            border: 3px solid var(--border); border-top-color: var(--accent);
+            border-radius: 50%; animation: spin .6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Rebuild button */
+        .rebuild-btn {
+            background: linear-gradient(135deg, #238636, #2ea043);
+            color: #fff; border: none; padding: 6px 14px;
+            border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+        }
+        .rebuild-btn:hover { opacity: .9; }
+        .rebuild-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        /* Empty state */
+        .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+        .empty-state h3 { color: var(--text); margin-bottom: 8px; }
+
+        /* Edge tooltip on graph */
+        #tooltip {
+            display: none; position: absolute;
+            background: rgba(22,27,34,.95); border: 1px solid var(--border);
+            border-radius: 6px; padding: 8px 12px; font-size: 11.5px;
+            z-index: 200; pointer-events: none; max-width: 280px;
+            box-shadow: 0 8px 24px rgba(0,0,0,.4); backdrop-filter: blur(8px);
+        }
+        #tooltip .tt-rel { color: var(--accent); font-weight: 600; margin-bottom: 3px; }
+        #tooltip .tt-desc { color: var(--text-muted); line-height: 1.4; }
+
+        /* ── Research Tab ──────────────────────────────── */
+        .research-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+        .research-section:last-child { border-bottom: none; }
+        .research-section-title {
+            font-size: 13px; font-weight: 700; margin-bottom: 12px;
+            color: var(--text); display: flex; align-items: center; gap: 6px;
+        }
+
+        /* Config form */
+        .config-group { margin-bottom: 14px; }
+        .config-label {
+            display: block; font-size: 11.5px; text-transform: uppercase;
+            letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;
+        }
+        .checkbox-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px;
+        }
+        .cb-item {
+            display: flex; align-items: center; gap: 6px; padding: 4px 0;
+            cursor: pointer; font-size: 12.5px; color: var(--text);
+        }
+        .cb-item input[type="checkbox"] {
+            accent-color: var(--accent); width: 15px; height: 15px;
+        }
+        .cb-item:hover { color: var(--accent); }
+        .config-row { display: flex; gap: 16px; margin-bottom: 14px; }
+        .config-field { flex: 1; }
+        .cfg-input {
+            width: 100%; background: var(--bg); border: 1px solid var(--border);
+            color: var(--text); border-radius: 6px; padding: 8px 10px;
+            font-size: 13px; box-sizing: border-box;
+        }
+        .cfg-input:focus { outline: none; border-color: var(--accent); }
+
+        /* Scoring weight sliders */
+        .weight-row {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+        }
+        .weight-label { width: 160px; font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .weight-slider { flex: 1; accent-color: var(--accent); height: 18px; }
+        .weight-value { width: 38px; text-align: right; font-size: 12px; color: var(--accent); font-weight: 600; }
+
+        /* Buttons */
+        .btn-primary {
+            width: 100%; padding: 12px; background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white; border: none; border-radius: 8px; font-size: 14px;
+            font-weight: 700; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(37,99,235,.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-lg { padding: 14px; font-size: 15px; }
+        .btn-danger {
+            width: 100%; padding: 10px; background: rgba(239,68,68,.15);
+            color: #f87171; border: 1px solid rgba(239,68,68,.3); border-radius: 8px;
+            font-size: 13px; cursor: pointer; transition: all 0.2s; margin-top: 10px;
+        }
+        .btn-danger:hover { background: rgba(239,68,68,.25); }
+        .btn-sm { font-size: 11.5px; padding: 2px 8px; border: none; background: none; color: var(--accent); cursor: pointer; }
+        .btn-link { text-decoration: underline; }
+
+        /* Dedup info */
+        .dedup-info {
+            margin-top: 12px; padding: 10px 12px; background: rgba(34,197,94,.08);
+            border: 1px solid rgba(34,197,94,.2); border-radius: 6px; font-size: 11.5px;
+            line-height: 1.6; color: #86efac;
+        }
+
+        /* Progress bar */
+        .progress-container { margin-bottom: 14px; }
+        .progress-bar-track {
+            width: 100%; height: 20px; background: var(--bg);
+            border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
+        }
+        .progress-bar-fill {
+            height: 100%; background: linear-gradient(90deg, #2563eb, #06b6d4);
+            border-radius: 10px; transition: width 0.5s ease;
+        }
+        .progress-text {
+            display: flex; justify-content: space-between; font-size: 11.5px;
+            color: var(--text-muted); margin-top: 4px;
+        }
+        .progress-text span:last-child { color: var(--accent); font-weight: 600; }
+
+        /* Log container */
+        .log-container {
+            max-height: 300px; overflow-y: auto; background: rgba(0,0,0,.25);
+            border: 1px solid var(--border); border-radius: 8px;
+            padding: 8px 10px; font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 11px; line-height: 1.7; margin-bottom: 10px;
+        }
+        .log-line { white-space: pre-wrap; word-break: break-all; }
+        .log-line::before { content: '> '; color: var(--text-muted); }
+        .log-info { color: var(--text-muted); }
+        .log-ok { color: #86efac; }
+        .log-warn { color: #fbbf24; }
+        .log-err { color: #f87171; }
+        .log-step { color: var(--accent); font-weight: 600; }
+
+        /* Run history */
+        .run-list { max-height: 400px; overflow-y: auto; }
+        .run-card {
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 8px; padding: 12px; margin-bottom: 8px;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .run-card:hover { border-color: var(--accent); }
+        .run-card.run-active { border-color: var(--accent); background: rgba(37,99,235,.05); }
+        .run-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .run-id { font-family: monospace; font-size: 11px; color: var(--text-muted); }
+        .run-status-badge {
+            font-size: 10.5px; padding: 2px 8px; border-radius: 10px;
+            font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .status-complete { background: rgba(34,197,94,.15); color: #86efac; }
+        .status-error { background: rgba(239,68,68,.15); color: #f87171; }
+        .status-running { background: rgba(59,130,246,.15); color: #93c5fd; }
+        .status-stopped { background: rgba(156,163,175,.15); color: #9ca3af; }
+        .run-stats { display: flex; gap: 12px; font-size: 11.5px; color: var(--text-muted); }
+        .run-stat-val { color: var(--text); font-weight: 600; }
+        .run-detail {
+            margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+            font-size: 11.5px; line-height: 1.6; display: none;
+        }
+        .run-detail.open { display: block; }
+        .run-log-text {
+            margin-top: 6px; max-height: 200px; overflow-y: auto;
+            background: rgba(0,0,0,.25); border-radius: 6px; padding: 8px;
+            font-family: monospace; font-size: 10.5px; line-height: 1.6; white-space: pre-wrap;
+            color: var(--text-muted);
+        }
+        .empty-state-sm { text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <h1><span>ГЕО</span>-Дайджест — Граф знаний</h1>
+    <div class="header-stats" id="headerStats">
+        <div class="stat-badge"><b id="sArticles">—</b> статей</div>
+        <div class="stat-badge"><b id="sNodes">—</b> узлов</div>
+        <div class="stat-badge"><b id="sEdges">—</b> связей</div>
+        <div class="stat-badge"><b id="sLLM">—</b> ИИ-связей</div>
+    </div>
+    <div class="header-actions">
+        <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
+        <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
+    </div>
+</div>
+
+<div class="layout">
+    <!-- Graph -->
+    <div class="graph-panel">
+        <div id="cy"></div>
+        <div class="graph-overlay">
+            <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
+            <button class="graph-btn" onclick="layoutGraph('circle')">Круг</button>
+            <button class="graph-btn" onclick="layoutGraph('cose')">Сила</button>
+            <button class="graph-btn" onclick="layoutGraph('breadthfirst')">Дерево</button>
+            <select class="filter-select" id="graphFilter" onchange="filterGraph()" style="width:auto;">
+                <option value="all">Все связи</option>
+                <option value="llm">Только ИИ-семантика</option>
+                <option value="metadata">Только метаданные</option>
+            </select>
+        </div>
+        <div class="graph-legend" id="graphLegend"></div>
+    </div>
+
+    <!-- Side Panel -->
+    <div class="side-panel">
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('articles', this)">Статьи</div>
+            <div class="tab" onclick="switchTab('research', this)">Исследование</div>
+            <div class="tab" onclick="switchTab('stats', this)">Статистика</div>
+        </div>
+
+        <!-- Articles Tab -->
+        <div class="tab-content active" id="tabArticles">
+            <div class="filters">
+                <select class="filter-select" id="fSort" onchange="loadArticles()">
+                    <option value="total_score">Сорт: Балл ↓</option>
+                    <option value="total_score_asc">Сорт: Балл ↑</option>
+                    <option value="year">Сорт: Год ↓</option>
+                    <option value="citations">Сорт: Цитирования ↓</option>
+                </select>
+                <select class="filter-select" id="fTopic" onchange="loadArticles()">
+                    <option value="">Все темы</option>
+                </select>
+                <select class="filter-select" id="fType" onchange="loadArticles()">
+                    <option value="">Все типы</option>
+                    <option value="reproduction">Воспроизведение</option>
+                    <option value="review">Обзор</option>
+                    <option value="methods_transfer">Трансфер методов</option>
+                </select>
+                <select class="filter-select" id="fSource" onchange="loadArticles()">
+                    <option value="">Все источники</option>
+                </select>
+            </div>
+            <div class="article-list" id="articleList">
+                <div class="loading"><div class="spinner"></div><br>Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Research Tab: Config + Status + History -->
+        <div class="tab-content" id="tabResearch">
+
+            <!-- === CONFIG PANEL === -->
+            <div id="researchConfig" class="research-section">
+                <div class="research-section-title">⚙️ Параметры исследования</div>
+
+                <!-- Topics -->
+                <div class="config-group">
+                    <label class="config-label">Темы для поиска</label>
+                    <div id="topicCheckboxes" class="checkbox-grid"></div>
+                    <button class="btn-sm btn-link" onclick="selectAllTopics(true)">Все</button>
+                    <button class="btn-sm btn-link" onclick="selectAllTopics(false)">Ни одной</button>
+                </div>
+
+                <!-- Sources -->
+                <div class="config-group">
+                    <label class="config-label">Источники</label>
+                    <div id="sourceCheckboxes" class="checkbox-grid"></div>
+                </div>
+
+                <!-- Parameters -->
+                <div class="config-row">
+                    <div class="config-field">
+                        <label class="config-label">Статей за запуск</label>
+                        <input type="number" id="cfgArticles" min="1" max="30" value="4" class="cfg-input">
+                    </div>
+                    <div class="config-field">
+                        <label class="config-label">Мин. год публикации</label>
+                        <input type="number" id="cfgMinYear" min="2000" max="2026" value="2023" class="cfg-input">
+                    </div>
+                </div>
+
+                <!-- Scoring weights -->
+                <div class="config-group">
+                    <label class="config-label">Веса скоринга</label>
+                    <div id="scoringWeights"></div>
+                </div>
+
+                <!-- Action -->
+                <button id="startDigestBtn" class="btn-primary btn-lg" onclick="startDigest()">
+                    🚀 Запустить исследование
+                </button>
+
+                <!-- Dedup info -->
+                <div id="dedupInfo" class="dedup-info" style="display:none"></div>
+            </div>
+
+            <!-- === STATUS PANEL (shown during run) === -->
+            <div id="researchStatus" class="research-section" style="display:none">
+                <div class="research-section-title">📡 Ход выполнения</div>
+
+                <!-- Progress bar -->
+                <div class="progress-container">
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="digestProgress" style="width:0%"></div>
+                    </div>
+                    <div class="progress-text"><span id="digestPct">0%</span> · <span id="digestStep">Готовимся...</span></div>
+                </div>
+
+                <!-- Live log -->
+                <div class="log-container" id="digestLog">
+                    <div class="log-line log-info">Ожидание запуска...</div>
+                </div>
+
+                <!-- Stop button -->
+                <button class="btn-danger" onclick="stopDigest()" id="stopDigestBtn">⏹ Остановить</button>
+            </div>
+
+            <!-- === RUN HISTORY === -->
+            <div id="researchHistory" class="research-section">
+                <div class="research-section-title">📋 История запусков</div>
+                <div id="runList" class="run-list">
+                    <div class="empty-state-sm">Загрузка...</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Stats Tab -->
+        <div class="tab-content" id="tabStats">
+            <div class="stats-grid" id="statsGrid">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fullscreen Article Modal (replaces old detail-panel) -->
+<div class="modal-overlay" id="articleModal" onclick="if(event.target===this)closeArticleModal()">
+    <div class="article-modal">
+        <div id="articleModalContent"></div>
+    </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<script>
+// ── State ─────────────────────────────────────
+let graphData = { nodes: [], edges: [] };
+let allArticles = [];
+let cy = null;
+
+const COLORS = {
+    article: '#58a6ff',
+    topic: '#39d2c0',
+    source: '#8b949e',
+    article_type: '#bc8cff',
+};
+const TYPE_COLORS = {
+    reproduction: '#3fb950',
+    review: '#d29922',
+    methods_transfer: '#f85149',
+    unknown: '#8b949e',
+};
+
+// ── Init ──────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources(), initGraph()]);
+});
+
+// ── API helpers ────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+    const opts = { method };
+    if (body && method === 'POST') {
+        opts.headers = {'Content-Type': 'application/json'};
+        opts.body = JSON.stringify(body);
+    }
+    const r = await fetch('/api' + path, opts);
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    return r.json();
+}
+
+// ── Articles ───────────────────────────────────
+async function loadArticles() {
+    const sortEl = document.getElementById('fSort');
+    let sort = sortEl.value;
+    let order = 'desc';
+    if (sort.endsWith('_asc')) { order = 'asc'; sort = sort.replace('_asc', ''); }
+
+    const params = new URLSearchParams({
+        sort_by: sort, order,
+        topic: document.getElementById('fTopic').value,
+        article_type: document.getElementById('fType').value,
+        source: document.getElementById('fSource').value,
+        limit: '50',
+    });
+
+    try {
+        const data = await api(`/articles?${params}`);
+        allArticles = data.articles;
+        renderArticles(data.articles);
+    } catch(e) {
+        document.getElementById('articleList').innerHTML =
+            '<div class="empty-state"><h3>Ошибка загрузки статей</h3>' + e.message + '</div>';
+    }
+}
+
+// Русские названия типов статей
+const TYPE_NAMES_RU = {
+    reproduction: 'Воспроизведение',
+    review: 'Обзор',
+    methods_transfer: 'Трансфер методов',
+    method_transfer: 'Трансфер методов',
+    unknown: 'Другое',
+};
+
+function ruType(type) {
+    return TYPE_NAMES_RU[type] || (type || '').replace(/_/g, ' ');
+}
+
+// Русские названия метрик
+const SCORE_NAMES = {
+    'transferability': 'Переносимость методов',
+    'geographic_analogy': 'Географическая аналогия',
+    'geographic': 'Географич.',
+    'thematic_relevance': 'Тематическая релевантность',
+    'thematic': 'Тематика',
+    'publication_potential': 'Потенциал публикации',
+    'publication': 'Публикация',
+    'practical_output': 'Практическая ценность',
+    'practical': 'Практичность',
+    'novelty': 'Новизна подхода',
+    'total': 'Итог',
+};
+
+function ruScore(name) {
+    return SCORE_NAMES[name] || name.replace(/_/g, ' ');
+}
+
+function renderArticles(articles) {
+    const el = document.getElementById('articleList');
+    if (!articles.length) {
+        el.innerHTML = '<div class="empty-state"><h3>Статей не найдено</h3>Запустите дайджест.</div>';
+        return;
+    }
+
+    el.innerHTML = articles.map((a, i) => {
+        const scores = a.scores || {};
+        // [FIX A] Используем взвешенный total (0-1), конвертируем в шкалу 0-5
+        const total = scores.total_5 || (scores.total * 5) || 0;
+        const scoreCls = total > 3.5 ? 'score-high' : total > 2.0 ? 'score-mid' : 'score-low';
+        // Русский заголовок с обрезкой (максимум 80 символов)
+        const rawTitle = a.title_ru || a.title || 'Без названия';
+        const displayTitle = rawTitle.length > 80 ? rawTitle.substring(0, 77) + '…' : rawTitle;
+        // Одна строка саммари для превью
+        const preview = a.llm_summary
+            ? a.llm_summary.split('\n').filter(l => l.trim() && !l.match(/^[📝🔬🇷💡]/))[0]
+            : (a.abstract_ru || a.abstract || '').substring(0, 120);
+
+        return `<div class="article-card" onclick="openArticleModal(${i})" data-id="${i}">
+            <div class="card-header">
+                <div class="card-title">${esc(displayTitle)}</div>
+                <div class="card-score ${scoreCls}">${total.toFixed(1)}</div>
+            </div>
+            <div class="card-meta">
+                <span>${a.year || '?'}</span>
+                <span>${esc((a.journal || '').split(';')[0] || '')}</span>
+                ${a.citations ? `<span>📎${a.citations}</span>` : ''}
+                ${a.is_oa ? '<span class="tag tag-oa">OA</span>' : ''}
+            </div>
+            <div class="card-preview">${esc(preview).substring(0, 140)}${preview.length > 140 ? '…' : ''}</div>
+        </div>`;
+    }).join('');
+}
+
+async function loadTopics() {
+    try {
+        const topics = await api('/topics');
+        const sel = document.getElementById('fTopic');
+        topics.forEach(t => {
+            const o = document.createElement('option');
+            o.value = t.key; o.textContent = `${t.name_ru} (${t.count})`;
+            sel.appendChild(o);
+        });
+    } catch {}
+}
+
+async function loadSources() {
+    try {
+        const stats = await api('/stats');
+        const sel = document.getElementById('fSource');
+        Object.keys(stats.sources).forEach(s => {
+            const o = document.createElement('option');
+            o.value = s; o.textContent = `${s} (${stats.sources[s]})`;
+            sel.appendChild(o);
+        });
+    } catch {}
+}
+
+// ── Stats ─────────────────────────────────────
+async function loadStats() {
+    try {
+        const s = await api('/stats');
+        document.getElementById('sArticles').textContent = s.total_articles;
+        document.getElementById('sNodes').textContent = s.total_nodes;
+        document.getElementById('sEdges').textContent = s.total_edges;
+        document.getElementById('sLLM').textContent = s.llm_edges;
+
+        const grid = document.getElementById('statsGrid');
+        grid.innerHTML = `
+            <div class="stat-card"><div class="stat-card-value">${s.total_articles}</div><div class="stat-card-label">Всего статей</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.avg_score}</div><div class="stat-card-label">Средний балл</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.max_score}</div><div class="stat-card-label">Макс. балл</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.open_access_count}</div><div class="stat-card-label">Открытый доступ</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.topics_count}</div><div class="stat-card-label">Тем</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.llm_edges}</div><div class="stat-card-label">ИИ-связей</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.total_nodes}</div><div class="stat-card-label">Узлов графа</div></div>
+            <div class="stat-card"><div class="stat-card-value">${s.total_edges}</div><div class="stat-card-label">Связей графа</div></div>
+        `;
+
+        // Sources breakdown
+        let sourcesHtml = '<div class="stat-card" style="grid-column:1/-1"><div class="stat-card-label">По источникам</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">';
+        for (const [src, cnt] of Object.entries(s.sources)) {
+            sourcesHtml += `<span class="tag">${src}: ${cnt}</span>`;
+        }
+        sourcesHtml += '</div></div>';
+
+        // Types breakdown
+        let typesHtml = '<div class="stat-card" style="grid-column:1/-1"><div class="stat-card-label">По типам</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">';
+        for (const [t, cnt] of Object.entries(s.types)) {
+            const c = TYPE_COLORS[t] || '#8b949e';
+            typesHtml += `<span class="tag" style="border-color:${c}40;color:${c}">${t.replace(/_/g,' ')}: ${cnt}</span>`;
+        }
+        typesHtml += '</div></div>';
+
+        grid.innerHTML += sourcesHtml + typesHtml;
+        if (s.graph_generated_at) {
+            grid.innerHTML += `<div class="stat-card" style="grid-column:1/-1"><div class="stat-card-label">Граф построен</div><div style="font-size:12px;margin-top:4px">${new Date(s.graph_generated_at).toLocaleString()}</div></div>`;
+        }
+    } catch(e) { console.error('Stats error:', e); }
+}
+
+// ── Graph (Cytoscape.js) ─────────────────────
+async function initGraph() {
+    try {
+        graphData = await api('/graph');
+    } catch(e) { console.error('Graph load error:', e); return; }
+
+    // Convert to Cytoscape format
+    const eles = [];
+
+    // Nodes
+    (graphData.nodes || []).forEach(n => {
+        const d = n.data;
+        const type = d.nodeType || 'article';
+        const color = COLORS[type] || '#58a6ff';
+        const isArticle = type === 'article';
+
+        eles.push({
+            data: {
+                id: d.id,
+                label: d.label || d.id,
+                type: type,
+                color: color,
+                size: d.size || (isArticle ? 30 : 15),
+                score: d.total_score || 0,
+                doi: d.doi || '',
+                year: d.year || 0,
+                articleType: d.article_type || '',
+                ...d,
+            },
+            classes: isArticle ? 'article-node' : 'meta-node',
+        });
+    });
+
+    // Edges
+    (graphData.edges || []).forEach(e => {
+        const d = e.data;
+        const isLLM = !!d.llm_generated;
+        eles.push({
+            data: {
+                id: d.id,
+                source: d.source,
+                target: d.target,
+                label: d.label || d.relation || '',
+                relation: d.relation || '',
+                confidence: d.confidence || 0.5,
+                description: d.description || '',
+                isLLM: isLLM,
+            },
+            classes: isLLM ? 'llm-edge' : 'meta-edge',
+        });
+    });
+
+    cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: eles,
+        style: [
+            // Article nodes
+            {
+                selector: '.article-node',
+                style: {
+                    'background-color': 'data(color)',
+                    'label': 'data(label)',
+                    'width': 'data(size)',
+                    'height': 'data(size)',
+                    'font-size': '9px',
+                    'color': '#e6edf3',
+                    'text-valign': 'center',
+                    'text-halign': 'center',
+                    'text-wrap': 'ellipsis',
+                    'text-max-width': '80px',
+                    'border-width': 2,
+                    'border-color': 'data(color)',
+                    'opacity': 0.95,
+                    'text-outline-color': '#0d1117',
+                    'text-outline-width': 2,
+                }
+            },
+            // Meta nodes (topic, source, etc)
+            {
+                selector: '.meta-node',
+                style: {
+                    'background-color': 'data(color)',
+                    'label': 'data(label)',
+                    'width': 'data(size)',
+                    'height': 'data(size)',
+                    'font-size': '8px',
+                    'color': '#8b949e',
+                    'text-valign': 'center',
+                    'text-halign': 'center',
+                    'text-wrap': 'ellipsis',
+                    'text-max-width': '60px',
+                    'border-width': 1,
+                    'border-opacity': 0.3,
+                    'opacity': 0.75,
+                    'text-outline-color': '#0d1117',
+                    'text-outline-width': 1,
+                }
+            },
+            // LLM edges (semantic) — thin & subtle by default
+            {
+                selector: '.llm-edge',
+                style: {
+                    'line-color': '#f85149',
+                    'target-arrow-color': '#f85149',
+                    'target-arrow-shape': 'triangle',
+                    'curve-style': 'bezier',
+                    'width': 'mapData(confidence, 0.1, 1, 0.5, 2)',
+                    'line-style': 'solid',
+                    'opacity': 0.35,
+                    'label': '',
+                    // Label shown only on hover/selection via tap handler
+                }
+            },
+            // Metadata edges — structural connections, very subtle
+            {
+                selector: '.meta-edge',
+                style: {
+                    'line-color': '#30363d',
+                    'target-arrow-color': '#30363d',
+                    'target-arrow-shape': 'triangle',
+                    'curve-style': 'bezier',
+                    'width': 0.5,
+                    'opacity': 0.2,
+                }
+            },
+            // Co-occurrence edges
+            {
+                selector: '[relation = "shared_topics"]',
+                style: {
+                    'line-color': '#39d2c0',
+                    'target-arrow-color': '#39d2c0',
+                    'width': 1,
+                    'line-style': 'dashed',
+                    'opacity': 0.3,
+                }
+            },
+            // Highlighted
+            {
+                selector: '.highlighted',
+                style: {
+                    'border-width': 3,
+                    'border-color': '#f0c674',
+                    'background-color': '#f0c674',
+                }
+            },
+            {
+                selector: '.dimmed',
+                style: { 'opacity': 0.15 }
+            },
+            // Hover — nodes get thicker border
+            {
+                selector: ':hover',
+                style: { 'border-width': 3 }
+            },
+            // Edge hover — reveal label and make more visible
+            {
+                selector: 'edge:hover',
+                style: {
+                    'width': 2,
+                    'opacity': 0.8,
+                    'label': 'data(label)',
+                    'font-size': '9px',
+                    'color': '#f85149',
+                    'text-rotation': 'autorotate',
+                    'text-margin-y': -6,
+                    'text-background-color': '#0d1117',
+                    'text-background-opacity': 0.9,
+                    'text-background-padding': '2px',
+                }
+            },
+        ],
+        layout: { name: 'cose', animate: true, animationDuration: 500,
+            idealEdgeLength: 120, nodeOverlap: 20, refresh: 20,
+            fit: true, padding: 40,
+            randomize: false, componentSpacing: 120,
+            nodeRepulsion: 5000, gravity: 0.15,
+        },
+    });
+
+    // Build legend
+    buildLegend();
+
+    // Events
+    cy.on('tap', 'node', function(evt) {
+        const node = evt.target;
+        if (node.data().type === 'article') {
+            // Find article index
+            const id = node.data().id;
+            const idx = allArticles.findIndex((_, i) => `article_${i+1}` === id);
+            if (idx >= 0) openArticleModal(idx);
+        }
+        highlightNode(node);
+    });
+
+    // Tooltip on hover — показываем оригинальный англ. заголовок
+    cy.on('mouseover', 'node', function(evt) {
+        const d = evt.target.data();
+        if (d.type === 'article' && d.label_en) {
+            const tt = document.getElementById('tooltip');
+            tt.innerHTML = `<div class="tt-rel" style="color:var(--cyan)">${esc(d.label_en)}</div>`
+                + `<div class="tt-desc">${esc(d.topic_ru || '')} · ${d.year || ''} · ${(d.citations||0)} цит.</div>`;
+            tt.style.display = 'block';
+        }
+    });
+    cy.on('mouseout', 'node', function() { hideTooltip(); });
+
+    // Track mouse for tooltip positioning
+    cy.on('mousemove', function(evt) {
+        const tt = document.getElementById('tooltip');
+        if (tt && tt.style.display === 'block') {
+            tt.style.left = Math.min(evt.renderedPosition.x, window.innerWidth - 300) + 'px';
+            tt.style.top = (evt.renderedPosition.y + 10) + 'px';
+        }
+    });
+
+    cy.on('tap', 'edge', function(evt) {
+        showEdgeTooltip(evt.target, evt.renderedPosition);
+    });
+
+    cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+            closeArticleModal();
+            cy.elements().removeClass('dimmed highlighted');
+            hideTooltip();
+        }
+    });
+}
+
+function buildLegend() {
+    const items = [
+        { color: COLORS.article, label: 'Статья' },
+        { color: COLORS.topic, label: 'Тема' },
+        { color: COLORS.article_type, label: 'Тип' },
+        { color: COLORS.source, label: 'Источник' },
+        { color: '#f85149', label: 'ИИ-связь' },
+        { color: '#39d2c0', label: 'Общие темы' },
+        { color: '#30363d', label: 'Метаданные' },
+    ];
+    document.getElementById('graphLegend').innerHTML =
+        items.map(i => `<div class="legend-item"><div class="legend-dot" style="background:${i.color}"></div>${i.label}</div>`).join('');
+}
+
+function fitGraph() { if(cy) cy.fit(60); }
+
+function layoutGraph(name) {
+    if(!cy) return;
+    const layouts = {
+        circle: { name: 'circle', animate: true, animationDuration: 500, spacingFactor: 1.2 },
+        cose: { name: 'cose', animate: true, animationDuration: 500, idealEdgeLength: 80, nodeOverlap: 20, randomize: false, nodeRepulsion: 4000, gravity: 0.2 },
+        breadthfirst: { name: 'breadthfirst', animate: true, animationDuration: 500, directed: false, spacingFactor: 1.5 },
+    };
+    cy.layout(layouts[name] || layouts.cose).run();
+}
+
+function filterGraph() {
+    if(!cy) return;
+    const mode = document.getElementById('graphFilter').value;
+    cy.elements().show();
+
+    if (mode === 'llm') {
+        cy.edges('.meta-edge').hide();
+        cy.nodes('.meta-node').hide();
+    } else if (mode === 'metadata') {
+        cy.edges('.llm-edge').hide();
+    }
+    cy.layout({ name: 'cose', animate: true, animationDuration: 300, fit: true }).run();
+}
+
+function highlightNode(node) {
+    cy.elements().removeClass('dimmed highlighted');
+    const neighborhood = node.closedNeighborhood();
+    cy.elements().not(neighborhood).addClass('dimmed');
+    neighborhood.addClass('highlighted');
+}
+
+// ── Tooltip ───────────────────────────────────
+function showEdgeTooltip(edge, pos) {
+    const tt = document.getElementById('tooltip');
+    const d = edge.data();
+    let html = '';
+    if (d.isLLM) {
+        html = `<div class="tt-rel">${esc(d.relation.replace(/_/g,' '))} (${d.confidence})</div>`;
+        if(d.description) html += `<div class="tt-desc">${esc(d.description)}</div>`;
+    } else {
+        html = `<div class="tt-rel">${esc(d.relation.replace(/_/g,' ') || d.label)}</div>`;
+    }
+    tt.innerHTML = html;
+    tt.style.display = 'block';
+    tt.style.left = Math.min(pos.x, window.innerWidth - 300) + 'px';
+    tt.style.top = (pos.y + 10) + 'px';
+}
+function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
+
+// ── Fullscreen Article Modal ───────────────────
+function openArticleModal(idx) {
+    const a = allArticles[idx];
+    if(!a) return;
+
+    // Highlight card
+    document.querySelectorAll('.article-card').forEach(c => c.classList.remove('selected'));
+    const card = document.querySelector(`.article-card[data-id="${idx}"]`);
+    if(card) card.classList.add('selected');
+
+    const scores = a.scores || {};
+    // [FIX A] Правильный взвешенный итог на шкале 0-5
+    const total = scores.total_5 || (scores.total * 5) || 0;
+    const typeColor = TYPE_COLORS[a.article_type] || TYPE_COLORS.unknown;
+
+    // Parse LLM summary into sections
+    const llm = parseLlmSections(a.llm_summary || '');
+
+    // [FIX B] Обоснования из Python (score_explanations)
+    const expl = a.score_explanations || {};
+
+    // Score explanations "на пальцах" — статические описания
+    const scoreHints = {
+        transferability: 'Насколько методы можно перенести на регион Юга России',
+        geographic_analogy: 'Схожесть географических условий с регионом исследования',
+        thematic_relevance: 'Соответствие тематике запроса (геоэкология Юга России)',
+        publication_potential: 'Качество издания и методологическая строгость',
+        practical_value: 'Практическая применимость для регионального управления',
+        novelty: 'Научная новизна подхода или данных'
+    };
+
+    // Action buttons
+    const pdfBtn = a.oa_url
+        ? `<a class="action-btn action-pdf" href="${esc(a.oa_url)}" target="_blank">📄 PDF</a>`
+        : '';
+    const doiBtn = a.doi
+        ? `<a class="action-btn action-doi" href="https://doi.org/${esc(a.doi)}" target="_blank">🔗 DOI</a>`
+        : '';
+
+    // Similar articles
+    const similarHtml = (a.similar_articles && a.similar_articles.length)
+        ? `<div class="modal-section">
+            <div class="modal-label">📚 Похожие статьи</div>
+            <div class="similar-list">
+                ${a.similar_articles.map(s => `
+                    <div class="similar-item">
+                        ${esc(s.title)}
+                        <div class="similar-journal">Схожесть: ${(s.score*100).toFixed(0)}%${s.doi ? ` · <a href="https://doi.org/${esc(s.doi)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">DOI</a>` : ''}</div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>` : '';
+
+    // Topics as tags
+    const topicsList = a.topics_ru || a.topics || [];
+    const topicsHtml = topicsList.length
+        ? `<div class="modal-section">
+            <div class="modal-label">🏷️ Тематика</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px">
+                ${topicsList.map(t => `<span class="tag tag-topic">${esc(t)}</span>`).join('')}
+            </div>
+        </div>` : '';
+
+    const content = document.getElementById('articleModalContent');
+    content.innerHTML = `
+        <!-- Header -->
+        <div class="modal-header">
+            <div class="modal-title-area">
+                <div class="modal-title">${esc(a.title_ru || a.title)}</div>
+                ${a.title_ru && a.title !== a.title_ru ? `<div class="modal-original">Оригинал: ${esc(a.title)}</div>` : ''}
+            </div>
+            <div class="modal-actions">
+                ${pdfBtn}${doiBtn}
+                <button class="modal-close-btn" onclick="closeArticleModal()">✕</button>
+            </div>
+        </div>
+
+        <!-- Body: 2 columns -->
+        <div class="modal-body">
+            <!-- Left: Metadata -->
+            <div class="modal-col modal-col-left">
+                <!-- Source info -->
+                <div class="modal-section">
+                    <div class="modal-label">📰 Источник</div>
+                    <div class="modal-value">${esc(a.journal || 'Не указан')}</div>
+                    <div class="modal-text" style="margin-top:4px">
+                        ${a.year || '?'} · ${ruType(a.article_type)} · ${esc(a.source || '')}
+                        ${a.is_oa ? '<span style="color:var(--green);font-weight:600"> · Открытый доступ</span>' : ''}
+                    </div>
+                </div>
+
+                <!-- Authors -->
+                <div class="modal-section">
+                    <div class="modal-label">👥 Авторы</div>
+                    <div class="modal-text">${esc(typeof a.authors === 'string' ? a.authors : (a.authors||[]).slice(0,8).join('; ') || 'Не указаны')}</div>
+                </div>
+
+                <!-- Citations -->
+                ${a.citations ? `
+                <div class="modal-section">
+                    <div class="modal-label">📎 Цитируемость</div>
+                    <div class="modal-value">${a.citations} цитирований</div>
+                </div>` : ''}
+
+                ${topicsHtml}
+
+                <!-- Score breakdown -->
+                <div class="modal-section">
+                    <div class="modal-label">⭐ Разбор оценки (итог: ${total.toFixed(1)}/5)</div>
+                    <div class="score-explain">
+                        ${Object.entries(scores).filter(([k]) => k !== 'total' && k !== 'total_5').map(([k,v]) => {
+                            const pct = Math.min(100, v * 100);  // 0-1 → 0-100%
+                            const color = v >= 0.7 ? '#3fb950' : v >= 0.4 ? '#d29922' : '#f85149';
+                            // [FIX B] Динамическое обоснование из Python + статический fallback
+                            const reason = expl[k] || scoreHints[k] || '';
+                            return `
+                            <div class="score-explain-item">
+                                <span class="score-explain-name">${ruScore(k)}</span>
+                                <div class="score-explain-bar"><div class="score-explain-fill" style="width:${pct}%;background:${color}"></div></div>
+                                <span class="score-explain-val">${v.toFixed(2)}</span>
+                            </div>
+                            <div class="score-explain-hint">${esc(reason)}</div>`;
+                        }).join('')}
+                    </div>
+                    <!-- Весовая формула -->
+                    <div style="margin-top:10px;padding:8px;background:rgba(136,87,229,0.08);border-radius:6px;font-size:10px;color:#a5a5a5;line-height:1.5">
+                        <b>Формула:</b> переносимость×25% + геоаналогия×20% + тематика×20% + публикация×20% + практика×10% + новизна×5%
+                    </div>
+                </div>
+
+                <!-- Abstract RU (short in left col) -->
+                ${a.abstract_ru ? `
+                <div class="modal-section">
+                    <div class="modal-label">📋 Аннотация (рус.)</div>
+                    <div class="modal-text" style="max-height:120px;overflow-y:auto;font-size:12px;line-height:1.6">${esc(a.abstract_ru).substring(0, 600)}${(a.abstract_ru||'').length > 600 ? '…' : ''}</div>
+                    ${a.abstract && a.abstract !== a.abstract_ru ? `<div class="modal-original" style="margin-top:6px">Оригинал: ${esc(a.abstract.substring(0, 300))}${a.abstract.length > 300 ? '…' : ''}</div>` : ''}
+                </div>` : ''}
+            </div>
+
+            <!-- Right: LLM enrichment -->
+            <div class="modal-col modal-col-right">
+                <!-- Суть исследования -->
+                ${llm.goal || llm.methods ? `
+                <div class="llm-block">
+                    <div class="llm-block-title">🔬 Суть исследования</div>
+                    <div class="llm-block-body">${esc(llm.goal || '')}
+${llm.methods ? '\n\n<b>Методы:</b>\n' + esc(llm.methods) : ''}</div>
+                </div>` : ''}
+
+                <!-- Главные выводы -->
+                ${llm.findings ? `
+                <div class="llm-block">
+                    <div class="llm-block-title">💡 Главные выводы</div>
+                    <div class="llm-block-body">${esc(llm.findings)}</div>
+                </div>` : ''}
+
+                <!-- Практическое применение -->
+                ${llm.practice ? `
+                <div class="llm-block">
+                    <div class="llm-block-title">🎯 Практическое применение</div>
+                    <div class="llm-block-body">${esc(llm.practice)}</div>
+                </div>` : ''}
+
+                <!-- Fallback: полный LLM текст если секции не распарсились -->
+                ${(!llm.goal && !llm.findings && a.llm_summary) ? `
+                <div class="llm-block">
+                    <div class="llm-block-title">🤖 ИИ-анализ статьи</div>
+                    <div class="llm-block-body">${esc(a.llm_summary)}</div>
+                </div>` : ''}
+
+                <!-- Темы на русском -->
+                ${topicsList.length ? `
+                <div class="llm-block" style="background:rgba(63,185,80,0.06);border-color:rgba(63,185,80,0.15)">
+                    <div class="llm-block-title" style="color:var(--green)">🏷️ Ключевые темы</div>
+                    <div class="llm-block-body">${topicsList.map(t => '• ' + esc(t)).join('\n')}</div>
+                </div>` : ''}
+
+                ${similarHtml}
+            </div>
+        </div>
+    `;
+
+    // Show modal
+    document.getElementById('articleModal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    // Highlight in graph
+    if(cy) {
+        const nodeId = `article_${idx+1}`;
+        const node = cy.getElementById(nodeId);
+        if(node.length) highlightNode(node);
+    }
+}
+
+function closeArticleModal() {
+    document.getElementById('articleModal').classList.remove('open');
+    document.body.style.overflow = '';
+    document.querySelectorAll('.article-card').forEach(c => c.classList.remove('selected'));
+}
+
+// Parse LLM summary into structured sections
+function parseLlmSections(text) {
+    if(!text) return {};
+    const result = { goal: '', methods: '', findings: '', practice: '' };
+
+    // Try to split by common LLM section markers
+    const lines = text.split('\n');
+    let currentSection = null;
+    const sections = { goal: [], methods: [], findings: [], practice: [] };
+
+    for(const line of lines) {
+        const l = line.trim();
+        if(!l) continue;
+
+        // Detect section headers (Russian)
+        if(/цель|что.*изуч|исследова/i.test(l) && l.length < 80) { currentSection = 'goal'; continue; }
+        if(/метод|подход|как.*изуч|данные|методик/i.test(l) && l.length < 80) { currentSection = 'methods'; continue; }
+        if(/вывод|результат|находк|установл|обнаруж/i.test(l) && l.length < 80) { currentSection = 'findings'; continue; }
+        if(/практик|применен|рекоменда|действ|использова/i.test(l) && l.length < 80) { currentSection = 'practice'; continue; }
+
+        if(currentSection && sections[currentSection]) {
+            sections[currentSection].push(l);
+        } else if(!currentSection) {
+            // First paragraph goes to goal
+            sections.goal.push(l);
+        }
+    }
+
+    // Join sections
+    for(const [key, arr] of Object.entries(sections)) {
+        result[key] = arr.join('\n').trim();
+    }
+
+    // If nothing was parsed into separate sections, put everything in goal
+    if(!result.goal && !result.findings) {
+        result.goal = text.trim();
+    }
+
+    return result;
+}
+
+// Escape key closes modal
+document.addEventListener('keydown', e => {
+    if(e.key === 'Escape') closeArticleModal();
+});
+
+// ── Tabs ──────────────────────────────────────
+function switchTab(tabName, el) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active');
+}
+
+// ── Rebuild (full) ───────────────────────────
+async function rebuildGraph() {
+    const btn = document.getElementById('rebuildBtn');
+    btn.disabled = true;
+    btn.textContent = 'Построение...';
+
+    try {
+        const result = await api('/graph/rebuild?use_llm=false', 'POST');
+        if (!result.success) throw new Error(result.detail || 'Failed');
+        await pollGraphStatus(btn, 'Перестроить граф');
+    } catch(e) {
+        alert('Ошибка перестроения графа: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = 'Перестроить граф';
+    }
+}
+
+// ── Rebuild (incremental) ─────────────────────
+async function rebuildGraphIncremental() {
+    const btn = document.getElementById('rebuildIncBtn');
+    btn.disabled = true;
+    btn.textContent = 'Обновление...';
+
+    try {
+        const result = await api('/graph/rebuild?use_llm=true&incremental=true', 'POST');
+        if (!result.success) throw new Error(result.detail || 'Failed');
+        await pollGraphStatus(btn, '🔄 Обновить граф');
+    } catch(e) {
+        alert('Ошибка обновления графа: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = '🔄 Обновить граф';
+    }
+}
+
+// ── Poll graph build status ───────────────────
+async function pollGraphStatus(btn, label) {
+    const startTime = Date.now();
+    while (true) {
+        await new Promise(r => setTimeout(r, 3000)); // poll every 3s
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        btn.textContent = `${label} (${elapsed}s)...`;
+
+        try {
+            const st = await api('/graph/status', 'GET');
+            if (st.status === 'done') {
+                const gd = st.graph_data || {};
+                alert('Граф построен!\nУзлов: ' + (gd.node_count || '?') +
+                      '\nСвязей: ' + (gd.edge_count || '?') +
+                      '\nИИ-связей: ' + (gd.llm_edge_count || 0));
+                await Promise.all([loadStats(), loadArticles(), initGraph()]);
+                btn.disabled = false;
+                btn.textContent = label;
+                return;
+            }
+            if (st.status === 'error') {
+                alert('Ошибка построения графа:\n' + (st.stderr || 'Unknown error'));
+                btn.disabled = false;
+                btn.textContent = label;
+                return;
+            }
+            // still running
+        } catch(e) {
+            // network error during poll, keep trying
+            console.warn('Graph status poll error:', e);
+        }
+
+        // Safety timeout: 15 min
+        if (elapsed > 900) {
+            alert('Таймаут построения графа (>15 мин)');
+            btn.disabled = false;
+            btn.textContent = label;
+            return;
+        }
+    }
+}
+
+// ── Utils ─────────────────────────────────────
+function esc(s) {
+    if(!s) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// ── Research Tab: Config, Status, History ───────
+let statusPoller = null;
+
+// Russian names for scoring keys
+const SCORE_LABELS_RU = {
+    methodological_transferability: 'Передаваемость метода',
+    geographic_analogy: 'Географическая аналогия',
+    thematic_relevance: 'Тематическая релевантность',
+    publication_potential: 'Потенциал публикации',
+    practical_output: 'Практический выход',
+    novelty_of_approach: 'Новизна подхода',
+};
+
+// Source display names
+const SOURCE_NAMES = {
+    crossref: 'CrossRef',
+    openalex: 'OpenAlex',
+    europe_pmc: 'Europe PMC',
+    semantic_scholar: 'Semantic Scholar',
+    arxiv: 'arXiv',
+    unpaywall: 'Unpaywall (OA)',
+};
+
+/** Load config and populate form */
+async function loadResearchConfig() {
+    try {
+        const cfg = await api('/digest/config');
+
+        // Topics checkboxes
+        const tc = document.getElementById('topicCheckboxes');
+        const topics = cfg.topics || {};
+        tc.innerHTML = Object.entries(topics).map(([key, t]) => `
+            <label class="cb-item">
+                <input type="checkbox" value="${key}" checked data-type="topic">
+                ${esc(t.name_ru || key)} <span style="color:var(--text-muted);font-size:10.5px">(${t.queries_count} запр.)</span>
+            </label>
+        `).join('');
+
+        // Sources checkboxes
+        const sc = document.getElementById('sourceCheckboxes');
+        const sources = cfg.sources || {};
+        sc.innerHTML = Object.entries(sources).map(([key, s]) => `
+            <label class="cb-item">
+                <input type="checkbox" value="${key}" checked ${s.enabled ? '' : ''} data-type="source" ${key === 'unpaywall' ? 'disabled title="Автоматическое обогащение"' : ''}>
+                ${SOURCE_NAMES[key] || key}
+            </label>
+        `).join('');
+
+        // Parameters
+        const dc = cfg.digest || {};
+        document.getElementById('cfgArticles').value = dc.articles_per_run || 4;
+        document.getElementById('cfgMinYear').value = dc.min_year || 2023;
+
+        // Scoring weights (sliders)
+        const sw = document.getElementById('scoringWeights');
+        const scoring = cfg.scoring || {};
+        sw.innerHTML = Object.entries(scoring).map(([key, val]) => {
+            const pct = Math.round(val * 100);
+            return `<div class="weight-row">
+                <span class="weight-label" title="${key}">${SCORE_LABELS_RU[key] || key}</span>
+                <input type="range" class="weight-slider" min="0" max="50" value="${pct}"
+                       data-key="${key}" oninput="updateWeightLabel(this)">
+                <span class="weight-value">${pct}%</span>
+            </div>`;
+        }).join('');
+
+        // Dedup stats
+        loadDedupInfo();
+
+        // Run history
+        await loadRunHistory();
+    } catch(e) {
+        console.error('Config load error:', e);
+    }
+}
+
+function updateWeightLabel(el) {
+    el.nextElementSibling.textContent = el.value + '%';
+}
+
+function selectAllTopics(val) {
+    document.querySelectorAll('#topicCheckboxes input[type=checkbox]').forEach(cb => cb.checked = val);
+}
+
+async function loadDedupInfo() {
+    try {
+        const d = await api('/digest/dedup');
+        const el = document.getElementById('dedupInfo');
+        el.style.display = 'block';
+        el.innerHTML = `
+            <strong>📊 Дедупликация:</strong> ${d.total_seen_dois} DOI в базе пропускаются ·
+            ${d.total_db_articles} статей в БД ·
+            ${d.db_articles_in_seen_list} уже показаны ·
+            ${d.db_articles_not_in_seen || 0} новых
+        `;
+    } catch(e) { /* silent */ }
+}
+
+/** Start digest run */
+async function startDigest() {
+    // Gather config from form
+    const selectedTopics = [...document.querySelectorAll('#topicCheckboxes input:checked[data-type=topic]')].map(el => el.value);
+    const selectedSources = [...document.querySelectorAll('#sourceCheckboxes input:checked[data-type=source]')].map(el => el.value);
+
+    if (!selectedTopics.length) {
+        alert('Выберите хотя бы одну тему для поиска');
+        return;
+    }
+
+    const articlesPerRun = parseInt(document.getElementById('cfgArticles').value) || 4;
+    const minYear = parseInt(document.getElementById('cfgMinYear').value) || 2023;
+
+    // Collect scoring weights
+    const scoring = {};
+    document.querySelectorAll('.weight-slider').forEach(el => {
+        scoring[el.dataset.key] = parseInt(el.value) / 100;
+    });
+
+    // Build config overrides
+    const configOverrides = {
+        digest: { articles_per_run: articlesPerRun, min_year: minYear },
+        scoring: scoring,
+    };
+
+    // Filter topics
+    const allCfg = await api('/digest/config');
+    if (selectedTopics.length < Object.keys(allCfg.topics).length) {
+        configOverrides.topics = {};
+        selectedTopics.forEach(t => {
+            if (allCfg.topics[t]) configOverrides.topics[t] = { queries: [] }; // will use full config on server
+        });
+    }
+
+    // Disable sources
+    const allSources = Object.keys(allCfg.sources || {});
+    allSources.forEach(s => {
+        if (!selectedSources.includes(s)) {
+            if (!configOverrides.sources) configOverrides.sources = {};
+            configOverrides.sources[s] = { enabled: false };
+        }
+    });
+
+    try {
+        const result = await fetch('/api/digest/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(configOverrides),
+        }).then(r => r.json());
+
+        if (!result.ok) {
+            alert('Ошибка запуска: ' + (result.error || 'неизвестная ошибка'));
+            return;
+        }
+
+        // Show status panel, hide config
+        showStatusPanel();
+
+    } catch(e) {
+        alert('Ошибка запроса: ' + e.message);
+    }
+}
+
+function showStatusPanel() {
+    document.getElementById('researchConfig').style.display = 'none';
+    document.getElementById('researchStatus').style.display = 'block';
+    document.getElementById('startDigestBtn').disabled = true;
+    document.getElementById('digestLog').innerHTML = '<div class="log-line log-step">🚀 Запуск пайплайна...</div>';
+
+    // Start polling
+    pollStatus();
+}
+
+function hideStatusPanel() {
+    document.getElementById('researchStatus').style.display = 'none';
+    document.getElementById('researchConfig').style.display = 'block';
+    document.getElementById('startDigestBtn').disabled = false;
+    if (statusPoller) {
+        clearInterval(statusPoller);
+        statusPoller = null;
+    }
+}
+
+let lastLogCount = 0;
+function pollStatus() {
+    if (statusPoller) clearInterval(statusPoller);
+    statusPoller = setInterval(async () => {
+        try {
+            const st = await api('/digest/status');
+            updateStatusUI(st);
+
+            // Stop polling when done
+            if (st.status === 'complete' || st.status === 'error' || st.status === 'stopped') {
+                clearInterval(statusPoller);
+                statusPoller = null;
+                setTimeout(() => {
+                    hideStatusPanel();
+                    loadRunHistory();
+                    // Refresh articles/graph
+                    loadStats(); loadArticles(); initGraph();
+                }, 2000);
+            }
+        } catch(e) {
+            console.error('Status poll error:', e);
+        }
+    }, 1500);
+}
+
+function updateStatusUI(st) {
+    const prog = st.progress || {};
+
+    // Progress bar
+    document.getElementById('digestProgress').style.width = (prog.pct || 0) + '%';
+    document.getElementById('digestPct').textContent = (prog.pct || 0) + '%';
+    document.getElementById('digestStep').textContent = prog.message || '';
+
+    // Log lines — only new ones
+    const logs = st.log_lines || [];
+    const logEl = document.getElementById('digestLog');
+    if (logs.length > lastLogCount) {
+        const newLines = logs.slice(lastLogCount);
+        newLines.forEach(line => {
+            const cls = line.includes('[*]') ? 'log-step'
+                        : line.includes('[ERROR]') || line.includes('Traceback') ? 'log-err'
+                        : line.includes('[skip]') || line.includes('Warning') ? 'log-warn'
+                        : line.includes('Complete') || line.includes('Saved') || line.includes('Sent') ? 'log-ok'
+                        : '';
+            logEl.innerHTML += `<div class="log-line ${cls}">${esc(line)}</div>`;
+        });
+        lastLogCount = logs.length;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+}
+
+async function stopDigest() {
+    if (!confirm('Остановить текущий запуск?')) return;
+    try {
+        await api('/digest/stop', 'POST');
+        document.getElementById('digestLog').innerHTML += '<div class="log-line log-warn">⏹ Остановлено пользователем</div>';
+    } catch(e) {
+        alert('Ошибка остановки: ' + e.message);
+    }
+}
+
+/** Load and render run history */
+async function loadRunHistory() {
+    try {
+        const data = await api('/digest/runs?limit=15');
+        const runs = data.runs || [];
+        const el = document.getElementById('runList');
+
+        if (!runs.length) {
+            el.innerHTML = '<div class="empty-state-sm">Ещё не было запусков<br><small>Запустите первое исследование</small></div>';
+            return;
+        }
+
+        el.innerHTML = runs.map(r => {
+            const cls = r.status === 'complete' ? 'status-complete'
+                       : r.status === 'error' ? 'status-error'
+                       : r.status === 'running' ? 'status-running'
+                       : 'status-stopped';
+            const label = r.status === 'complete' ? 'Готово'
+                         : r.status === 'error' ? 'Ошибка'
+                         : r.status === 'running' ? 'Выполняется...'
+                         : 'Остановлен';
+
+            const started = r.started_at ? r.started_at.replace('T', ' ').substring(0, 16) : '?';
+            const dur = r.duration_sec ? `${r.duration_sec}с` : '';
+
+            let sourceHtml = '';
+            if (r.sources_used) {
+                const srcs = Object.entries(r.sources_used).filter(([,v]) => v.found > 0);
+                if (srcs.length) {
+                    sourceHtml = '<div style="margin-top:4px;font-size:10.5px;color:var(--text-muted)">Источники: '
+                        + srcs.map(([k,v]) => `${SOURCE_NAMES[k]||k}:${v.found}`).join(', ')
+                        + '</div>';
+                }
+            }
+
+            return `<div class="run-card" onclick="toggleRunDetail(this, '${r.id}')">
+                <div class="run-card-header">
+                    <span class="run-id">#${r.id}</span>
+                    <span class="run-status-badge ${cls}">${label}</span>
+                </div>
+                <div class="run-stats">
+                    <span>найдено: <span class="run-stat-val">${r.articles_found||0}</span></span>
+                    <span>выбрано: <span class="run-stat-val">${r.articles_selected||0}</span></span>
+                    <span>дубли: <span class="run-stat-val">${r.duplicates_skipped||0}</span></span>
+                    <span>${dur}</span>
+                </div>
+                <div style="font-size:10.5px;color:var(--text-muted);margin-top:2px">${started}
+                   ${r.topics_searched ? ' · темы: ' + r.topics_searched.join(', ') : ''}
+                </div>
+                ${sourceHtml}
+                <div class="run-detail" id="detail_${r.id}">
+                    <div style="color:var(--text-muted)">
+                        Граф: <span class="run-stat-val">${r.graph_nodes||0}</span> узлов,
+                        <span class="run-stat-val">${r.graph_edges||0}</span> связей
+                        ${r.oa_enriched ? `· OA: <span class="run-stat-val">${r.oa_enriched}</span>` : ''}
+                        ${r.llm_enriched ? `· LLM: <span class="run-stat-val">${r.llm_enriched}</span>` : ''}
+                    </div>
+                    <div class="run-log-text" id="log_${r.id}">Загрузка лога...</div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) {
+        console.error('Run history error:', e);
+    }
+}
+
+async function toggleRunDetail(card, runId) {
+    const detail = document.getElementById('detail_' + runId);
+    const isOpen = detail.classList.contains('open');
+
+    // Close all others
+    document.querySelectorAll('.run-detail.open').forEach(d => d.classList.remove('open'));
+
+    if (!isOpen) {
+        detail.classList.add('open');
+        card.classList.add('run-active');
+
+        // Lazy-load log
+        const logEl = document.getElementById('log_' + runId);
+        if (logEl && logEl.textContent === 'Загрузка лога...') {
+            try {
+                const run = await api('/digest/runs/' + runId);
+                logEl.textContent = run.log || 'Лог недоступен';
+                logEl.scrollTop = 0;
+            } catch(e) {
+                logEl.textContent = 'Ошибка загрузки: ' + e.message;
+            }
+        }
+    } else {
+        detail.classList.remove('open');
+        card.classList.remove('run-active');
+    }
+}
+
+// Init research tab when switching to it
+const origSwitchTab = switchTab;
+switchTab = function(tabName, el) {
+    origSwitchTab(tabName, el);
+    if (tabName === 'research') {
+        loadResearchConfig();
+    }
+};
+</script>
+</body>
+</html>

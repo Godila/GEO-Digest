@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geo-digest-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /root/.hermes/geo_digest/.env:/app/.env:ro
+    environment:
+      - DASHBOARD_PORT=3000
+    networks:
+      - geo-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: geo-digest-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dashboard
+    networks:
+      - geo-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  geo-net:
+    driver: bridge

@@ -1,0 +1,46 @@
+# ── Secrets / Credentials ──────────────────────
+.env
+.env.*
+
+# ── Runtime data (generated each run) ──────────
+articles.jsonl
+articles.jsonl.bak
+graph_data.json
+graph_data.json.bak
+seen_dois.txt
+seen_dois.txt.bak
+run_status.json
+run_status.json.lock
+
+# ── Run logs & artifacts ───────────────────────
+runs/
+graphify-out/
+corpus/
+articles/
+
+# ── Digest output (markdown reports) ───────────
+digest_*.md
+
+# ── Python ─────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Node (if any) ──────────────────────────────
+node_modules/
+
+# ── IDE / Editor ───────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── OS ─────────────────────────────────────────
+Thumbs.db
