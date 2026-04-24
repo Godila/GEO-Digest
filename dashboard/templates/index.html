@@ -51,21 +51,21 @@
             color: var(--text-muted);
         }
         .stat-badge b { color: var(--text); }
-        .header-actions { display: flex; gap: 8px; }
 
         /* ── Layout ─────────────────── */
         .layout { display: grid;
-            grid-template-columns: 1fr 420px;
+            grid-template-columns: 1fr;
             height: calc(100vh - 53px); }
-        @media (max-width: 1024px) {
-            .layout { grid-template-columns: 1fr; grid-template-rows: 50vh auto; }
-        }
+        .side-panel { max-width: 900px; margin: 0 auto; width: 100%; }
 
-        /* ── Graph Panel ────────────── */
+        /* ── Graph Panel (inside tab) ───────── */
         .graph-panel {
             position: relative;
-            border-right: 1px solid var(--border);
+            border: 1px solid var(--border);
+            border-radius: 8px;
             overflow: hidden;
+            flex: 1;
+            min-height: 400px;
         }
         #cy { width: 100%; height: 100%; background: var(--bg); }
         .graph-overlay {
@@ -659,48 +659,15 @@
         <div class="stat-badge"><b id="sEdges">—</b> связей</div>
         <div class="stat-badge"><b id="sLLM">—</b> ИИ-связей</div>
     </div>
-    <div class="header-actions">
-        <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
-        <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
-    </div>
-
-    <!-- Graph Build Status (shown during graph build) -->
-    <div id="graphBuildStatus" class="graph-build-status" style="display:none">
-        <div class="gb-title">📊 Построение графа</div>
-        <div class="gb-progress-track">
-            <div class="gb-progress-fill" id="graphProgressFill" style="width:0%"></div>
-        </div>
-        <div class="gb-progress-text"><span id="graphPct">0%</span> · <span id="graphStep">Готовимся...</span></div>
-        <div class="log-container gb-log" id="graphLog">
-            <div class="log-line log-info">Ожидание запуска...</div>
-        </div>
-        <button class="btn-danger btn-sm" onclick="stopGraphBuild()" id="stopGraphBtn">⏹ Остановить</button>
-    </div>
 </div>
 
 <div class="layout">
-    <!-- Graph -->
-    <div class="graph-panel">
-        <div id="cy"></div>
-        <div class="graph-overlay">
-            <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
-            <button class="graph-btn" onclick="layoutGraph('circle')">Круг</button>
-            <button class="graph-btn" onclick="layoutGraph('cose')">Сила</button>
-            <button class="graph-btn" onclick="layoutGraph('breadthfirst')">Дерево</button>
-            <select class="filter-select" id="graphFilter" onchange="filterGraph()" style="width:auto;">
-                <option value="all">Все связи</option>
-                <option value="llm">Только ИИ-семантика</option>
-                <option value="metadata">Только метаданные</option>
-            </select>
-        </div>
-        <div class="graph-legend" id="graphLegend"></div>
-    </div>
-
     <!-- Side Panel -->
     <div class="side-panel">
         <div class="tabs">
             <div class="tab active" onclick="switchTab('articles', this)">Статьи</div>
             <div class="tab" onclick="switchTab('research', this)">Исследование</div>
+            <div class="tab" onclick="switchTab('graph', this)">Граф</div>
             <div class="tab" onclick="switchTab('stats', this)">Статистика</div>
         </div>
 
@@ -810,6 +777,45 @@
 
         </div>
 
+        <!-- Graph Tab -->
+        <div class="tab-content" id="tabGraph">
+            <!-- Graph Actions -->
+            <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+                <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
+                <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
+            </div>
+
+            <!-- Graph Build Status (always visible in tab) -->
+            <div id="graphBuildStatus" class="graph-build-status">
+                <div class="gb-title">📊 Построение графа</div>
+                <div class="gb-progress-track">
+                    <div class="gb-progress-fill" id="graphProgressFill" style="width:0%"></div>
+                </div>
+                <div class="gb-progress-text"><span id="graphPct">0%</span> · <span id="graphStep">Готовимся...</span></div>
+                <div class="log-container gb-log" id="graphLog">
+                    <div class="log-line log-info">Нажмите кнопку выше для построения графа</div>
+                </div>
+                <button class="btn-danger btn-sm" onclick="stopGraphBuild()" id="stopGraphBtn" style="display:none">⏹ Остановить</button>
+            </div>
+
+            <!-- Graph Visualization -->
+            <div class="graph-panel" style="flex:1;min-height:400px">
+                <div id="cy"></div>
+                <div class="graph-overlay">
+                    <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
+                    <button class="graph-btn" onclick="layoutGraph('circle')">Круг</button>
+                    <button class="graph-btn" onclick="layoutGraph('cose')">Сила</button>
+                    <button class="graph-btn" onclick="layoutGraph('breadthfirst')">Дерево</button>
+                    <select class="filter-select" id="graphFilter" onchange="filterGraph()" style="width:auto;">
+                        <option value="all">Все связи</option>
+                        <option value="llm">Только ИИ-семантика</option>
+                        <option value="metadata">Только метаданные</option>
+                    </select>
+                </div>
+                <div class="graph-legend" id="graphLegend"></div>
+            </div>
+        </div>
+
         <!-- Stats Tab -->
         <div class="tab-content" id="tabStats">
             <div class="stats-grid" id="statsGrid">
@@ -850,7 +856,7 @@ const TYPE_COLORS = {
 
 // ── Init ──────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources(), initGraph()]);
+    await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources()]);
 });
 
 // ── API helpers ────────────────────────────────
@@ -1570,6 +1576,11 @@ function switchTab(tabName, el) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
     document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active');
+
+    // Lazy-init graph when switching to Graph tab
+    if (tabName === 'graph' && !cy) {
+        initGraph();
+    }
 }
 
 // ── Rebuild (full) ───────────────────────────
@@ -1608,19 +1619,19 @@ async function rebuildGraphIncremental() {
     }
 }
 
-// ── Graph build panel show/hide ───────────────
+// ── Graph build panel (always visible in Graph tab) ──
 function showGraphBuildPanel() {
-    document.getElementById('graphBuildStatus').style.display = 'block';
     document.getElementById('graphProgressFill').style.width = '0%';
     document.getElementById('graphPct').textContent = '0%';
     document.getElementById('graphStep').textContent = 'Готовимся...';
     document.getElementById('graphLog').innerHTML = '<div class="log-line log-step">📊 Запуск построения...</div>';
+    document.getElementById('stopGraphBtn').style.display = '';
 }
 
 function hideGraphBuildPanel() {
-    document.getElementById('graphBuildStatus').style.display = 'none';
     document.getElementById('rebuildBtn').disabled = false;
     document.getElementById('rebuildIncBtn').disabled = false;
+    document.getElementById('stopGraphBtn').style.display = 'none';
 }
 
 async function stopGraphBuild() {
