@@ -25,6 +25,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
+from typing import Optional
 
 # ── Add scripts to path for run_manager import ────────────────
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -613,6 +614,284 @@ async def dedup_stats():
         return get_dedup_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ════════════════════════════════════════════════════════════
+#  AGENT-FACING API (/api/a/*)
+#  Compact JSON for AI agents, not for browser UI.
+#  All data access goes through DAL (worker/dal.py).
+# ════════════════════════════════════════════════════════════
+
+from .dal import (
+    search_articles, search_with_ranking, get_article_by_id,
+    get_article_enrichment_md, get_neighbors, find_path,
+    get_subgraph, get_stats, get_topics, get_info, load_graph,
+    load_all_articles, resolve_graph_id,
+)
+
+
+@app.get("/api/a/articles")
+async def agent_articles(
+    q: str = "",
+    topic: str = "",
+    source: str = "",
+    min_score: float = 0,
+    max_score: float = 10,
+    min_year: int = 0,
+    is_oa: Optional[bool] = None,
+    sort_by: str = "score_desc",
+    limit: int = 20,
+    offset: int = 0,
+    fields: str = "",
+):
+    """Search & filter articles with pagination and field projection.
+    
+    fields: comma-separated list of fields to include (e.g. "title,score_5,doi").
+           Always includes _id. Empty = all fields.
+    """
+    field_list = [f.strip() for f in fields.split(",") if f.strip()] if fields else None
+    result = search_articles(
+        query=q, topic=topic, source=source,
+        min_score=min_score, max_score=max_score, min_year=min_year,
+        is_oa=is_oa, sort_by=sort_by, limit=limit, offset=offset,
+        fields=field_list,
+    )
+    return result
+
+
+@app.get("/api/a/article/{article_id}")
+async def agent_article(article_id: str):
+    """Get full article by canonical ID + enrichment markdown content."""
+    art = get_article_by_id(article_id)
+    if not art:
+        raise HTTPException(status_code=404, detail=f"Article '{article_id}' not found")
+
+    # Enrich with graph ID
+    from .dal import _enrich_articles_with_graph_ids
+    _enrich_articles_with_graph_ids([art])
+
+    # Attach enrichment markdown
+    md_content = get_article_enrichment_md(art)
+    if md_content:
+        art["_md_content"] = md_content
+
+    return art
+
+
+@app.get("/api/a/search")
+async def agent_search(
+    q: str = "",
+    limit: int = 20,
+    topic: str = "",
+    source: str = "",
+    min_score: float = 0,
+    fields: str = "",
+):
+    """Text search with relevance ranking (bonus for title/abstract/topic matches)."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
+
+    extra = {}
+    if topic:
+        extra["topic"] = topic
+    if source:
+        extra["source"] = source
+    if min_score > 0:
+        extra["min_score"] = min_score
+    if fields:
+        extra["fields"] = [x.strip() for x in fields.split(",") if x.strip()]
+
+    result = search_with_ranking(query=q, limit=limit, **extra)
+    return result
+
+
+# ── Graph endpoints ────────────────────────────────────────
+
+@app.get("/api/a/graph/neighbors")
+async def agent_graph_neighbors(id: str, depth: int = 1, edge_types: str = ""):
+    """Get subgraph around a node (BFS).
+
+    id: node ID — accepts both canonical (doi:.../hash:...) and graph (article_1) IDs
+    depth: hop count (1 = direct neighbors only)
+    edge_types: comma-separated relation types to filter (empty = all)
+    """
+    # Auto-resolve canonical ID → graph ID
+    graph_id = resolve_graph_id(id) or id
+    et_list = [t.strip() for t in edge_types.split(",") if t.strip()] if edge_types else None
+    result = get_neighbors(node_id=graph_id, depth=depth, edge_types=et_list)
+    return result
+
+
+@app.get("/api/a/graph/path")
+async def agent_graph_path(from_id: str, to_id: str, max_depth: int = 4):
+    """Find shortest path between two nodes (BFS).
+
+    Accepts both canonical and graph node IDs.
+    Returns hops with relations and confidence scores.
+    """
+    from_g = resolve_graph_id(from_id) or from_id
+    to_g = resolve_graph_id(to_id) or to_id
+    result = find_path(from_id=from_g, to_id=to_g, max_depth=max_depth)
+    if not result["found"]:
+        raise HTTPException(status_code=404, detail=result.get("error", "no path found"))
+    return result
+
+
+@app.get("/api/a/graph/subgraph")
+async def agent_graph_subgraph(topic: str = "", node_type: str = "", min_score: float = 0):
+    """Get subgraph with filters by topic, node type, or minimum score."""
+    result = get_subgraph(topic=topic, node_type=node_type, min_score=min_score)
+    return result
+
+
+@app.get("/api/a/graph/nodes")
+async def agent_graph_nodes(node_type: str = "", limit: int = 50):
+    """List all graph nodes with their IDs and labels.
+    
+    Use this to discover valid node IDs for neighbors/path endpoints.
+    """
+    g = load_graph()
+    nodes = []
+    for n in g.get("nodes", []):
+        d = n["data"]
+        if node_type and d.get("nodeType") != node_type:
+            continue
+        nodes.append({
+            "id": d.get("id"),
+            "type": d.get("nodeType"),
+            "label": d.get("label", ""),
+            "score": d.get("score"),
+        })
+    return {"count": len(nodes), "nodes": nodes[:limit]}
+
+
+# ── Stats & Meta ───────────────────────────────────────────
+
+@app.get("/api/a/stats")
+async def agent_stats():
+    """Aggregated system statistics for agent consumption."""
+    return get_stats()
+
+
+@app.get("/api/a/topics")
+async def agent_topics():
+    """List all topics with article counts."""
+    return {"topics": get_topics(), "count": len(get_topics())}
+
+
+@app.get("/api/a/info")
+async def agent_info():
+    """System metadata: version, data format, available endpoints, counts."""
+    return get_info()
+
+
+# ── Export ─────────────────────────────────────────────────
+
+@app.get("/api/a/export")
+async def agent_export(fmt: str = "compact"):
+    """Export data in various formats.
+
+    format=compact:   articles list with essential fields only (for context window)
+    format=jsonld:     JSON-LD with @context
+    format=graph_kg:   Graph in KG format (not Cytoscape), nodes + edges as objects
+    """
+    fmt_clean = fmt.lower().strip()
+
+    # DEBUG: return fmt info for diagnosis
+    if fmt_clean == "_debug_":
+        return {"received": fmt, "cleaned": fmt_clean, "is_graph_kg": fmt_clean == "graph_kg"}
+
+    if fmt_clean == "compact":
+        arts = load_all_articles()
+        compact = []
+        for a in arts:
+            s = a.get("scores", {})
+            compact.append({
+                "_id": a.get("_id"),
+                "title": a.get("title"),
+                "title_ru": a.get("title_ru"),
+                "year": a.get("year"),
+                "authors": a.get("authors"),
+                "journal": a.get("journal"),
+                "score": round(s.get("total_5", s.get("total", 0)), 2),
+                "topics": a.get("topics_ru", []) or a.get("topics", []),
+                "abstract": (a.get("abstract") or "")[:300],
+                "llm_summary": (a.get("llm_summary") or "")[:200],
+                "doi": a.get("doi"),
+                "source": a.get("source"),
+            })
+        return {"format": "compact", "count": len(compact), "articles": compact}
+
+    elif fmt_clean == "jsonld":
+        g = load_graph()
+        arts = load_all_articles()
+        ctx = {
+            "@vocab": "http://geo-digest.org/",
+            "doi": "http://dx.doi.org/",
+        }
+        ld_nodes = []
+        for n in g.get("nodes", []):
+            d = dict(n["data"])
+            d["@type"] = d.pop("nodeType", "Node").capitalize()
+            ld_nodes.append(d)
+
+        ld_edges = []
+        for e in g.get("edges", []):
+            d = dict(e["data"])
+            ld_edges.append({
+                "@id": f"edge:{d.get('source')}->{d.get('target')}",
+                "source": d.pop("source", ""),
+                "target": d.pop("target", ""),
+                "type": d.pop("relation", "related_to"),
+                **d,
+            })
+
+        return {
+            "@context": ctx,
+            "articles_count": len(arts),
+            "nodes": ld_nodes,
+            "edges": ld_edges,
+        }
+
+    elif fmt_clean == "graph_kg":
+        g = load_graph()
+        kg_nodes = []
+        type_map = {}  # track types for @type prefix
+        for n in g.get("nodes", []):
+            d = n["data"]
+            ntype = d.get("nodeType", "unknown")
+            nid = d.get("id", "")
+            prefix = "article" if ntype == "article" else ("topic" if ntype == "topic" else "node")
+            kg_nodes.append({
+                "id": f"{prefix}:{nid}",
+                "type": ntype,
+                "label": d.get("label", ""),
+                **{k: v for k, v in d.items() if k not in ("id", "label", "nodeType")},
+            })
+
+        kg_edges = []
+        for e in g.get("edges", []):
+            d = e["data"]
+            kg_edges.append({
+                "source": d.get("source", ""),
+                "target": d.get("target", ""),
+                "relation": d.get("relation", "related_to"),
+                "confidence": d.get("confidence", 1.0),
+            })
+
+        return {
+            "@context": {"@vocab": "http://geo-digest.org/"},
+            "node_count": len(kg_nodes),
+            "edge_count": len(kg_edges),
+            "nodes": kg_nodes,
+            "edges": kg_edges,
+        }
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown format '{fmt_clean}'. Supported: compact, jsonld, graph_kg"
+        )
 
 
 if __name__ == "__main__":
