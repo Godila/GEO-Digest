@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -71,8 +72,9 @@ def _worker_post(path: str, json_body: dict | None = None, timeout: int = 10) ->
         raise HTTPException(status_code=502, detail=f"Worker error: {e}")
 
 
-# ── Data loaders (read from shared volume) ─────────────────────
+# ── Data loaders (fallback: read from shared volume) ────────────
 def load_articles() -> list[dict]:
+    """Fallback: read articles from shared volume."""
     if not ARTICLES_DB.exists():
         return []
     articles = []
@@ -91,7 +93,7 @@ def load_graph() -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  DATA ENDPOINTS (read from shared volume, no worker needed)
+#  DATA ENDPOINTS (proxy to Worker /api/a/* or fallback to volume)
 # ══════════════════════════════════════════════════════════════════
 
 @app.get("/api/articles", response_class=JSONResponse)
@@ -104,121 +106,224 @@ async def api_articles(
     limit: int = Query(50),
     offset: int = Query(0),
 ):
+    """Article list — proxy to worker /api/a/articles, adapt format for frontend."""
+    try:
+        params = {"limit": str(limit), "offset": str(offset)}
+        if source:
+            params["source"] = source
+        data = _worker_get(f"/api/a/articles?{urlencode(params)}")
+
+        # Adapt worker format {total, count, offset, limit, results, query}
+        # to frontend-expected format {total, offset, limit, articles}
+        results = data.get("results", [])
+        # Compute _total_score for sorting (frontend expects this field)
+        for art in results:
+            scores = art.get("scores", {})
+            art["_total_score"] = round(
+                scores.get("total_5", scores.get("total", 0)),
+                2,
+            ) if scores else 0
+
+        # Apply client-side filters that worker may not support
+        if topic:
+            results = [a for a in results if a.get("_topic_key") == topic]
+        if article_type:
+            results = [a for a in results if a.get("article_type") == article_type]
+
+        # Sort (worker returns pre-sorted, but respect frontend sort param)
+        reverse = order == "desc"
+        valid_fields = {
+            "_total_score", "year", "citations", "_saved_at",
+            "score_transferability", "score_geographic",
+            "score_thematic", "score_publication",
+        }
+        sort_base = sort_by
+        if sort_base.endswith("_asc"):
+            reverse = False; sort_base = sort_base[:-4]
+        elif sort_base.endswith("_desc"):
+            reverse = True; sort_base = sort_base[:-5]
+        sort_field = sort_base if sort_base in valid_fields else "_total_score"
+
+        def _sort_key(a):
+            val = a.get(sort_field)
+            return val if val is not None else 0
+
+        results.sort(key=_sort_key, reverse=reverse)
+
+        total = data.get("total", len(results))
+        results = results[:limit]
+
+        return Response(
+            content=json.dumps(
+                {"total": total, "offset": offset, "limit": limit, "articles": results},
+                ensure_ascii=False,
+            ),
+            media_type="application/json",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # Fallback: read from shared volume (backward compat)
+        articles = load_articles()
+        for art in articles:
+            scores = art.get("scores", {})
+            art["_total_score"] = round(
+                scores.get("total_5", scores.get("total", sum(scores.values()) * 5 / len(scores) if scores else 0)),
+                2,
+            ) if scores else 0
+        if topic:
+            articles = [a for a in articles if a.get("_topic_key") == topic]
+        if article_type:
+            articles = [a for a in articles if a.get("article_type") == article_type]
+        if source:
+            articles = [a for a in articles if a.get("source") == source]
+        reverse = order == "desc"
+        articles.sort(key=lambda a: a.get(sort_by, 0), reverse=reverse)
+        total = len(articles)
+        articles = articles[offset : offset + limit]
+        return Response(
+            content=json.dumps({"total": total, "offset": offset, "limit": limit, "articles": articles}, ensure_ascii=False),
+            media_type="application/json",
+        )
+
+
+@app.get("/api/articles/{article_id:path}")
+async def api_article_detail(article_id: str):
+    """Article detail — try worker by canonical ID first, fallback to index."""
+    # Try worker's canonical ID lookup
+    try:
+        import urllib.parse
+        decoded_id = urllib.parse.unquote(article_id)
+        return _worker_get(f"/api/a/article/{decoded_id}")
+    except HTTPException:
+        pass
+    # Fallback: numeric index into local file
     articles = load_articles()
-
-    for art in articles:
-        scores = art.get("scores", {})
-        # Use pre-computed total_5 (0-5 scale) or total (0-1), fallback to sum
-        art["_total_score"] = round(
-            scores.get("total_5", scores.get("total", sum(scores.values()) * 5 / len(scores) if scores else 0)),
-            2,
-        ) if scores else 0
-
-    if topic:
-        articles = [a for a in articles if a.get("_topic_key") == topic]
-    if article_type:
-        articles = [a for a in articles if a.get("article_type") == article_type]
-    if source:
-        articles = [a for a in articles if a.get("source") == source]
-
-    reverse = order == "desc"
-    valid_fields = {
-        "_total_score", "year", "citations", "_saved_at",
-        "score_transferability", "score_geographic",
-        "score_thematic", "score_publication",
-    }
-    # Strip _asc/_desc suffix from sort field name, override order
-    if sort_by.endswith("_asc"):
-        reverse = False
-    elif sort_by.endswith("_desc"):
-        reverse = True
-    sort_base = sort_by.rsplit("_asc", 1)[0].rsplit("_desc", 1)[0]
-    sort_field = sort_base if sort_base in valid_fields else "_total_score"
-
-    def _sort_key(a):
-        val = a.get(sort_field)
-        if sort_field == "_saved_at" and val:
-            try:
-                return val  # ISO string sorts lexicographically = chronologically
-            except:
-                return ""
-        return val if val is not None else 0
-
-    articles.sort(key=_sort_key, reverse=reverse)
-
-    total = len(articles)
-    articles = articles[offset : offset + limit]
-
-    # Use raw Response to bypass FastAPI's jsonable_encoder
-    # (which strips datetime-like string fields like _saved_at)
-    return Response(
-        content=json.dumps(
-            {"total": total, "offset": offset, "limit": limit, "articles": articles},
-            ensure_ascii=False,
-        ),
-        media_type="application/json",
-    )
-
-
-@app.get("/api/articles/{article_id}")
-async def api_article_detail(article_id: int):
-    articles = load_articles()
-    if article_id < 1 or article_id > len(articles):
+    try:
+        idx = int(article_id)
+        if idx < 1 or idx > len(articles):
+            raise HTTPException(status_code=404)
+        return articles[idx - 1]
+    except ValueError:
         raise HTTPException(status_code=404)
-    return articles[article_id - 1]
 
 
 @app.get("/api/graph")
 async def api_graph():
-    return load_graph()
+    """Graph data — read from volume, convert to Cytoscape.js elements format."""
+    raw = load_graph()
+    # If already in Cytoscape {elements: [...]} format, return as-is
+    if "elements" in raw:
+        return raw
+    # Convert {nodes: [...], edges: [...], metadata?} → {elements: [...]}
+    elements = []
+    for n in raw.get("nodes", []):
+        data = n.get("data", n) if isinstance(n, dict) else n
+        elements.append({"group": "nodes", "data": data})
+    for e in raw.get("edges", []):
+        data = e.get("data", e) if isinstance(e, dict) else e
+        elements.append({"group": "edges", "data": data})
+    result = {"elements": elements}
+    if "metadata" in raw:
+        result["metadata"] = raw["metadata"]
+    return result
 
 
 @app.get("/api/topics")
 async def api_topics():
-    articles = load_articles()
-    topics = {}
-    for art in articles:
-        key = art.get("_topic_key", "unknown")
-        name = art.get("_topic_name_ru", key)
-        if key not in topics:
-            topics[key] = {"key": key, "name_ru": name, "count": 0}
-        topics[key]["count"] += 1
-    return sorted(topics.values(), key=lambda x: x["count"], reverse=True)
+    """Topics list — proxy to worker /api/a/topics, adapt format."""
+    try:
+        data = _worker_get("/api/a/topics")
+        # Worker returns: {"topics": [{"name": ..., "count": ...}, ...], "count": N}
+        # Frontend expects: [{"key": ..., "name_ru": ..., "count": ...}, ...]
+        topics_list = []
+        for t in data.get("topics", []):
+            name = t.get("name", t.get("name_ru", t.get("key", "?")))
+            key = t.get("key", name.lower().replace(" ", "_"))
+            topics_list.append({
+                "key": key,
+                "name_ru": name,
+                "count": t.get("count", 0),
+            })
+        return sorted(topics_list, key=lambda x: x["count"], reverse=True)
+    except HTTPException:
+        raise
+    except Exception:
+        # Fallback
+        articles = load_articles()
+        topics = {}
+        for art in articles:
+            key = art.get("_topic_key", "unknown")
+            name = art.get("_topic_name_ru", key)
+            if key not in topics:
+                topics[key] = {"key": key, "name_ru": name, "count": 0}
+            topics[key]["count"] += 1
+        return sorted(topics.values(), key=lambda x: x["count"], reverse=True)
 
 
 @app.get("/api/stats")
 async def api_stats():
-    articles = load_articles()
-    graph = load_graph()
+    """Stats — proxy to worker /api/a/stats, adapt field names for frontend."""
+    try:
+        data = _worker_get("/api/a/stats")
+        # Map worker field names → frontend-expected names
+        return {
+            "total_articles": data.get("article_count", 0),
+            "total_nodes": data.get("node_count", 0),
+            "total_edges": data.get("edge_count", 0),
+            "llm_edges": data.get("llm_edge_count", 0),
+            "open_access_count": data.get("oa_count", 0),
+            "avg_score": data.get("score_avg", 0),
+            "max_score": data.get("score_max", 0),
+            "sources": data.get("by_source", {}),
+            "types": {},  # worker doesn't have types breakdown
+            "topics_count": len(data.get("by_topic", {})),
+            "graph_generated_at": data.get("generated_at"),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        # Fallback
+        articles = load_articles()
+        graph = load_graph()
+        total_scores = []
+        for art in articles:
+            scores = art.get("scores", {})
+            total_scores.append(scores.get("total_5", scores.get("total", 0)))
+        sources = {}
+        for art in articles:
+            sources[art.get("source", "unknown")] = sources.get(art.get("source", "unknown"), 0) + 1
+        oa_count = sum(1 for a in articles if a.get("is_oa"))
+        return {
+            "total_articles": len(articles),
+            "total_nodes": len(graph.get("nodes", [])),
+            "total_edges": len(graph.get("edges", [])),
+            "llm_edges": graph.get("metadata", {}).get("llm_edge_count", 0),
+            "open_access_count": oa_count,
+            "avg_score": round(sum(total_scores) / len(total_scores), 2) if total_scores else 0,
+            "max_score": round(max(total_scores), 2) if total_scores else 0,
+            "sources": sources,
+            "types": {},
+            "topics_count": len(set(a.get("_topic_key") for a in articles)),
+            "graph_generated_at": graph.get("metadata", {}).get("generated_at"),
+        }
 
-    total_scores = []
-    for art in articles:
-        scores = art.get("scores", {})
-        # Use pre-computed total_5 (0-5 scale), not sum() of all fields
-        total_scores.append(
-            scores.get("total_5", scores.get("total", sum(scores.values()) * 5 / len(scores) if scores else 0))
-        )
 
-    sources, types = {}, {}
-    for art in articles:
-        sources[art.get("source", "unknown")] = sources.get(art.get("source", "unknown"), 0) + 1
-        types[art.get("article_type", "unknown")] = types.get(art.get("article_type", "unknown"), 0) + 1
-
-    oa_count = sum(1 for a in articles if a.get("is_oa"))
-
-    return {
-        "total_articles": len(articles),
-        "total_nodes": len(graph.get("nodes", [])),
-        "total_edges": len(graph.get("edges", [])),
-        "llm_edges": graph.get("metadata", {}).get("llm_edge_count", 0),
-        "open_access_count": oa_count,
-        "avg_score": round(sum(total_scores) / len(total_scores), 2) if total_scores else 0,
-        "max_score": round(max(total_scores), 2) if total_scores else 0,
-        "sources": sources,
-        "types": types,
-        "topics_count": len(set(a.get("_topic_key") for a in articles)),
-        "graph_generated_at": graph.get("metadata", {}).get("generated_at"),
-    }
+@app.get("/api/search", response_class=JSONResponse)
+async def api_search(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(20),
+    offset: int = Query(0),
+):
+    """Full-text search — proxy to worker /api/a/search."""
+    params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
+    data = _worker_get(f"/api/a/search?{params}")
+    # Worker returns {total, results: [...], query, took_ms}
+    # Return in compatible format
+    return Response(
+        content=json.dumps(data, ensure_ascii=False),
+        media_type="application/json",
+    )
 
 
 @app.get("/api/health")
