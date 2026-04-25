@@ -64,9 +64,28 @@ def add_seen_dois(dois: list[str]):
 # title_hash imported from sources.base (single source of truth)
 
 # ── Articles DB (JSONL) ────────────────────────────────────────
+
+def canonical_id(article: dict) -> str:
+    """Generate canonical article ID: doi:... or hash:..."""
+    doi = (article.get("doi") or "").strip()
+    if doi:
+        return f"doi:{doi.lower()}"
+    h = title_hash(article.get("title", ""), str(article.get("year", "")))
+    return f"hash:{h}"
+
+
+def _make_md_path(title: str) -> str:
+    """Generate safe path for enrichment .md file."""
+    import re as _re
+    safe = _re.sub(r'[/\\:*?"<>|]', "_", (title or "untitled")[:80])
+    return f"articles/{safe}.md"
+
+
 def save_article(record: dict):
-    """Append article record to JSONL."""
+    """Append article record to JSONL with canonical _id and _md_path."""
     record["_saved_at"] = datetime.now(timezone.utc).isoformat()
+    record["_id"] = canonical_id(record)
+    record["_md_path"] = _make_md_path(record.get("title", ""))
     with open(ARTICLES_DB, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -1243,6 +1262,10 @@ def build_digest(config: dict) -> str:
         safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in art.get("title", "untitled"))[:100]
         art_file = ARTICLES_DIR / f"{safe_title}.md"
         art_file.write_text(art_text, encoding="utf-8")
+
+        # Mark enrichment timestamp
+        art["_enriched_at"] = datetime.now(timezone.utc).isoformat()
+        art["_md_path"] = f"articles/{safe_title}.md"
 
     # (seen DOIs already updated atomically per-article above)
     # new_dois kept for summary only
