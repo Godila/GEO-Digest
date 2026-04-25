@@ -1,37 +1,18 @@
-"""
-LLM Providers — unified interface for any LLM backend.
-"""
-
+"""LLM Providers."""
 from .base import LLMProvider
 from .minimax import MiniMaxProvider
 from .openai_compat import OpenAICompatProvider
 
-__all__ = ["LLMProvider", "MiniMaxProvider", "OpenAICompatProvider"]
+def create_provider(cfg) -> LLMProvider:
+    p = cfg.llm.provider
+    if p == "minimax":
+        return MiniMaxProvider(api_key=cfg.llm.api_key, base_url=cfg.llm.base_url,
+                               model=cfg.llm.model, timeout=cfg.llm.timeout,
+                               retries=cfg.llm.retries)
+    elif p == "openai_compat":
+        return OpenAICompatProvider(api_key=cfg.llm.api_key, base_url=cfg.llm.base_url,
+                                    model=cfg.llm.model, timeout=cfg.llm.timeout)
+    else:
+        raise ValueError(f"Unknown LLM provider: {p}")
 
-
-def get_llm(provider: str = "", **kwargs) -> LLMProvider:
-    """
-    Factory: get the right LLM provider instance.
-    
-    Args:
-        provider: "minimax" | "openai_compat" (or empty = from config)
-        **kwargs: Override config values
-    
-    Returns:
-        Configured LLMProvider instance
-    """
-    if not provider:
-        from engine.config import Config
-        cfg = Config.get_instance()
-        provider = cfg.get("llm.provider", "minimax")
-    
-    providers = {
-        "minimax": MiniMaxProvider,
-        "openai_compat": OpenAICompatProvider,
-    }
-    
-    cls = providers.get(provider)
-    if not cls:
-        raise ValueError(f"Unknown LLM provider: {provider}. Available: {list(providers.keys())}")
-    
-    return cls(**kwargs)
+__all__ = ["LLMProvider", "MiniMaxProvider", "OpenAICompatProvider", "create_provider"]

@@ -44,7 +44,7 @@ class AgentTools:
         return get_storage()
     
     # ── Search ──
-    
+
     def search(
         self,
         query: str = "",
@@ -53,14 +53,96 @@ class AgentTools:
         limit: int = 50,
         min_score: float = 0.0,
     ) -> list[Article]:
-        """Search articles with filters."""
+        """Search articles in storage with filters."""
         articles, _ = self.storage.search_articles(
             query=query, topic=topic, source=source, limit=limit * 3  # oversample for filtering
         )
-        
+
         if min_score > 0:
             articles = [a for a in articles if a.score_total >= min_score]
-        
+
+        return articles[:limit]
+
+    def search_fresh(
+        self,
+        query: str,
+        limit: int = 50,
+        min_year: int = 2023,
+        save_to_storage: bool = True,
+    ) -> list[Article]:
+        """
+        Perform fresh search across all academic sources (OpenAlex, SemanticScholar, etc.).
+
+        This is the bridge between the Agent Engine and the GEO-Digest sources module.
+        Results are deduplicated against seen DOIs and optionally saved to storage.
+
+        Args:
+            query: Search query string (e.g., "permafrost carbon feedback Arctic")
+            limit: Max results to return
+            min_year: Minimum publication year (default 2023)
+            save_to_storage: If True, persist new articles to JSONL storage
+
+        Returns:
+            List of Article objects found across all active sources.
+        """
+        import sys
+        from pathlib import Path
+
+        # Resolve path to sources module relative to project root
+        _project_root = Path(__file__).resolve().parent.parent.parent  # engine/ → project root
+        _sources_path = str(_project_root / "scripts")
+
+        if _sources_path not in sys.path:
+            sys.path.insert(0, _sources_path)
+
+        try:
+            from sources import get_active_sources, search_all_sources, dedup_and_merge
+        except ImportError as e:
+            print(f"  [Sources] Import error: {e}", file=sys.stderr)
+            print(f"  [Sources] Tried path: {_sources_path}", file=sys.stderr)
+            return []
+
+        # Get available sources
+        sources_list = get_active_sources()
+        if not sources_list:
+            print("  [Sources] No active sources available (check API keys)", file=sys.stderr)
+            return []
+
+        print(f"  [Sources] Searching with {len(sources_list)} source(s): {', '.join(s.name() for s in sources_list)}", file=sys.stderr)
+
+        # Run search
+        raw_results = search_all_sources(sources_list, query, min_year=min_year)
+        print(f"  [Sources] Raw results: {len(raw_results)} articles", file=sys.stderr)
+
+        if not raw_results:
+            return []
+
+        # Deduplicate against seen DOIs
+        seen = self.storage.seen_dois()
+        unique_articles, doi_index = dedup_and_merge(raw_results, seen)
+        print(f"  [Sources] After dedup: {len(unique_articles)} unique articles", file=sys.stderr)
+
+        # Convert to Article objects
+        articles = []
+        for art_dict in unique_articles:
+            try:
+                article = Article(art_dict)
+                articles.append(article)
+            except Exception as e:
+                print(f"  [Sources] Skip malformed article: {e}", file=sys.stderr)
+
+        # Sort by citations (best first) then year (newest first)
+        articles.sort(key=lambda a: (
+            -(int(a.get("citations") or 0)),
+            -(int(a.get("year") or 0)),
+        ))
+
+        # Save new articles to storage
+        if save_to_storage and articles:
+            added = self.storage.add_articles_batch([a.data for a in articles])
+            if added:
+                print(f"  [Sources] Saved {added} new articles to storage", file=sys.stderr)
+
         return articles[:limit]
     
     def search_by_doi(self, doi: str) -> Optional[Article]:

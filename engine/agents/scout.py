@@ -124,7 +124,14 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
 
         if mode in ("fresh", "mixed") and len(articles) < max_articles:
             remaining = max_articles - len(articles)
-            self._log(f"Svezhiy poisk: nuzhno eshche {remaining} (TODO)")
+            self._log(f"Svezhiy poisk: nuzhno eshche {remaining}")
+            fresh = tools.search_fresh(
+                query=topic,
+                limit=remaining,
+                save_to_storage=True,
+            )
+            articles.extend(fresh)
+            self._log(f"Po svezhemu poisku: {len(fresh)}")
 
         return articles[:max_articles]
 

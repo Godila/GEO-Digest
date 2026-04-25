@@ -1,288 +1,146 @@
-"""
-JSONL storage backend — current file-based implementation.
-
-Reads/writes:
-  - /app/data/articles.jsonl     (article database)
-  - /app/data/graph_data.json    (knowledge graph)
-  - /app/data/agent_jobs/{id}.json  (job states)
-  - /app/data/output/{job_id}/      (draft outputs)
-
-This is the DEFAULT backend. Can be replaced with SQLiteBackend later
-without changing any agent code.
-"""
-
+"""JSONL Storage Backend."""
 from __future__ import annotations
-
 import json
-import os
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
-
-from engine.config import get_config
-from engine.schemas import Article, StructuredDraft, ArticleDraft, JobState
 from engine.storage.base import StorageBackend
-
+from engine.schemas import Article
 
 class JsonlStorage(StorageBackend):
-    """
-    File-based storage using JSONL for articles + JSON for graph/jobs.
-    
-    Compatible with existing digest.py data format.
-    """
-    
-    def __init__(self, data_dir: Optional[Path] = None):
-        cfg = get_config()
-        self.data_dir = data_dir or cfg.data_dir
-        self.articles_file = self.data_dir / "articles.jsonl"
-        self.graph_file = self.data_dir / "graph_data.json"
-        self.jobs_dir = cfg.jobs_dir          # /app/data/agent_jobs/
-        self.output_dir = cfg.output_dir      # /app/data/output/
-        
-        # Ensure directories exist
-        for d in (self.jobs_dir, self.output_dir):
-            d.mkdir(parents=True, exist_ok=True)
-    
-    # ── Articles ──
-    
-    def load_all_articles(self) -> list[Article]:
-        """Load all articles from JSONL."""
-        if not self.articles_file.exists():
+    def __init__(self, data_dir="/app/data", articles_file="articles.jsonl",
+                 graph_file="graph_data.json", seen_dois_file="seen_dois.txt"):
+        super().__init__(data_dir)
+        self.articles_path = self.data_dir / articles_file
+        self.graph_path = self.data_dir / graph_file
+        self.seen_path = self.data_dir / seen_dois_file
+
+    def load_articles(self) -> list:
+        if not self.articles_path.exists():
             return []
-        
-        articles = []
-        for line in self.articles_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                articles.append(Article(json.loads(line)))
-            except (json.JSONDecodeError, TypeError) as e:
-                print(f"  [Storage] Skipping bad article line: {e}", file=os.stderr)
-        
-        return articles
-    
-    def get_article_by_id(self, article_id: str) -> Optional[Article]:
-        """Find article by canonical ID or DOI."""
-        # Try direct DOI match first
-        decoded = article_id.replace("%2F", "/")  # URL-decode
-        
-        for art in self.load_all_articles():
-            # Check canonical_id
-            if art.canonical_id == decoded or art.canonical_id == article_id:
-                return art
-            # Check DOI directly
-            if art.get("doi", "").lower() == decoded.lower():
-                return art
-            # Check _id field
-            if art.get("_id") == article_id or art.get("_id") == decoded:
-                return art
-        
+        arts = []
+        with open(self.articles_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        arts.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return arts
+
+    def save_articles(self, articles: list):
+        with open(self.articles_path, "w", encoding="utf-8") as f:
+            for a in articles:
+                f.write(json.dumps(a, ensure_ascii=False) + "\n")
+
+    def count(self) -> int:
+        if not self.articles_path.exists():
+            return 0
+        with open(self.articles_path) as f:
+            return sum(1 for l in f if l.strip())
+
+    def get_article_by_doi(self, doi: str):
+        for a in self.load_articles():
+            if a.get("doi") == doi:
+                return Article(a)
         return None
-    
+
+    def add_article(self, article: dict):
+        arts = self.load_articles()
+        arts.append(article)
+        self.save_articles(arts)
+
+    def load_graph(self) -> dict:
+        if not self.graph_path.exists():
+            return {"nodes": [], "edges": [], "metadata": {}}
+        with open(self.graph_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_graph(self, graph_data: dict):
+        with open(self.graph_path, "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, ensure_ascii=False, indent=2)
+
+    def seen_dois(self) -> set:
+        if not self.seen_path.exists():
+            return set()
+        return set(l.strip() for l in open(self.seen_path).readlines() if l.strip())
+
+    def add_seen_doi(self, doi: str):
+        with open(self.seen_path, "a") as f:
+            f.write(doi + "\n")
+
+    # ── Optimized overrides ──
+
+    def add_articles_batch(self, articles: list[dict], skip_seen: bool = True) -> int:
+        """
+        Bulk-add articles, skipping already-seen DOIs.
+        Returns count of actually added articles.
+        """
+        if not articles:
+            return 0
+
+        seen = self.seen_dois() if skip_seen else set()
+        existing = {a.get("doi") for a in self.load_articles() if a.get("doi")}
+        existing.update(seen)
+
+        # Deduplicate within batch itself (keep first occurrence)
+        batch_seen: set[str] = set()
+        new_arts = []
+        for a in articles:
+            doi = a.get("doi")
+            if doi and (doi in existing or doi in batch_seen):
+                continue
+            if doi:
+                batch_seen.add(doi)
+            new_arts.append(a)
+
+        if not new_arts:
+            return 0
+
+        all_arts = self.load_articles()
+        all_arts.extend(new_arts)
+        self.save_articles(all_arts)
+
+        # Mark DOIs as seen
+        for a in new_arts:
+            if a.get("doi"):
+                self.add_seen_doi(a["doi"])
+
+        return len(new_arts)
+
     def search_articles(
         self,
         query: str = "",
         topic: str = "",
         source: str = "",
         limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[Article], int]:
-        """Search with text query and filters."""
-        import re
-        
-        articles = self.load_all_articles()
-        
-        # Filters
-        if topic:
-            articles = [a for a in articles if a.get("_topic_key") == topic]
-        if source:
-            articles = [a for a in articles if a.get("source") == source]
-        if query:
-            q_lower = query.lower()
-            articles = [a for a in articles if
-                q_lower in (a.get("title", "")).lower() or
-                q_lower in (a.get("title_ru", "")).lower() or
-                q_lower in (a.get("abstract", "")).lower() or
-                q_lower in (a.get("abstract_ru", "")).lower()
-            ]
-        
-        total = len(articles)
-        # Sort by score desc
-        articles.sort(key=lambda a: a.score_total, reverse=True)
-        
-        return articles[offset:offset + limit], total
-    
-    def save_article(self, article: Article | dict) -> None:
-        """Append article to JSONL (atomic: write to temp + rename)."""
-        data = article if isinstance(article, dict) else dict(article)
-        
-        mode = "a" if self.articles_file.exists() else "w"
-        if not self.articles_file.exists():
-            # New file: write header comment? No, pure JSONL.
-            pass
-        
-        with open(self.articles_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(data, ensure_ascii=False) + "\n")
-    
-    def count_articles(self) -> int:
-        if not self.articles_file.exists():
-            return 0
-        count = 0
-        for line in self.articles_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if line.strip():
-                count += 1
-        return count
-    
-    # ── Graph ──
-    
-    def load_graph(self) -> dict:
-        """Load graph from JSON file."""
-        if not self.graph_file.exists():
-            return {"nodes": [], "edges": [], "metadata": {}}
-        try:
-            return json.loads(self.graph_file.read_text())
-        except (json.JSONDecodeError, TypeError):
-            return {"nodes": [], "edges": [], "metadata": {}}
-    
-    def save_graph(self, graph_data: dict) -> None:
-        """Save graph to JSON file (atomic write)."""
-        tmp = self.graph_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(graph_data, ensure_ascii=False, indent=2))
-        tmp.replace(self.graph_file)
-    
-    # ── Drafts ──
-    
-    def save_draft(
-        self, draft: StructuredDraft | ArticleDraft, job_id: str = ""
-    ) -> Path:
-        """Save draft to output directory. Returns path."""
-        job_output = self.output_dir / job_id if job_id else self.output_dir
-        job_output.mkdir(parents=True, exist_ok=True)
-        
-        filename = f"{type(draft).__name__.lower()}_{draft.draft_id or 'latest'}.json"
-        path = job_output / filename
-        
-        path.write_text(json.dumps(draft.to_dict(), ensure_ascii=False, indent=2))
-        return path
-    
-    def load_draft(self, draft_id: str) -> Optional[StructuredDraft | ArticleDraft]:
-        """Load draft by searching output dirs."""
-        # Search in all output subdirs
-        if not self.output_dir.exists():
-            return None
-        
-        for job_dir in self.output_dir.iterdir():
-            if not job_dir.is_dir():
+    ) -> tuple[list, int]:
+        """Optimized search for JSONL — single pass through file."""
+        from engine.schemas import Article
+
+        arts_raw = self.load_articles()
+        total = len(arts_raw)
+
+        results = []
+        for a in arts_raw:
+            art = Article(a)
+
+            if source and art.get("source") != source:
                 continue
-            for f in job_dir.glob(f"*{draft_id}*.json"):
-                try:
-                    data = json.loads(f.read_text())
-                    # Determine type from content
-                    if "content" in data and "style" in data:
-                        return ArticleDraft(**data)
-                    elif "group_type" in data and "gap_identified" in data:
-                        return StructuredDraft(**data)
-                except (json.JSONDecodeError, TypeError):
+            if topic:
+                topics = art.get("topics") or []
+                topics_ru = art.get("topics_ru") or []
+                if topic not in topics and topic not in topics_ru:
                     continue
-        return None
-    
-    def list_drafts(self, job_id: str = "") -> list[dict]:
-        """List drafts. Filter by job_id if provided."""
-        results = []
-        base_dir = self.output_dir / job_id if job_id else self.output_dir
-        
-        if not base_dir.exists():
-            return results
-        
-        for f in sorted(base_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                data = json.loads(f.read_text())
-                results.append({
-                    "filename": f.name,
-                    "path": str(f),
-                    "type": data.get("group_type", data.get("style", "unknown")),
-                    "title": data.get("title_suggestion", ""),
-                    "created_at": data.get("created_at", ""),
-                    "size_kb": round(f.stat().st_size / 1024, 1),
-                })
-            except (json.JSONDecodeError, TypeError):
-                results.append({"filename": f.name, "error": "parse error"})
-        
-        return results
-    
-    # ── Job state ──
-    
-    def save_job_state(self, state_dict: dict, job_id: str) -> None:
-        """Persist job state as JSON."""
-        path = self.jobs_dir / f"{job_id}.json"
-        state_dict["updated_at"] = datetime.utcnow().isoformat()
-        path.write_text(json.dumps(state_dict, ensure_ascii=False, indent=2))
-    
-    def load_job_state(self, job_id: str) -> Optional[dict]:
-        """Load job state from JSON file."""
-        path = self.jobs_dir / f"{job_id}.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, TypeError):
-            return None
-    
-    def list_jobs(self, active_only: bool = False) -> list[dict]:
-        """List all jobs, optionally only active ones."""
-        terminal_states = {"complete", "failed", "cancelled"}
-        results = []
-        
-        if not self.jobs_dir.exists():
-            return results
-        
-        for f in sorted(self.jobs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                data = json.loads(f.read_text())
-                status = data.get("status", "")
-                if active_only and status in terminal_states:
+            if query:
+                q_lower = query.lower()
+                title = (art.display_title or "").lower()
+                abstract = (art.get("abstract", "") or "").lower()
+                abstract_ru = (art.get("abstract_ru", "") or "").lower()
+                if q_lower not in title and q_lower not in abstract and q_lower not in abstract_ru:
                     continue
-                results.append({
-                    "job_id": data.get("job_id", f.stem),
-                    "status": status,
-                    "pipeline": data.get("pipeline", ""),
-                    "created_at": data.get("created_at", ""),
-                    "updated_at": data.get("updated_at", ""),
-                })
-            except (json.JSONDecodeError, TypeError):
-                pass
-        
-        return results
-    
-    # ── Stats ──
-    
-    def get_stats(self) -> dict:
-        """Return storage statistics."""
-        articles = self.load_all_articles()
-        graph = self.load_graph()
-        
-        enriched_count = sum(1 for a in articles if a.is_enriched)
-        sources: dict[str, int] = {}
-        topics: dict[str, int] = {}
-        
-        for a in articles:
-            src = a.get("source", "unknown")
-            sources[src] = sources.get(src, 0) + 1
-            
-            topic = a.get("_topic_key", "unknown")
-            topics[topic] = topics.get(topic, 0) + 1
-        
-        scores = [a.score_total for a in articles if a.score_total > 0]
-        
-        return {
-            "total_articles": len(articles),
-            "enriched_articles": enriched_count,
-            "graph_nodes": len(graph.get("nodes", [])),
-            "graph_edges": len(graph.get("edges", [])),
-            "sources": sources,
-            "topics": topics,
-            "avg_score": round(sum(scores) / len(scores), 2) if scores else 0,
-            "max_score": max(scores) if scores else 0,
-            "storage_path": str(self.data_dir),
-        }
+
+            results.append(art)
+            if len(results) >= limit:
+                break
+
+        return results, total

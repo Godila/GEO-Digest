@@ -1,118 +1,116 @@
-"""
-Storage backend — abstract interface.
-
-Engine can work with JSONL (current), SQLite (future), or any other
-storage through this abstraction.
-"""
-
+"""Storage Backend — abstract interface."""
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
-
-from engine.schemas import Article, StructuredDraft, ArticleDraft
-
+from typing import List, Optional
 
 class StorageBackend(ABC):
-    """
-    Abstract storage for articles and drafts.
-    
-    All data operations go through here. Agents never touch files directly.
-    """
-    
-    # ── Articles ──
-    
+    def __init__(self, data_dir: str = "/app/data"):
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Core CRUD ──
+
     @abstractmethod
-    def load_all_articles(self) -> list[Article]:
-        """Load all articles from database."""
-        ...
-    
+    def load_articles(self) -> list: ...
+
     @abstractmethod
-    def get_article_by_id(self, article_id: str) -> Optional[Article]:
-        """Get single article by canonical ID or DOI."""
-        ...
-    
+    def save_articles(self, articles: list): ...
+
     @abstractmethod
+    def count(self) -> int: ...
+
+    @abstractmethod
+    def get_article_by_doi(self, doi: str): ...
+
+    @abstractmethod
+    def add_article(self, article: dict): ...
+
+    # ── Search & query (used by AgentTools) ──
+
     def search_articles(
         self,
         query: str = "",
         topic: str = "",
         source: str = "",
         limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[Article], int]:
-        """Search articles with filters. Returns (articles, total_count)."""
-        ...
-    
-    @abstractmethod
-    def save_article(self, article: Article | dict) -> None:
-        """Save/append a single article."""
-        ...
-    
-    @abstractmethod
-    def count_articles(self) -> int:
-        """Total number of articles."""
-        ...
-    
+    ) -> tuple[list, int]:
+        """
+        Search articles by text query, topic tag, or source name.
+        Returns (articles_list, total_count).
+        Default implementation: loads all + filters in-memory.
+        Override for indexed backends.
+        """
+        from engine.schemas import Article
+
+        articles = [Article(a) for a in self.load_articles()]
+        total = len(articles)
+
+        if topic:
+            articles = [
+                a for a in articles
+                if topic in (a.get("topics") or [])
+                or topic in (a.get("topics_ru") or [])
+            ]
+
+        if source:
+            articles = [a for a in articles if a.get("source") == source]
+
+        if query:
+            q_lower = query.lower()
+            articles = [
+                a for a in articles
+                if q_lower in (a.display_title or "").lower()
+                or q_lower in (a.get("abstract", "") or "").lower()
+                or q_lower in (a.get("abstract_ru", "") or "").lower()
+            ]
+
+        return articles[:limit], total
+
+    def get_article_by_id(self, identifier: str):
+        """Find article by DOI, canonical_id, or _id."""
+        from engine.schemas import Article
+
+        for a in self.load_articles():
+            art = Article(a)
+            if identifier in (
+                art.get("doi", ""),
+                art.canonical_id,
+                art.get("_id", ""),
+            ):
+                return art
+        return None
+
+    def load_all_articles(self):
+        """Load all articles as Article objects."""
+        from engine.schemas import Article
+        return [Article(a) for a in self.load_articles()]
+
     # ── Graph ──
-    
+
     @abstractmethod
-    def load_graph(self) -> dict:
-        """Load graph data {nodes: [], edges: [], metadata?: {}}."""
-        ...
-    
+    def load_graph(self) -> dict: ...
+
     @abstractmethod
-    def save_graph(self, graph_data: dict) -> None:
-        """Save graph data."""
-        ...
-    
-    # ── Drafts (agent outputs) ──
-    
+    def save_graph(self, graph_data: dict): ...
+
+    # ── Dedup tracking ──
+
     @abstractmethod
-    def save_draft(self, draft: StructuredDraft | ArticleDraft, job_id: str = "") -> Path:
-        """Save a draft to output directory. Returns path."""
-        ...
-    
+    def seen_dois(self) -> set: ...
+
     @abstractmethod
-    def load_draft(self, draft_id: str) -> Optional[StructuredDraft | ArticleDraft]:
-        """Load a draft by ID."""
-        ...
-    
-    @abstractmethod
-    def list_drafts(self, job_id: str = "") -> list[dict]:
-        """List available drafts. Optionally filter by job_id."""
-        ...
-    
-    # ── Job state ──
-    
-    @abstractmethod
-    def save_job_state(self, state_dict: dict, job_id: str) -> None:
-        """Persist job state to disk."""
-        ...
-    
-    @abstractmethod
-    def load_job_state(self, job_id: str) -> Optional[dict]:
-        """Load job state from disk."""
-        ...
-    
-    @abstractmethod
-    def list_jobs(self, active_only: bool = False) -> list[dict]:
-        """List jobs. If active_only, only non-terminal states."""
-        ...
-    
-    # ── Health / Info ──
-    
-    @abstractmethod
+    def add_seen_doi(self, doi: str): ...
+
+    # ── Stats ──
+
     def get_stats(self) -> dict:
         """Return storage statistics."""
-        ...
-
-
-def get_storage(data_dir: Optional[Path] = None) -> StorageBackend:
-    """Factory: get storage backend instance."""
-    from engine.config import get_config
-    from engine.storage.jsonl_backend import JsonlStorage
-    
-    cfg = get_config()
-    return JsonlStorage(data_dir=data_dir or cfg.data_dir)
+        arts = self.load_articles()
+        enriched = sum(1 for a in arts if a.get("is_enriched"))
+        return {
+            "total": len(arts),
+            "enriched": enriched,
+            "seen_dois": len(self.seen_dois()),
+            "data_dir": str(self.data_dir),
+        }
