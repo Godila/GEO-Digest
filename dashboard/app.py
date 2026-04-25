@@ -210,23 +210,12 @@ async def api_article_detail(article_id: str):
 
 @app.get("/api/graph")
 async def api_graph():
-    """Graph data — read from volume, convert to Cytoscape.js elements format."""
+    """Graph data — return raw {nodes, edges, metadata} for frontend Cytoscape conversion."""
     raw = load_graph()
-    # If already in Cytoscape {elements: [...]} format, return as-is
-    if "elements" in raw:
-        return raw
-    # Convert {nodes: [...], edges: [...], metadata?} → {elements: [...]}
-    elements = []
-    for n in raw.get("nodes", []):
-        data = n.get("data", n) if isinstance(n, dict) else n
-        elements.append({"group": "nodes", "data": data})
-    for e in raw.get("edges", []):
-        data = e.get("data", e) if isinstance(e, dict) else e
-        elements.append({"group": "edges", "data": data})
-    result = {"elements": elements}
-    if "metadata" in raw:
-        result["metadata"] = raw["metadata"]
-    return result
+    # Frontend's initGraph() expects {nodes: [...], edges: [...], metadata?}
+    # and converts to Cytoscape {elements: [...]} itself.
+    # Just return the raw file contents as-is.
+    return raw
 
 
 @app.get("/api/topics")
