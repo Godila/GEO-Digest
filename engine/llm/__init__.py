@@ -15,4 +15,11 @@ def create_provider(cfg) -> LLMProvider:
     else:
         raise ValueError(f"Unknown LLM provider: {p}")
 
-__all__ = ["LLMProvider", "MiniMaxProvider", "OpenAICompatProvider", "create_provider"]
+
+def get_llm():
+    """Get default LLM provider from config singleton."""
+    from engine.config import get_config
+    return create_provider(get_config())
+
+
+__all__ = ["LLMProvider", "MiniMaxProvider", "OpenAICompatProvider", "create_provider", "get_llm"]

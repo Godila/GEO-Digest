@@ -95,11 +95,10 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
             self._log(f"Grup posle fil'tra: {len(high_conf)}")
 
             result = ScoutResult(
-                query=topic,
+                topic=topic,
                 total_found=len(articles),
-                analyzed=len(articles),
+                after_dedup=len(articles),
                 groups=high_conf,
-                group_count=len(high_conf),
             )
             return AgentResult(
                 agent_name=self.name, success=True, data=result,
@@ -163,7 +162,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         raw_response = self.call_llm(
             prompt=prompt,
             system=SCOUT_SYSTEM_PROMPT,
-            max_tokens=4096,
+            max_tokens=8192,
             parse_json=True,
         )
         return self._parse_classification(raw_response, articles)
@@ -172,14 +171,54 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         self, raw: dict | list | str, original_articles: list[Article]
     ) -> list[ArticleGroup]:
         """Parsim LLM-otvet v spisok ArticleGroup."""
+        import json as _json
+        import re as _re
+
         groups = []
 
-        if isinstance(raw, dict):
-            items = raw.get("articles", [])
-        elif isinstance(raw, list):
-            items = raw
+        # Try to extract JSON if raw is string
+        parsed = raw
+        if isinstance(raw, str):
+            text = raw.strip()
+
+            # Remove markdown code fences
+            for fence_pattern in (r'```json\s*\n?', r'```\s*\n?', r'```\s*$'):
+                text = _re.sub(fence_pattern, '', text)
+            text = text.strip()
+
+            # Try direct parse first
+            try:
+                parsed = _json.loads(text)
+            except _json.JSONDecodeError:
+                # Try to find JSON object with articles key
+                match = _re.search(r'\{[^{}]*"articles"\s*:\s*\[[\s\S]*\][^{}]*\}', text)
+                if match:
+                    try:
+                        parsed = _json.loads(match.group())
+                    except _json.JSONDecodeError:
+                        pass
+
+                # Fallback: find any JSON object
+                if isinstance(parsed, str):
+                    # Find balanced braces - from last { to matching }
+                    start = text.rfind('{')
+                    if start >= 0:
+                        # Try progressively smaller substrings from start
+                        for end in range(len(text), start, -1):
+                            try:
+                                candidate = text[start:end]
+                                parsed = _json.loads(candidate)
+                                break
+                            except (_json.JSONDecodeError, ValueError):
+                                continue
+
+        if isinstance(parsed, dict):
+            items = parsed.get("articles", [])
+        elif isinstance(parsed, list):
+            items = parsed
         else:
-            self._log(f"Neponyatnyy format: {type(raw)}")
+            self._log(f"Neponyatnyy format: {type(parsed)}")
+            self._log(f"Raw response (first 500 chars): {str(raw)[:500]}")
             return groups
 
         doi_map = {a.doi: a for a in original_articles if a.doi}
@@ -199,27 +238,9 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
             except KeyError:
                 group_type = GroupType.REVIEW
 
-            data_req = None
-            infra = None
-            if group_type == GroupType.REPLICATION and "data_requirements" in item:
-                dr = item["data_requirements"]
-                data_req = DataRequirements(
-                    data_types=dr.get("data_types", []),
-                    spatial_coverage=dr.get("spatial_coverage", ""),
-                    temporal_coverage=dr.get("temporal_coverage", ""),
-                    sample_size=dr.get("sample_size"),
-                    format_notes=dr.get("format_notes", ""),
-                )
-                if "infrastructure_needs" in item:
-                    inf = item["infrastructure_needs"]
-                    infra = InfrastructureNeeds(
-                        software=inf.get("software", []),
-                        hardware=inf.get("hardware", ""),
-                        compute_hours=inf.get("compute_hours"),
-                        expertise=inf.get("expertise", []),
-                        cost_estimate=inf.get("cost_estimate", ""),
-                    )
-
+            # Note: data_requirements & infrastructure_needs are available from LLM
+            # but ArticleGroup schema doesn't store them. If needed later,
+            # extend ArticleGroup or attach as metadata dict.
             source_article = doi_map.get(doi)
             groups.append(ArticleGroup(
                 group_id=f"group_{len(groups):03d}",
@@ -227,9 +248,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 articles=[source_article] if source_article else [],
                 confidence=confidence,
                 rationale=rationale,
-                tags=tags,
-                data_requirements=data_req,
-                infrastructure_needs=infra,
+                keywords=tags,  # LLM returns 'tags', schema uses 'keywords'
             ))
 
         if not groups and original_articles:
@@ -239,7 +258,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 articles=original_articles[:10],
                 confidence=0.3,
                 rationale="Default group (LLM did not classify)",
-                tags=["unclassified"],
+                keywords=["unclassified"],
             ))
         return groups
 

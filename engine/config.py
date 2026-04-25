@@ -78,7 +78,7 @@ class EngineConfig:
         llm = LLMConfig(
             provider=lr.get("provider", "minimax"),
             model=lr.get("model", "MiniMax-M2.7"),
-            base_url=lr.get("base_url", "https://api.minimax.chat/v1"),
+            base_url=env.get("MINIMAX_BASE_URL", lr.get("base_url", "https://api.minimax.chat/anthropic")),
             api_key=env.get("MINIMAX_API_KEY", ""),
             api_key_env="MINIMAX_API_KEY",
         )

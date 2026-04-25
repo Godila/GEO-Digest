@@ -17,11 +17,11 @@ class OpenAICompatProvider(LLMProvider):
         return {"Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}"}
     
-    def complete(self, prompt, system_prompt="", temperature=0.3, max_tokens=4096):
+    def complete(self, prompt, system="", temperature=0.3, max_tokens=4096):
         url = f"{self.base_url}/chat/completions"
         msgs = []
-        if system_prompt:
-            msgs.append({"role": "system", "content": system_prompt})
+        if system:
+            msgs.append({"role": "system", "content": system})
         msgs.append({"role": "user", "content": prompt})
         payload = {"model": self.model, "messages": msgs,
                    "temperature": temperature, "max_tokens": max_tokens}

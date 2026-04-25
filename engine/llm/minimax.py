@@ -41,9 +41,9 @@ class MiniMaxProvider(LLMProvider):
             payload["stop_sequences"] = ["</thinking>"]
         return payload
 
-    def complete(self, prompt, system_prompt="", temperature=0.3, max_tokens=4096):
+    def complete(self, prompt, system="", temperature=0.3, max_tokens=4096):
         url = f"{self.base_url}/v1/messages"
-        payload = self._build_payload(prompt, system_prompt, temperature, max_tokens)
+        payload = self._build_payload(prompt, system, temperature, max_tokens)
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
         last_err = None
