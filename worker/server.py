@@ -659,7 +659,7 @@ async def agent_articles(
     return result
 
 
-@app.get("/api/a/article/{article_id}")
+@app.get("/api/a/article/{article_id:path}")
 async def agent_article(article_id: str):
     """Get full article by canonical ID + enrichment markdown content."""
     art = get_article_by_id(article_id)
@@ -788,18 +788,14 @@ async def agent_info():
 # ── Export ─────────────────────────────────────────────────
 
 @app.get("/api/a/export")
-async def agent_export(fmt: str = "compact"):
+async def agent_export(format: str = "compact"):
     """Export data in various formats.
 
     format=compact:   articles list with essential fields only (for context window)
     format=jsonld:     JSON-LD with @context
     format=graph_kg:   Graph in KG format (not Cytoscape), nodes + edges as objects
     """
-    fmt_clean = fmt.lower().strip()
-
-    # DEBUG: return fmt info for diagnosis
-    if fmt_clean == "_debug_":
-        return {"received": fmt, "cleaned": fmt_clean, "is_graph_kg": fmt_clean == "graph_kg"}
+    fmt_clean = format.lower().strip()
 
     if fmt_clean == "compact":
         arts = load_all_articles()
