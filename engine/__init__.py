@@ -16,6 +16,8 @@ from engine.schemas import (
     GroupType,
     Severity,
     ReviewVerdict,
+    Edit,
+    FactCheck,
     ScoutResult,
 )
 from engine.agents.base import BaseAgent
@@ -39,6 +41,8 @@ __all__ = [
     "GroupType",
     "Severity",
     "ReviewVerdict",
+    "Edit",
+    "FactCheck",
     "ScoutResult",
     "BaseAgent",
     "LLMProvider",
