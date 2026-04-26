@@ -1553,6 +1553,27 @@ async function initGraph() {
                     'text-outline-width': 2,
                 }
             },
+            // Hub nodes — golden border glow
+            {
+                selector: '.article-node[is_hub]',
+                style: {
+                    'border-width': 3,
+                    'border-color': '#f0c674',
+                    'background-color': '#f0c674',
+                    'text-background-color': '#0d1117',
+                    'text-background-opacity': 0.8,
+                    'text-background-padding': '2px',
+                }
+            },
+            // Bridge nodes — cyan border
+            {
+                selector: '.article-node[is_bridge]',
+                style: {
+                    'border-width': 3,
+                    'border-color': '#39d2c0',
+                    'border-style': 'dashed',
+                }
+            },
             // Meta nodes (topic, source, etc)
             {
                 selector: '.meta-node',
@@ -1670,13 +1691,15 @@ async function initGraph() {
         highlightNode(node);
     });
 
-    // Tooltip on hover — показываем оригинальный англ. заголовок
+    // Tooltip on hover — показываем оригинальный англ. заголовок + структурную роль
     cy.on('mouseover', 'node', function(evt) {
         const d = evt.target.data();
         if (d.type === 'article' && d.label_en) {
+            const roleBadge = d.is_hub ? ' 🔮 hub' : (d.is_bridge ? ' 🌉 bridge' : '');
+            const prInfo = d.page_rank ? ` · PR: ${d.page_rank.toFixed(3)}` : '';
             const tt = document.getElementById('tooltip');
             tt.innerHTML = `<div class="tt-rel" style="color:var(--cyan)">${esc(d.label_en)}</div>`
-                + `<div class="tt-desc">${esc(d.topic_ru || '')} · ${d.year || ''} · ${(d.citations||0)} цит.</div>`;
+                + `<div class="tt-desc">${esc(d.topic_ru || '')} · ${d.year || ''} · ${(d.citations||0)} цит.${roleBadge}${prInfo}</div>`;
             tt.style.display = 'block';
         }
     });
@@ -1710,12 +1733,14 @@ function buildLegend() {
 
     const items = [
          { color: COLORS.article, label: 'Статья' },
-        { color: COLORS.topic, label: 'Тема' },
-        { color: COLORS.article_type, label: 'Тип' },
-        { color: COLORS.source, label: 'Источник' },
-        { color: '#f85149', label: 'ИИ-связь' },
-        { color: '#39d2c0', label: 'Общие темы' },
-        { color: '#30363d', label: 'Метаданные' },
+         { color: COLORS.topic, label: 'Тема' },
+         { color: COLORS.article_type, label: 'Тип' },
+         { color: COLORS.source, label: 'Источник' },
+         { color: '#f85149', label: 'ИИ-связь' },
+         { color: '#39d2c0', label: 'Общие темы' },
+         { color: '#30363d', label: 'Метаданные' },
+         { color: '#f0c674', label: '🔮 Hub (центр)' },
+         { color: '#39d2c0', label: '🌉 Bridge (мост)', border: 'dashed' },
     ];
     document.getElementById('graphLegend').innerHTML =
         items.map(i => `<div class="legend-item"><div class="legend-dot" style="background:${i.color}"></div>${i.label}</div>`).join('');

@@ -139,7 +139,7 @@ def build_metadata_nodes(articles: list[dict]) -> tuple[list[dict], list[dict]]:
                 "authors": art.get("authors", [])[:5],
                 "source": art.get("source", ""),
                 "url": art.get("url", "") or "",
-                "size": max(20, min(60, total_score * 20)),  # node size by score
+                "size": 25,  # default; recalculated in Step 4 from PageRank
             }
         }
         nodes.append(art_node)
@@ -789,6 +789,13 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
                 # Mark hubs and bridges
                 d["is_hub"] = nid in metrics.get("hub_nodes", [])
                 d["is_bridge"] = nid in metrics.get("bridge_nodes", [])
+                # Recalculate node size from structural importance
+                base_size = 20 + d["page_rank"] * 50  # PageRank: 20-70
+                if d["is_hub"]:
+                    base_size += 10   # hub → visually prominent
+                if d["is_bridge"]:
+                    base_size += 5    # bridge → slight boost
+                d["size"] = max(15, min(80, base_size))
 
         # Add analytics to metadata
         analytics_meta = {
