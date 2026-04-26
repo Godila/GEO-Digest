@@ -70,3 +70,88 @@ class MiniMaxProvider(LLMProvider):
             return True
         except Exception:
             return False
+
+    # ── Tool-Use Completion ─────────────────────────────────────
+
+    def tool_complete(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str = "",
+        temperature: float = 0.25,
+        max_tokens: int = 4096,
+    ) -> dict:
+        """
+        Tool-use completion via Anthropic Messages API.
+
+        Sends messages with optional tool definitions to MiniMax.
+        Supports multi-turn conversations with tool_use / tool_result blocks.
+
+        Args:
+            messages: Conversation history in Anthropic format.
+                User messages may contain tool_result content blocks.
+                Assistant messages may contain tool_use content blocks.
+            tools: List of tool definitions for function calling.
+            system: System prompt string.
+            temperature: Sampling temperature.
+            max_tokens: Max output tokens.
+
+        Returns:
+            dict with keys: content, stop_reason, usage, model
+        """
+        url = f"{self.base_url}/v1/messages"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if tools:
+            payload["tools"] = tools
+        if system:
+            payload["system"] = system
+        if self.disable_thinking:
+            payload["stop_sequences"] = ["</thinking>"]
+
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
+        last_err = None
+        for attempt in range(self.retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    result = json.loads(resp.read().decode())
+                return self._parse_tool_response(result)
+            except Exception as e:
+                last_err = e
+                if attempt < self.retries:
+                    time.sleep(2 ** attempt)
+        raise RuntimeError(f"MiniMax API error after {self.retries + 1} attempts: {last_err}")
+
+    def _parse_tool_response(self, result: dict) -> dict:
+        """
+        Parse raw Anthropic API response into standardised dict.
+
+        Handles both text-only responses and tool_use responses.
+        Strips <thinking> tags from text content when present.
+        """
+        content_blocks = result.get("content", [])
+        usage = result.get("usage", {})
+        stop_reason = result.get("stop_reason", "end_turn")
+
+        # Strip thinking tags from text blocks
+        for block in content_blocks:
+            if block.get("type") == "text" and "text" in block:
+                raw = block["text"]
+                if raw.startswith("<thinking>"):
+                    idx = raw.find("</thinking>")
+                    block["text"] = raw[idx + len("</thinking>"):].strip() if idx >= 0 else ""
+
+        return {
+            "content": content_blocks,
+            "stop_reason": stop_reason,
+            "usage": {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+            },
+            "model": result.get("model", self.model),
+        }
