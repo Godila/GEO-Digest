@@ -25,12 +25,15 @@ Transitions:
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineState(str, Enum):
@@ -140,7 +143,11 @@ class EditorOrchestrator:
         return job
 
     def run_editing_phase(self, job: PipelineJob) -> PipelineJob:
-        """Запускает Editor Agent (анализ + генерация предложений)."""
+        """Запускает Editor Agent (анализ + генерация предложений).
+
+        После генерации proposals обогащает их данными из графа знаний
+        (centrality, bridges, hubs) если граф доступен.
+        """
         job.state = PipelineState.EDITING
         self._save_job(job)
 
@@ -153,6 +160,10 @@ class EditorOrchestrator:
             )
             # Сохраняем результат editor как dict
             job.editor_result = self._serialize_editor_result(result)
+
+            # S8.3: Graph enrichment — дополнить proposals graph данными
+            self._enrich_with_graph(job)
+
             job.state = PipelineState.SELECTING
         except Exception as e:
             job.state = PipelineState.FAILED
@@ -314,6 +325,54 @@ class EditorOrchestrator:
         return jobs
 
     # ── Private Helpers ────────────────────────────────────
+
+    def _enrich_with_graph(self, job: PipelineJob) -> None:
+        """Обогащает proposals данными из графа знаний.
+
+        Для каждого key_reference в каждом proposal добавляет:
+        - page_rank, betweenness, community
+        - hub/bridge статус
+
+        Также ищет кросс-тематические мосты для темы job.
+        """
+        try:
+            from engine.tools.graph_tools import GraphTools
+            gt = GraphTools()
+
+            proposals = (job.editor_result or {}).get("proposals", [])
+            for prop in proposals:
+                graph_context = []
+                dois = self._extract_dois(prop.get("key_references", []))
+                for doi in dois:
+                    cr = gt.graph_centrality(doi)
+                    if cr.success and cr.data:
+                        graph_context.append({
+                            "doi": doi,
+                            "page_rank": round(cr.data.get("page_rank", 0), 4),
+                            "betweenness": round(cr.data.get("betweenness", 0), 4),
+                            "role": cr.data.get("role", "unknown"),
+                            "degree": cr.data.get("degree", 0),
+                            "is_hub": cr.data.get("is_hub", False),
+                            "is_bridge": cr.data.get("is_bridge", False),
+                        })
+                if graph_context:
+                    prop["graph_context"] = graph_context
+
+            # Cross-topic bridges discovery
+            if job.topic:
+                # Extract potential sub-topics from the topic string
+                words = job.topic.split()
+                if len(words) >= 2:
+                    bridges_result = gt.graph_cross_topic(words[0], words[-1])
+                    if bridges_result.success and bridges_result.data:
+                        job.editor_result["cross_topic_bridges"] = [
+                            {"label": b["label"], "bridge_score": b["bridge_score"],
+                             "direct_mention": b["direct_mention"]}
+                            for b in bridges_result.data.get("bridges", [])[:5]
+                        ]
+
+        except Exception as e:
+            logger.warning(f"[orch] Graph enrichment skipped: {e}")
 
     def _get_selected_proposal(self, job: PipelineJob) -> Optional[dict]:
         if not job.editor_result or not job.selected_proposal_id:

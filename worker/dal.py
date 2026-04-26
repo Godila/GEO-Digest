@@ -412,8 +412,7 @@ def get_stats() -> dict:
 
     llm_edge_count = sum(
         1 for e in g.get("edges", [])
-        if "llm" in e.get("data", {}).get("relation", "")
-        or e.get("data", {}).get("confidence", 1.0) < 1.0
+        if e.get("data", {}).get("llm_generated") is True
     )
 
     return {
@@ -529,44 +528,48 @@ def resolve_graph_id(canonical_id: str) -> Optional[str]:
 
 
 def _enrich_articles_with_graph_ids(articles: list[dict]) -> list[dict]:
-    """Add _graph_id field to articles based on title matching with graph nodes."""
+    """Add _graph_id field to articles based on DOI/title matching with graph nodes."""
     g = load_graph()
-    graph_labels = {}
-    graph_titles = {}
+    if not g.get("nodes"):
+        return articles
+
+    # Build lookup: DOI → graph_node_id  and  label → graph_node_id
+    doi_to_gid = {}
+    label_to_gid = {}
     for n in g.get("nodes", []):
         d = n["data"]
         nid = d.get("id", "")
+        doi = (d.get("doi") or "").strip().lower()
         label = (d.get("label") or "").strip().lower()
-        title = (d.get("title") or "").strip().lower()
+        title_en = (d.get("label_en") or "").strip().lower()
+        if doi:
+            doi_to_gid[doi] = nid
         if label:
-            graph_labels[label] = nid
-        if title:
-            graph_titles[title] = nid
-
-    # Also build positional map: article_N → Nth article without graph_id
-    article_nodes = [(n["data"]) for n in g.get("nodes", []) if n["data"].get("nodeType") == "article"]
-    pos_map = {}  # index → graph_id
-    for i, nd in enumerate(article_nodes):
-        pos_map[i] = nd.get("id", "")
+            label_to_gid[label] = nid
+        if title_en and title_en != label:
+            label_to_gid[title_en] = nid
 
     unmatched = []
     for idx, a in enumerate(articles):
-        title = (a.get("title") or "").strip().lower()
         matched = False
+        art_doi = (a.get("doi") or "").strip().lower()
 
-        # Try exact label match
-        if title in graph_labels:
-            a["_graph_id"] = graph_labels[title]
-            matched = True
-        elif title in graph_titles:
-            a["_graph_id"] = graph_titles[title]
+        # Priority 1: DOI match (most reliable with A5 stable IDs)
+        if art_doi and art_doi in doi_to_gid:
+            a["_graph_id"] = doi_to_gid[art_doi]
             matched = True
 
-        # Fallback: positional (article order ≈ graph node order)
-        if not matched and idx < len(pos_map):
-            a["_graph_id"] = pos_map[idx]
+        # Priority 2: Title/label match
+        if not matched:
+            title = (a.get("title_ru") or a.get("title") or "").strip().lower()
+            if title in label_to_gid:
+                a["_graph_id"] = label_to_gid[title]
+                matched = True
 
         if not a.get("_graph_id"):
             unmatched.append(idx)
+
+    if unmatched:
+        print(f"[DAL] {len(unmatched)}/{len(articles)} articles without graph ID match")
 
     return articles

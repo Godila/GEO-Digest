@@ -1645,7 +1645,7 @@ async function initGraph() {
         if (node.data().type === 'article') {
             // Find article index
             const id = node.data().id;
-            const idx = allArticles.findIndex((_, i) => `article_${i+1}` === id);
+            const idx = allArticles.findIndex(a => a._graph_id === id);
             if (idx >= 0) openArticleModal(idx);
         }
         highlightNode(node);
@@ -1941,9 +1941,11 @@ ${llm.methods ? '\n\n<b>Методы:</b>\n' + esc(llm.methods) : ''}</div>
 
     // Highlight in graph
     if(cy) {
-        const nodeId = `article_${idx+1}`;
-        const node = cy.getElementById(nodeId);
-        if(node.length) highlightNode(node);
+        const nodeId = allArticles[idx]?._graph_id;
+        if(nodeId) {
+            const node = cy.getElementById(nodeId);
+            if(node.length) highlightNode(node);
+        }
     }
 }
 

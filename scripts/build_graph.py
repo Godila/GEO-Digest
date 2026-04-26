@@ -39,6 +39,23 @@ CORPUS_DIR = BASE / "corpus"
 GRAPHIFY_OUT = BASE / "graphify-out"
 
 
+# ── Stable Article ID generation (A5) ───────────────────────────
+def _make_art_id(art: dict, fallback_idx: int = 0) -> str:
+    """Generate a stable graph node ID for an article.
+    
+    Uses DOI when available (stable across reorders), falls back to title hash.
+    """
+    doi = (art.get("doi") or "").strip()
+    if doi:
+        safe_doi = doi.lower().replace("/", "_").replace(".", "_")[:40]
+        return f"art_{safe_doi}"
+    import hashlib
+    title_hash = hashlib.md5(
+        (art.get("title", "") + str(art.get("year", ""))).encode()
+    ).hexdigest()[:12]
+    return f"art_{title_hash}"
+
+
 # ── Load articles ─────────────────────────────────────────────
 def load_articles(limit: int = 0) -> list[dict]:
     """Load articles from JSONL database."""
@@ -80,7 +97,7 @@ def build_metadata_nodes(articles: list[dict]) -> tuple[list[dict], list[dict]]:
     seen_nodes = set()
     
     for i, art in enumerate(articles):
-        art_id = f"article_{i+1}"
+        art_id = _make_art_id(art, i)
         doi = art.get("doi", f"unknown_{i}")
         scores = art.get("scores", {})
         total_score = sum(scores.values()) if scores else 0
@@ -138,7 +155,11 @@ def build_metadata_nodes(articles: list[dict]) -> tuple[list[dict], list[dict]]:
                 topic_label_map[t_en] = t_ru
         
         for idx, topic in enumerate(all_topics):
-            topic_id = f"topic_{topic.lower().replace(' ', '_').replace('/', '_')[:50]}"
+            # Use hash of full topic string to avoid collisions
+            # e.g. "Carbon Storage" and "carbon storage" get different IDs
+            import hashlib
+            topic_hash = hashlib.md5(topic.strip().lower().encode()).hexdigest()[:12]
+            topic_id = f"topic_{topic_hash}"
             # Русская метка: из LLM-перевода или fallback на _topic_name_ru
             ru_label = ""
             if topic in topic_label_map:
@@ -253,12 +274,21 @@ If no meaningful connection exists, respond: []"""
 # ── Topic filter ─────────────────────────────────────────────
 def share_topics(art_a: dict, art_b: dict) -> bool:
     """Check if two articles share at least one topic.
+
     Pairs without common topics are extremely unlikely to have
-    meaningful semantic connections — skip LLM call entirely."""
+    meaningful semantic connections — skip LLM call entirely.
+    
+    CRITICAL FIX (v3): If BOTH articles have NO topics, return False
+    to avoid super-hub effect where one untagged article gets
+    compared against everything else, generating spurious edges.
+    """
     topics_a = set(t.lower().strip() for t in art_a.get("topics", []) if t)
     topics_b = set(t.lower().strip() for t in art_b.get("topics", []) if t)
+    # Both empty → no common ground → skip (was: True, caused super-hub)
+    if not topics_a and not topics_b:
+        return False
     if not topics_a or not topics_b:
-        return True  # No topic info → don't filter, let LLM decide
+        return True  # One has topics, other doesn't → let LLM decide
     return bool(topics_a & topics_b)
 
 
@@ -468,8 +498,8 @@ def build_llm_edges(articles: list[dict], existing_edges: list[dict],
 
     for i, j in combinations(range(n), 2):
         art_a, art_b = articles[i], articles[j]
-        art_id_a = f"article_{i+1}"
-        art_id_b = f"article_{j+1}"
+        art_id_a = _make_art_id(art_a, i)
+        art_id_b = _make_art_id(art_b, j)
         doi_i = (art_a.get("doi") or f"idx_{i}").strip().lower()
         doi_j = (art_b.get("doi") or f"idx_{j}").strip().lower()
         pair_key = tuple(sorted([doi_i, doi_j]))
@@ -551,27 +581,27 @@ def build_topic_cooccurrence_edges(articles: list[dict]) -> list[dict]:
     """Connect articles that share topics."""
     edges = []
     n = len(articles)
-    
+
     for i in range(n):
         for j in range(i + 1, n):
             topics_i = set(articles[i].get("topics", []))
             topics_j = set(articles[j].get("topics", []))
             shared = topics_i & topics_j
-            
+
             if shared:
                 strength = len(shared) / max(len(topics_i | topics_j), 1)
                 edges.append({
                     "data": {
-                        "id": f"cooccur_article_{i+1}_article_{j+1}",
-                        "source": f"article_{i+1}",
-                        "target": f"article_{j+1}",
+                        "id": f"cooccur_{_make_art_id(articles[i], i)}_{_make_art_id(articles[j], j)}",
+                        "source": _make_art_id(articles[i], i),
+                        "target": _make_art_id(articles[j], j),
                         "relation": "shared_topics",
                         "label": f"Общие темы",
                         "confidence": round(strength, 2),
                         "shared_topics": list(shared),
                     }
                 })
-    
+
     return edges
 
 
@@ -585,7 +615,7 @@ def _extract_processed_pairs(graph: dict) -> set:
     """
     pairs = set()
     # We need to reverse-map node IDs back to DOIs
-    # Node IDs are like "article_1", "article_2" etc.
+    # Node IDs are like "art_10_xxxx" (DOI-based) or "art_<hash>"
     # Each article node has a "doi" field in data
     node_doi_map = {}
     for node in graph.get("nodes", []):
@@ -714,11 +744,66 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
                 print(f"  [Merge] Kept {merged_count} existing + {len(new_llm_edges)} new LLM edges")
 
             all_edges.extend(llm_edges)
+
+            # A4: Deduplicate — remove co-occurrence edges when LLM edge exists
+            # LLM semantic edges are more informative than simple topic overlap
+            if llm_edges:
+                llm_pairs = set()
+                for e in llm_edges:
+                    pair = tuple(sorted([e["data"]["source"], e["data"]["target"]]))
+                    llm_pairs.add(pair)
+                before_dedup = len(all_edges)
+                all_edges = [
+                    e for e in all_edges
+                    if e["data"].get("relation") != "shared_topics"
+                    or tuple(sorted([e["data"]["source"], e["data"]["target"]])) not in llm_pairs
+                ]
+                removed = before_dedup - len(all_edges)
+                if removed:
+                    print(f"  [Dedup] Removed {removed} redundant co-occurrence edges (LLM edges exist)")
+
         except ValueError as e:
             print(f"  [SKIP] {e}")
         except Exception as e:
             print(f"  [ERROR] LLM extraction failed: {e}")
-    
+
+    # Step 4: Graph analytics — PageRank, Betweenness, Louvain communities
+    print("[GRAPH_STEP] analytics", file=sys.stderr, flush=True)
+    print("\n--- Step 4: Graph analytics ---")
+    try:
+        from graph_analytics import compute_all_metrics
+        metrics = compute_all_metrics(nodes, all_edges)
+
+        # Annotate article nodes with metrics
+        pr = metrics.get("page_rank", {})
+        bc = metrics.get("betweenness", {})
+        comms = metrics.get("communities", {})
+
+        for n in nodes:
+            d = n["data"]
+            nid = d.get("id", "")
+            if d.get("nodeType") == "article":
+                d["page_rank"] = round(pr.get(nid, 0), 4)
+                d["betweenness"] = round(bc.get(nid, 0), 4)
+                d["community"] = comms.get(nid, -1)
+                # Mark hubs and bridges
+                d["is_hub"] = nid in metrics.get("hub_nodes", [])
+                d["is_bridge"] = nid in metrics.get("bridge_nodes", [])
+
+        # Add analytics to metadata
+        analytics_meta = {
+            "hub_count": len(metrics.get("hub_nodes", [])),
+            "bridge_count": len(metrics.get("bridge_nodes", [])),
+            "community_count": len(metrics.get("community_info", [])),
+            "communities": metrics.get("community_info", []),
+        }
+        print(f"  Hubs: {analytics_meta['hub_count']}, "
+              f"Bridges: {analytics_meta['bridge_count']}, "
+              f"Communities: {analytics_meta['community_count']}")
+    except Exception as e:
+        print(f"  [WARN] Analytics failed (non-critical): {e}")
+        analytics_meta = {"error": str(e)}
+
     # Assemble final graph
     graph = {
         "metadata": {
@@ -730,6 +815,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
             "use_llm": use_llm,
             "incremental": incremental,
             "processed_llm_pairs": sorted(list(all_processed_pairs)),
+            **analytics_meta,  # Phase 2: graph analytics
         },
         "nodes": nodes,
         "edges": all_edges,
@@ -760,7 +846,7 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
 ## Summary
 {(art.get('llm_summary') or 'N/A')[:2000]}
 """
-        (CORPUS_DIR / f"article_{i+1:02d}_{doi}.md").write_text(md)
+        (CORPUS_DIR / f"article_{i+1:02d}_{_make_art_id(art, i)}.md").write_text(md)
     
     # Summary
     print("\n" + "=" * 60)
@@ -772,6 +858,13 @@ def build_graph(use_llm: bool = True, incremental: bool = False) -> dict:
     print(f"    - metadata:    {len(meta_edges)}")
     print(f"    - co-occurrence: {len(cooccur_edges)}")
     print(f"    - LLM semantic: {len(llm_edges)}")
+
+    # Analytics summary
+    if 'analytics_meta' in dir() and isinstance(analytics_meta, dict) and 'hub_count' in analytics_meta:
+        print(f"\n  --- Graph Analytics (Phase 2) ---")
+        print(f"  Hub nodes:     {analytics_meta.get('hub_count', '?')}")
+        print(f"  Bridge nodes:  {analytics_meta.get('bridge_count', '?')}")
+        print(f"  Communities:   {analytics_meta.get('community_count', '?')}")
 
     print("[GRAPH_COMPLETE]", file=sys.stderr, flush=True)
     

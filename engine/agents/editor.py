@@ -35,6 +35,7 @@ from engine.prompts.editor_prompts import (
     get_prompt_for_phase,
 )
 from engine.tools.storage_tools import create_storage_tools
+from engine.tools.graph_tools import create_graph_tools
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,20 @@ class EditorAgent:
     def tools(self):
         if self._tools is None and self.storage is not None:
             self._tools = create_storage_tools(self.storage)
+            # Merge graph tools into the same registry (14 tools total)
+            try:
+                graph_reg = create_graph_tools()
+                for name in graph_reg.list_tools():
+                    schema = graph_reg.get_schema(name)
+                    handler = graph_reg.get(name)
+                    self._tools.register(
+                        name=name,
+                        handler=handler,
+                        description=schema.get("description", ""),
+                        **schema.get("input_schema", {}),
+                    )
+            except Exception:
+                pass  # Graph may not exist yet — storage-only mode
         return self._tools
 
     @property
