@@ -682,6 +682,29 @@
         }
         .empty-state-sm { text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px; }
 
+        /* ── Pipeline Steps ─────────────────── */
+        .pipe-step {
+            display:flex;flex-direction:column;align-items:center;
+            min-width:100px;padding:8px 12px;border-radius:8px;
+            background:var(--bg-card);border:1.5px solid var(--border);
+            position:relative;flex:1;transition:all 0.3s
+        }
+        .pipe-step.active { border-color:#2563eb;background:rgba(37,99,235,.08); }
+        .pipe-step.done { border-color:#16a34a;background:rgba(22,163,74,.06); }
+        .pipe-step.error { border-color:#ef4444;background:rgba(239,68,68,.06); }
+        .pipe-step.waiting { opacity:0.5; }
+        .pipe-step-name { font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase }
+        .pipe-step-status { font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600 }
+        .pipe-step.done .pipe-step-status { background:rgba(22,163,74,.15);color:#16a34a }
+        .pipe-step.active .pipe-step-status { background:rgba(37,99,235,.15);color:#2563eb }
+        .pipe-step.error .pipe-step-status { background:rgba(239,68,68,.15);color:#ef4444 }
+        .pipe-arrow { display:flex;align-items:center;color:var(--border);font-size:18px;padding:0 4px;flex-shrink:0 }
+        .pipe-action-btn { margin-top:6px;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:none;transition:all 0.2s }
+        .pipe-action-btn:hover { transform:translateY(-1px) }
+        .pipe-action-btn.primary { background:rgba(37,99,235,.15);color:#2563eb }
+        .pipe-action-btn.success { background:rgba(22,163,74,.15);color:#16a34a }
+        .pipe-action-btn.warn { background:rgba(234,179,8,.15);color:#ca8a04 }
+
         /* ── Agent Tab Styles ─────────────────── */
         .agent-group-card {
             background: var(--bg);
@@ -984,6 +1007,49 @@
 
                 <!-- Groups -->
                 <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
+            </div>
+
+            <!-- ═══ Full Pipeline (Orchestrator) ═══ -->
+            <div id="pipelineSection" class="research-section">
+                <div class="research-section-title">🔄 Полный пайплайн (Scout → Reader → Writer)</div>
+
+                <!-- Pipeline Form -->
+                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:15px;flex-wrap:wrap">
+                    <div class="config-field" style="flex:1;min-width:200px">
+                        <label class="config-label">ТЕМА</label>
+                        <input id="pipeTopic" type="text" placeholder="например: Arctic permafrost methane emissions"
+                               value="Arctic permafrost methane emissions tundra" style="width:100%">
+                    </div>
+                    <div class="config-field" style="flex:1;min-width:180px">
+                        <label class="config-label">КОММЕНТАРИЙ</label>
+                        <input id="pipeComment" type="text" placeholder="Дополнительные указания для Writer" style="width:100%">
+                    </div>
+                    <div class="config-field">
+                        <button id="runPipeBtn" class="btn-primary" onclick="runPipeline()" style="padding:8px 20px">
+                            🚀 Запустить Pipeline
+                        </button>
+                        <button id="stopPipeBtn" class="btn-danger" onclick="stopPipeline()" style="padding:8px 14px;display:none">
+                            ⛹ Стоп
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Pipeline Steps Visualization -->
+                <div id="pipelineSteps" style="display:flex;gap:0;align-items:stretch;margin-bottom:15px;overflow-x:auto;padding-bottom:5px">
+                </div>
+
+                <!-- Pipeline Stage Content -->
+                <div id="pipelineStageContent" style="display:none">
+                    <!-- Dynamically filled based on current stage -->
+                </div>
+
+                <!-- Orchestrator Jobs List -->
+                <div style="margin-top:15px">
+                    <div class="research-section-title" style="font-size:13px">📋 История пайплайнов</div>
+                    <div id="orchJobsList" style="display:flex;flex-direction:column;gap:6px">
+                        <div class="empty-state-sm">Пайплайнов пока нет</div>
+                    </div>
+                </div>
             </div>
 
             <!-- Jobs History -->
@@ -2332,6 +2398,7 @@ switchTab = function(tabName, el) {
     if (tabName === 'agents') {
         loadEngineStatus();
         loadAgentJobs();
+        loadOrchJobs();
     }
 };
 
@@ -2721,6 +2788,336 @@ async function showAgentJobDetail(jobId) {
         alert('Ошибка загрузки: ' + e.message);
     }
 }
+
+// ═══════════════════════════════════════════════════
+// PIPELINE (ORCHESTRATOR) FUNCTIONS
+// ═══════════════════════════════════════════════════
+
+const PIPE_STEPS = [
+    { key: 'scout', name: 'Scout', icon: '🔍' },
+    { key: 'read', name: 'Reader', icon: '📖' },
+    { key: 'write', name: 'Writer', icon: '✍️' },
+    { key: 'review', name: 'Review', icon: '👀' },
+    { key: 'done', name: 'Готово', icon: '✅' },
+];
+
+let currentPipeJobId = null;
+let pipePoller = null;
+
+/** Map orchestrator status string to step index */
+function _pipeStatusToStep(status) {
+    const s = (status || '').toLowerCase().replace('_', '');
+    if (s.includes('created') || s.includes('scouting')) return 0;
+    if (s.includes('scout_done')) return 1; // waiting for approve
+    if (s.includes('reading') || s.includes('read_done')) return 2;
+    if (s.includes('writing') || s.includes('write_done')) return 3;
+    if (s.includes('complete')) return 4;
+    if (s.includes('failed') || s.includes('cancelled')) return -1;
+    return 0;
+}
+
+/** Run full pipeline via Orchestrator */
+async function runPipeline() {
+    const topic = document.getElementById('pipeTopic').value.trim();
+    if (!topic) { alert('Введите тему'); return; }
+    const comment = document.getElementById('pipeComment').value.trim();
+
+    document.getElementById('runPipeBtn').disabled = true;
+    document.getElementById('stopPipeBtn').style.display = '';
+    document.getElementById('pipelineStageContent').style.display = 'none';
+
+    try {
+        const result = await api('/orchestrator/job', 'POST', { topic, pipeline: 'full', user_comment: comment });
+        currentPipeJobId = result.job_id;
+        renderPipelineSteps({ status: result.status || 'SCOUTING', job_id: result.job_id });
+        startPipePolling(result.job_id);
+    } catch(e) {
+        alert('Ошибка запуска пайплайна: ' + e.message);
+        document.getElementById('runPipeBtn').disabled = false;
+        document.getElementById('stopPipeBtn').style.display = 'none';
+    }
+}
+
+/** Render pipeline steps visualization */
+function renderPipelineSteps(job) {
+    const status = job.status || '';
+    const activeIdx = Math.max(0, _pipeStatusToStep(status));
+    const isFailed = status.toLowerCase().includes('fail') || status.toLowerCase().includes('cancel');
+    const isDone = status.toLowerCase().includes('complete');
+
+    let html = '';
+    PIPE_STEPS.forEach((step, i) => {
+        let cls = 'waiting';
+        if (i < activeIdx) cls = 'done';
+        else if (i === activeIdx) cls = isFailed ? 'error' : (isDone ? 'done' : 'active');
+        else cls = 'waiting';
+
+        // Action buttons based on stage
+        let actionBtn = '';
+        if (i === 1 && cls === 'active') { // scout_done → need approve
+            actionBtn = `<button class="pipe-action-btn primary" onclick="showApproveGroup('${job.job_id}')">Выбрать группу</button>`;
+        } else if (i === 2 && cls === 'active') { // read_done → need approve
+            actionBtn = `<button class="pipe-action-btn primary" onclick="approveDraft('${job.job_id}')">Одобрить черновик</button>`;
+        } else if (i === 3 && cls === 'active') { // write_done → review or skip
+            actionBtn = `
+                <button class="pipe-action-btn success" onclick="skipReview('${job.job_id}')">Пропустить</button>
+                <button class="pipe-action-btn warn" style="margin-left:4px" onclick="requestRevision('${job.job_id}')">На доработку</button>`;
+        }
+
+        html += `<div class="pipe-step ${cls}">
+            <span style="font-size:18px">${step.icon}</span>
+            <span class="pipe-step-name">${step.name}</span>
+            <span class="pipe-step-status">${_pipeStatusLabel(status, i)}</span>
+            ${actionBtn}
+        </div>`;
+        if (i < PIPE_STEPS.length - 1) {
+            html += `<div class="pipe-arrow">${i < activeIdx ? '✓' : '→'}</div>`;
+        }
+    });
+
+    document.getElementById('pipelineSteps').innerHTML = html;
+}
+
+function _pipeStatusLabel(status, stepIdx) {
+    const s = (status || '').toLowerCase();
+    if (s.includes('scouting')) return stepIdx === 0 ? 'Поиск...' : 'Ожидание';
+    if (s.includes('scout_done')) return stepIdx <= 1 ? 'Готово' : 'Ожидание';
+    if (s.includes('reading')) return stepIdx === 2 ? 'Чтение...' : 'Ожидание';
+    if (s.includes('read_done')) return stepIdx <= 2 ? 'Готово' : 'Ожидание';
+    if (s.includes('writing')) return stepIdx === 3 ? 'Письмо...' : 'Ожидание';
+    if (s.includes('write_done')) return stepIdx <= 3 ? 'Готово' : 'Ожидание';
+    if (s.includes('complete')) return 'Завершён';
+    if (s.includes('failed')) return 'Ошибка';
+    if (s.includes('cancelled')) return 'Отменён';
+    return '—';
+}
+
+/** Poll pipeline job status */
+function startPipePolling(jobId) {
+    if (pipePoller) clearInterval(pipePoller);
+
+    pipePoller = setInterval(async () => {
+        try {
+            const job = await api(`/orchestrator/jobs/${jobId}`);
+            renderPipelineSteps(job);
+
+            const s = (job.status || '').toLowerCase();
+            if (s.includes('complete') || s.includes('failed') || s.includes('cancelled')) {
+                clearInterval(pipePoller);
+                pipePoller = null;
+                onPipeFinished(job);
+            }
+
+            // Show stage content when scout done
+            if (s.includes('scout_done') && !s.includes('reading')) {
+                showScoutGroupsForApproval(job);
+            } else if (s.includes('read_done') && !s.includes('writing')) {
+                showReaderDraftForApproval(job);
+            } else if (s.includes('write_done')) {
+                showWrittenArticle(job);
+            }
+        } catch(e) {
+            console.error('Pipe poll error:', e);
+        }
+    }, 3000);
+}
+
+/** Show scout groups with selection buttons */
+function showScoutGroupsForApproval(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const scoutResult = job.results && job.results.scout;
+    const groups = scoutResult && scoutResult.groups ? scoutResult.groups : [];
+
+    if (!groups.length) {
+        el.innerHTML = '<div class="empty-state-sm">Нет групп для выбора</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📦 Выберите группу для анализа Reader-агентом:</div>
+        ${groups.map((g, i) => `
+            <div style="padding:10px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <b>${esc(g.group_type || '?')}</b>
+                    <span style="color:var(--text-muted);font-size:12px"> · ${(g.articles||[]).length} статей</span>
+                    ${g.keywords ? `<br><small>${(g.keywords||[]).slice(0,5).join(', ')}</small>` : ''}
+                </div>
+                <button class="pipe-action-btn primary" onclick="approveGroup('${job.job_id}', ${i})">Выбрать →</button>
+            </div>
+        `).join('')}
+    `;
+}
+
+/** Show reader draft with approve button */
+function showReaderDraftForApproval(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const draft = job.results && job.results.read;
+    if (!draft) {
+        el.innerHTML = '<div class="empty-state-sm">Нет данных от Reader</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📝 Черновик от Reader:</div>
+        <div style="background:var(--bg-card);border-radius:8px;padding:12px;border:1px solid var(--border)">
+            ${draft.title_suggestion ? `<b>${esc(draft.title_suggestion)}</b><br>` : ''}
+            ${draft.gap_identified ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Gap:</b> ${esc(draft.gap_identified)}</p>` : ''}
+            ${draft.proposed_contribution ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Contribution:</b> ${esc(draft.proposed_contribution)}</p>` : ''}
+            ${draft.methods_summary ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Methods:</b> ${esc(draft.methods_summary)}</p>` : ''}
+            ${draft.confidence !== undefined ? `<small>Confidence: ${Math.round((draft.confidence||0)*100)}%</small>` : ''}
+        </div>
+        <div style="margin-top:10px;text-align:right">
+            <button class="pipe-action-btn success" onclick="approveDraft('${job.job_id}')">✓ Одобрить → Writer</button>
+        </div>
+    `;
+}
+
+/** Show written article */
+function showWrittenArticle(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const article = job.results && job.results.write;
+    if (!article) {
+        el.innerHTML = '<div class="empty-state-sm">Нет статьи</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">✍️ Готовая статья:</div>
+        <div style="background:var(--bg-card);border-radius:8px;padding:14px;border:1px solid var(--border);max-height:400px;overflow-y:auto">
+            ${article.title ? `<h4 style="margin:0 0 8px">${esc(article.title)}</h4>` : ''}
+            ${article.text ? `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;margin:0;color:var(--text)">${esc(article.text.substring(0, 5000))}${article.text.length > 5000 ? '...(truncated)' : ''}</pre>` : ''}
+            ${article.word_count ? `<small style="color:var(--text-muted)">Слов: ${article.word_count}</small>` : ''}
+        </div>
+    `;
+}
+
+/** Approve scout group → start Reader */
+async function approveGroup(jobId, groupIndex) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-group`, 'POST', { group_index: groupIndex });
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Reader запущен...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Approve reader draft → start Writer */
+async function approveDraft(jobId) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', {});
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Writer запущен...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Skip review → complete */
+async function skipReview(jobId) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/skip-review`, 'POST');
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Request revision of written article */
+async function requestRevision(jobId) {
+    const comment = prompt('Укажите комментарий для доработки:');
+    if (comment === null) return;
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', { comment: 'revision: ' + comment });
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Переписывание...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Stop pipeline */
+async function stopPipeline() {
+    if (!currentPipeJobId) return;
+    if (!confirm('Остановить пайплайн?')) return;
+    if (pipePoller) { clearInterval(pipePoller); pipePoller = null; }
+
+    try {
+        await api(`/orchestrator/jobs/${currentPipeJobId}`, 'DELETE');
+    } catch(e) { console.error('Stop error:', e); }
+
+    document.getElementById('runPipeBtn').disabled = false;
+    document.getElementById('stopPipeBtn').style.display = 'none';
+    currentPipeJobId = null;
+    loadOrchJobs();
+}
+
+/** Pipeline finished callback */
+function onPipeFinished(job) {
+    document.getElementById('runPipeBtn').disabled = false;
+    document.getElementById('stopPipeBtn').style.display = 'none';
+    loadOrchJobs(); loadAgentJobs(); loadEngineStatus();
+}
+
+/** Show approve group dialog (from step button) */
+async function showApproveGroup(jobId) {
+    // Just scroll to stage content which should already be showing groups
+    document.getElementById('pipelineStageContent').scrollIntoView({ behavior: 'smooth' });
+}
+
+/** Load orchestrator jobs list */
+async function loadOrchJobs() {
+    try {
+        const data = await api('/orchestrator/jobs');
+        const jobs = data.jobs || [];
+        const el = document.getElementById('orchJobsList');
+
+        if (!jobs.length) {
+            el.innerHTML = '<div class="empty-state-sm">Пайплайнов пока нет</div>';
+            return;
+        }
+
+        el.innerHTML = jobs.map(j => {
+            const s = j.status || '?';
+            const cls = s.toLowerCase().includes('complete') ? 'status-complete'
+                       : s.toLowerCase().includes('fail') ? 'status-error'
+                       : s.toLowerCase().includes('cancel') ? 'status-stopped'
+                       : 'status-running';
+            const topic = j.input_topic || j.topic || '?';
+            return `<div class="run-card" onclick="showOrchJobDetail('${j.job_id}')">
+                <div class="run-card-header">
+                    <span class="run-id">${j.job_id.substring(0, 12)}</span>
+                    <span class="status-status-badge ${cls}">${s.replace(/_/g, ' ')}</span>
+                </div>
+                <div class="run-stats">
+                    <span>топик: <span class="run-stat-val">${esc(topic.substring(0, 35))}</span></span>
+                    <span>${(j.updated_at || j.started_at || '').substring(0, 16)}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error('Orch jobs error:', e); }
+}
+
+/** Show orchestrator job detail */
+async function showOrchJobDetail(jobId) {
+    try {
+        const job = await api(`/orchestrator/jobs/${jobId}`);
+        currentPipeJobId = jobId;
+        renderPipelineSteps(job);
+
+        // Show appropriate content
+        const s = (job.status || '').toLowerCase();
+        if (s.includes('scout_done')) showScoutGroupsForApproval(job);
+        else if (s.includes('read_done')) showReaderDraftForApproval(job);
+        else if (s.includes('write_done') || s.includes('complete')) showWrittenArticle(job);
+        else document.getElementById('pipelineStageContent').style.display = 'none';
+
+        // Update stop button
+        const running = s.includes('scouting') || s.includes('reading') || s.includes('writing');
+        document.getElementById('stopPipeBtn').style.display = running ? '' : 'none';
+
+        // Resume polling if still running
+        if (running && !pipePoller) startPipePolling(jobId);
+
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// Init: load orch jobs when agents tab opens
+const _origLoadAgents = window.loadAgentTab || (() => {});
 </script>
 </body>
 </html>

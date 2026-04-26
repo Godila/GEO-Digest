@@ -1211,6 +1211,149 @@ async def engine_status():
     }
 
 
+# ═══════════════════════════════════════════════════════════
+# ORCHESTRATOR ENDPOINTS — Full pipeline (Scout→Reader→Writer)
+# Uses engine/orchestrator.py for state machine + disk persistence
+# ═══════════════════════════════════════════════════════════
+
+_orchestrator = None  # lazy init
+
+
+def _get_orch():
+    """Get or create Orchestrator instance."""
+    global _orchestrator
+    if _orchestrator is None:
+        _ensure_engine_imports()
+        from engine.orchestrator import Orchestrator
+        jobs_dir = str(DATA_DIR / "jobs")
+        output_dir = str(DATA_DIR / "output")
+        _orchestrator = Orchestrator(jobs_dir=jobs_dir, output_dir=output_dir)
+    return _orchestrator
+
+
+def _job_state_to_dict(state) -> dict:
+    """Convert JobState to JSON-serializable dict for API."""
+    d = state.to_dict() if hasattr(state, 'to_dict') else {}
+    # Ensure all values are JSON-serializable
+    return json.loads(json.dumps(d, default=str))
+
+
+@app.post("/api/orchestrator/job")
+async def orch_create_job(request: Request):
+    """Create a new pipeline job and start Scout phase.
+    Body: {"topic": str, "pipeline": "full"|"scout_only", "user_comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    topic = body.get("topic", "").strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="topic is required")
+
+    pipeline = body.get("pipeline", "full")
+    user_comment = body.get("user_comment", "")
+
+    orch = _get_orch()
+    state = orch.create_job(topic=topic, pipeline=pipeline, user_comment=user_comment)
+    orch.start_job(state.job_id)
+
+    return {
+        "job_id": state.job_id,
+        "status": state.status.value if hasattr(state.status, 'value') else str(state.status),
+        "topic": topic,
+        "message": f"Pipeline запущен: {state.job_id}",
+    }
+
+
+@app.get("/api/orchestrator/jobs")
+async def orch_list_jobs():
+    """List all orchestrator jobs (from disk — persistent)."""
+    _ensure_engine_imports()
+    try:
+        orch = _get_orch()
+        jobs = orch.list_jobs()
+        return {
+            "jobs": [_job_state_to_dict(j) for j in jobs],
+            "total": len(jobs),
+        }
+    except Exception as e:
+        return {"jobs": [], "total": 0, "error": str(e)}
+
+
+@app.get("/api/orchestrator/jobs/{job_id}")
+async def orch_get_job(job_id: str):
+    """Get full job state including results at each stage."""
+    _ensure_engine_imports()
+    try:
+        orch = _get_orch()
+        state = orch.load_state(job_id)
+        return _job_state_to_dict(state)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
+async def orch_approve_group(job_id: str, request: Request):
+    """Approve Scout result → start Reader phase.
+    Body: {"group_index": int, "comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    except Exception:
+        body = {}
+
+    group_index = body.get("group_index", 0)
+    comment = body.get("comment", "")
+
+    orch = _get_orch()
+    state = orch.approve_group(job_id, group_index=int(group_index), comment=str(comment))
+    return _job_state_to_dict(state)
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
+async def orch_approve_draft(job_id: str, request: Request):
+    """Approve Reader draft → start Writer phase.
+    Body: {"comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    except Exception:
+        body = {}
+
+    comment = body.get("comment", "")
+    orch = _get_orch()
+    state = orch.approve_draft(job_id, comment=str(comment))
+    return _job_state_to_dict(state)
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
+async def orch_skip_review(job_id: str):
+    """Skip review → mark job as complete."""
+    _ensure_engine_imports()
+    orch = _get_orch()
+    state = orch.skip_review(job_id)
+    return _job_state_to_dict(state)
+
+
+@app.delete("/api/orchestrator/jobs/{job_id}")
+async def orch_cancel_job(job_id: str):
+    """Cancel a running pipeline job."""
+    _ensure_engine_imports()
+    orch = _get_orch()
+    try:
+        state = orch.cancel_job(job_id)
+        return _job_state_to_dict(state)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=3001)

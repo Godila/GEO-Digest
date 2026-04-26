@@ -476,6 +476,47 @@ async def api_engine_job_logs(job_id: str):
     return _worker_request("GET", f"/api/engine/jobs/{job_id}/logs", timeout=120)
 
 
+# ── Orchestrator Proxy Routes (full pipeline) ──────────────────
+
+@app.post("/api/orchestrator/job")
+async def api_orch_create_job(request: Request):
+    """Create + start pipeline job -> proxy to worker."""
+    body = await request.json()
+    return _worker_post("/api/orchestrator/job", json_body=body, timeout=30)
+
+@app.get("/api/orchestrator/jobs")
+async def api_orch_list_jobs():
+    """List orchestrator jobs -> proxy to worker."""
+    return _worker_get("/api/orchestrator/jobs")
+
+@app.get("/api/orchestrator/jobs/{job_id}")
+async def api_orch_get_job(job_id: str):
+    """Get orchestrator job state -> proxy to worker."""
+    return _worker_get(f"/api/orchestrator/jobs/{job_id}")
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
+async def api_orch_approve_group(job_id: str, request: Request):
+    """Approve scout group -> start reader -> proxy to worker."""
+    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-group", json_body=body, timeout=30)
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
+async def api_orch_approve_draft(job_id: str, request: Request):
+    """Approve draft -> start writer -> proxy to worker."""
+    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-draft", json_body=body, timeout=30)
+
+@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
+async def api_orch_skip_review(job_id: str):
+    """Skip review -> complete -> proxy to worker."""
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/skip-review")
+
+@app.delete("/api/orchestrator/jobs/{job_id}")
+async def api_orch_cancel_job(job_id: str):
+    """Cancel pipeline job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/orchestrator/jobs/{job_id}")
+
+
 # ══════════════════════════════════════════════════════════════════
 #  PAGE ROUTE
 # ══════════════════════════════════════════════════════════════════
