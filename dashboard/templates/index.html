@@ -951,6 +951,9 @@
                         <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
                             ▶ Запустить Scout
                         </button>
+                        <button id="stopScoutBtn" class="btn-danger" onclick="stopCurrentJob()" style="width:auto;padding:8px 16px;display:none">
+                            ⛹ Остановить
+                        </button>
                     </div>
                 </div>
 
@@ -2366,48 +2369,101 @@ async function runScoutAgent() {
     document.getElementById('scoutPct').textContent = '5%';
     document.getElementById('scoutStep').textContent = 'Отправка запроса...';
 
+    // Show stop button
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = '';
+
     try {
         const result = await api('/engine/scout', 'POST', { topic, mode, max_articles: maxArticles });
         currentScoutJobId = result.job_id;
         document.getElementById('scoutLog').innerHTML += `<div class="log-line log-ok">Job создан: ${result.job_id}</div>`;
-        startScoutPolling(result.job_id);
+        startSSEStreaming(result.job_id);
     } catch(e) {
         document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${e.message}</div>`;
         btn.disabled = false; btn.textContent = '▶ Запустить Scout';
     }
 }
 
-/** Poll scout job status */
-function startScoutPolling(jobId) {
-    if (scoutPoller) clearInterval(scoutPoller);
+/** SSE-based real-time log streaming */
+function startSSEStreaming(jobId) {
+    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
+    if (window.scoutEventSource) window.scoutEventSource.close();
 
-    let steps = 0;
     const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
     const stepPcts = [10, 25, 40, 65, 85, 100];
+    let steps = 0;
+    let logEl = document.getElementById('scoutLog');
+
+    try {
+        const es = new EventSource(`/api/engine/jobs/${jobId}/logs`);
+        window.scoutEventSource = es;
+
+        es.onmessage = (evt) => {
+            const data = JSON.parse(evt.data);
+
+            // Log line
+            if (data.line) {
+                const cls = data.line.includes('ERROR') || data.line.includes('Traceback') ? 'log-err'
+                            : data.line.includes('[*]') || data.line.includes('Complete') ? 'log-ok'
+                            : data.line.includes('Warning') ? 'log-warn'
+                            : 'log-info';
+                logEl.innerHTML += `<div class="log-line ${cls}">${esc(data.line)}</div>`;
+                logEl.scrollTop = logEl.scrollHeight;
+
+                // Update progress bar based on keywords
+                const lineLower = data.line.toLowerCase();
+                if (lineLower.includes('source')) { steps = Math.max(steps, 1); }
+                else if (lineLower.includes('collect') || lineLower.includes('article')) { steps = Math.max(steps, 2); }
+                else if (lineLower.includes('dedup')) { steps = Math.max(steps, 3); }
+                else if (lineLower.includes('llm') || lineLower.includes('classif')) { steps = Math.max(steps, 4); }
+                else if (lineLower.includes('group')) { steps = Math.max(steps, 5); }
+
+                steps = Math.min(steps, stepNames.length - 1);
+                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
+                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
+                document.getElementById('scoutStep').textContent = stepNames[steps];
+            }
+
+            // Done
+            if (data.done) {
+                es.close();
+                window.scoutEventSource = null;
+                onScoutFinished(jobId, data.status);
+            }
+        };
+
+        es.onerror = () => {
+            console.warn('SSE error, falling back to polling');
+            es.close();
+            startScoutPollingFallback(jobId);
+        };
+    } catch(e) {
+        console.warn('SSE not supported, using polling:', e);
+        startScoutPollingFallback(jobId);
+    }
+}
+
+/** Fallback: poll-based status check */
+function startScoutPollingFallback(jobId) {
+    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
+    const stepPcts = [10, 25, 40, 65, 85, 100];
+    let steps = 0;
 
     scoutPoller = setInterval(async () => {
         try {
             const job = await api(`/engine/jobs/${jobId}`);
-            const status = job.status;
-
-            // Update progress
-            steps = Math.min(steps, stepNames.length - 1);
-            if (status === 'running') {
+            if (job.status === 'running') {
                 steps = Math.min(steps + 1, stepNames.length - 2);
                 document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
                 document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
                 document.getElementById('scoutStep').textContent = stepNames[steps];
 
-                // Add log lines if any
                 if (job.log_lines && job.log_lines.length > 0) {
                     const logEl = document.getElementById('scoutLog');
                     const currentLines = logEl.querySelectorAll('.log-line').length;
                     if (job.log_lines.length > currentLines) {
                         job.log_lines.slice(currentLines).forEach(line => {
-                            const cls = line.includes('ERROR') ? 'log-err'
-                                        : line.includes('WARNING') ? 'log-warn'
-                                        : line.includes('[OK]') || line.includes('✓') ? 'log-ok'
-                                        : 'log-info';
+                            const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
                             logEl.innerHTML += `<div class="log-line ${cls}">${esc(line)}</div>`;
                         });
                         logEl.scrollTop = logEl.scrollHeight;
@@ -2415,30 +2471,64 @@ function startScoutPolling(jobId) {
                 }
             }
 
-            // Done or error
-            if (status === 'done' || status === 'error') {
+            if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
                 clearInterval(scoutPoller);
                 scoutPoller = null;
-
-                document.getElementById('scoutProgressBar').style.width = '100%';
-                document.getElementById('scoutPct').textContent = '100%';
-                document.getElementById('scoutStep').textContent = status === 'done' ? 'Завершено!' : 'Ошибка';
-
-                const btn = document.getElementById('runScoutBtn');
-                btn.disabled = false; btn.textContent = '▶ Запустить Scout';
-
-                if (status === 'done' && job.result) {
-                    renderScoutResults(job.result);
-                } else if (job.error) {
-                    document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${esc(job.error)}</div>`;
-                }
-
-                loadAgentJobs(); // refresh jobs list
+                onScoutFinished(jobId, job.status);
             }
-        } catch(e) {
-            console.error('Scout poll error:', e);
-        }
+        } catch(e) { console.error('Poll error:', e); }
     }, 2000);
+}
+
+/** Called when scout job finishes (from both SSE and polling) */
+async function onScoutFinished(jobId, status) {
+    document.getElementById('scoutProgressBar').style.width = '100%';
+    document.getElementById('scoutPct').textContent = '100%';
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    if (status === 'done') {
+        document.getElementById('scoutStep').textContent = 'Завершено!';
+        try {
+            const job = await api(`/engine/jobs/${jobId}`);
+            if (job.result) renderScoutResults(job.result);
+        } catch(e) { console.error('Load result error:', e); }
+    } else if (status === 'cancelled') {
+        document.getElementById('scoutStep').textContent = 'Остановлено';
+        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Задача остановлена пользователем</div>';
+    } else {
+        document.getElementById('scoutStep').textContent = 'Ошибка';
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">❌ Завершено с ошибкой</div>`;
+    }
+
+    loadAgentJobs(); loadEngineStatus();
+}
+
+/** Stop running scout job */
+async function stopCurrentJob() {
+    if (!currentScoutJobId) return;
+    if (!confirm('Остановить текущую задачу?')) return;
+
+    // Close SSE
+    if (window.scoutEventSource) { window.scoutEventSource.close(); window.scoutEventSource = null; }
+    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
+
+    try {
+        await api(`/engine/jobs/${currentScoutJobId}`, 'DELETE');
+        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Отправлен запрос на остановку...</div>';
+    } catch(e) {
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка остановки: ${e.message}</div>`;
+    }
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    loadAgentJobs(); loadEngineStatus();
 }
 
 /** Render scout results */
@@ -2567,7 +2657,7 @@ async function loadAgentJobs() {
                     <span class="status-status-badge ${cls}">${label}</span>
                 </div>
                 <div class="run-stats">
-                    <span>топик: <span class="run-stat-val">${(j.topic || '').substring(0, 40)}</span></span>
+                    <span>топик: <span class="run-stat-val">${(j.params && j.params.topic || '').substring(0, 40)}</span></span>
                     <span>${time}</span>
                     <span>${dur}</span>
                 </div>
@@ -2578,20 +2668,57 @@ async function loadAgentJobs() {
     }
 }
 
-/** Show agent job detail */
+/** Show agent job detail in results area */
 async function showAgentJobDetail(jobId) {
     try {
         const job = await api(`/engine/jobs/${jobId}`);
-        let detail = `Status: ${job.status}\nTopic: ${job.topic}\nStarted: ${job.started_at}`;
-        if (job.result) {
-            const sr = job.result.scout_result || {};
-            detail += `\n\nFound: ${sr.total_found}, Groups: ${(sr.groups||[]).length}`;
-            if (job.log_lines) detail += `\n\nLog:\n${job.log_lines.join('\n')}`;
+
+        // Switch to agent tab if not already there
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+        // Find and activate agents tab (3rd tab, index 2)
+        const tabs = document.querySelectorAll('.tab');
+        if (tabs[2]) { tabs[2].classList.add('active'); }
+        const contents = document.querySelectorAll('.tab-content');
+        if (contents[2]) { contents[2].style.display = ''; }
+
+        // Show progress area with logs
+        document.getElementById('scoutProgress').style.display = '';
+        document.getElementById('scoutResults').style.display = 'none';
+
+        let logHtml = '';
+        if (job.log_lines && job.log_lines.length > 0) {
+            logHtml = job.log_lines.map(line => {
+                const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
+                return `<div class="log-line ${cls}">${esc(line)}</div>`;
+            }).join('');
+        } else {
+            logHtml = '<div class="log-line log-info">Нет логов</div>';
         }
-        if (job.error) detail += `\n\nError: ${job.error}`;
-        alert(detail);
+        if (job.error) logHtml += `<div class="log-line log-err">Ошибка: ${esc(job.error)}</div>`;
+
+        document.getElementById('scoutLog').innerHTML = logHtml;
+
+        // Update progress bar
+        const isDone = job.status === 'done';
+        const isError = job.status === 'error';
+        document.getElementById('scoutProgressBar').style.width = isDone || isError ? '100%' : '50%';
+        document.getElementById('scoutPct').textContent = isDone || isError ? '100%' : '50%';
+        document.getElementById('scoutStep').textContent =
+            isDone ? 'Завершено' : isError ? 'Ошибка' : job.status;
+
+        // Render results if done
+        if (isDone && job.result) {
+            renderScoutResults(job.result);
+        }
+
+        // Update stop button visibility
+        const stopBtn = document.getElementById('stopScoutBtn');
+        if (stopBtn) stopBtn.style.display = job.status === 'running' ? '' : 'none';
+        currentScoutJobId = jobId;
+
     } catch(e) {
-        alert('Ошибка: ' + e.message);
+        alert('Ошибка загрузки: ' + e.message);
     }
 }
 </script>

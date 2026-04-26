@@ -1117,6 +1117,59 @@ async def engine_get_job(job_id: str):
     return resp
 
 
+@app.delete("/api/engine/jobs/{job_id}")
+async def engine_cancel_job(job_id: str):
+    """Cancel a running job."""
+    _ensure_engine_imports()
+    if job_id not in _engine_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    job = _engine_jobs[job_id]
+    if job["status"] in ("done", "error", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Job already {job['status']}")
+    job["status"] = "cancelled"
+    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(timezone.utc).isoformat()
+    job["log_lines"].append(f"[{ts}] Job cancelled by user")
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/api/engine/jobs/{job_id}/logs")
+async def engine_job_logs_stream(job_id: str):
+    """SSE stream of job log lines (real-time)."""
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    _ensure_engine_imports()
+    if job_id not in _engine_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    async def event_generator():
+        last_idx = 0
+        while True:
+            job = _engine_jobs.get(job_id)
+            if not job:
+                yield f"data: {{'done':true}}\n\n"
+                break
+            lines = job.get("log_lines", [])
+            # Send new lines since last check
+            while last_idx < len(lines):
+                import json as _j
+                line = lines[last_idx]
+                yield f"data: {_j.dumps({'line': line})}\n\n"
+                last_idx += 1
+            # Check if job is terminal
+            if job["status"] in ("done", "error", "cancelled"):
+                yield f"data: {{'done':true,'status':'{job['status']}'}}\n\n"
+                break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/engine/status")
 async def engine_status():
     """Engine health + storage stats."""

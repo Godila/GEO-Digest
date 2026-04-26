@@ -72,6 +72,22 @@ def _worker_post(path: str, json_body: dict | None = None, timeout: int = 10) ->
         raise HTTPException(status_code=502, detail=f"Worker error: {e}")
 
 
+def _worker_request(method: str, path: str, timeout: int = 30) -> Response:
+    """Generic request to worker (for DELETE, SSE streams, etc). Returns raw Response."""
+    try:
+        r = requests.request(method, f"{WORKER_URL}{path}", timeout=timeout, stream=True)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            media_type=r.headers.get("content-type", "application/json"),
+            headers={"X-Proxy-From": "dashboard"},
+        )
+    except requests.ConnectionError:
+        raise HTTPException(status_code=503, detail="Worker unavailable")
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Worker error: {e}")
+
+
 # ── Data loaders (fallback: read from shared volume) ────────────
 def load_articles() -> list[dict]:
     """Fallback: read articles from shared volume."""
@@ -444,8 +460,20 @@ async def api_engine_job_detail(job_id: str):
 
 @app.get("/api/engine/status")
 async def api_engine_status():
-    """Poll engine status → proxy to worker."""
+    """Poll engine status -> proxy to worker."""
     return _worker_get("/api/engine/status")
+
+
+@app.delete("/api/engine/jobs/{job_id}")
+async def api_engine_cancel_job(job_id: str):
+    """Cancel engine job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/engine/jobs/{job_id}")
+
+
+@app.get("/api/engine/jobs/{job_id}/logs")
+async def api_engine_job_logs(job_id: str):
+    """SSE stream of job logs -> proxy to worker."""
+    return _worker_request("GET", f"/api/engine/jobs/{job_id}/logs", timeout=120)
 
 
 # ══════════════════════════════════════════════════════════════════
