@@ -382,9 +382,9 @@ class EditorAgent:
         if explore_data:
             yr = explore_data.get("year_distribution", {})
             if yr:
-                years = [int(y) for y in yr.keys() if y.isdigit()]
+                years = [int(y) for y in yr.keys() if str(y).isdigit()]
                 year_range = (min(years), max(years)) if years else (0, 0)
-                by_year = {int(y): c for y, c in yr.items() if y.isdigit()}
+                by_year = {int(y): c for y, c in yr.items() if str(y).isdigit()}
             total_articles = explore_data.get("total_in_scope", 0)
         elif stats_data:
             year_range = (
@@ -393,7 +393,7 @@ class EditorAgent:
             )
             by_year = {
                 int(y): c for y, c in stats_data.get("by_year", {}).items()
-                if y.isdigit()
+                if str(y).isdigit()
             }
             total_articles = stats_data.get("total_articles", 0)
 
@@ -540,7 +540,7 @@ class EditorAgent:
                 relevant_count=ad.get("relevant_count", 0),
                 clusters=ad.get("clusters", []),
                 year_range=(yr[0], yr[1]) if isinstance(yr, list) else (0, 0),
-                by_year={int(k): v for k, v in ad.get("by_year", {}).items() if k.isdigit()},
+                by_year={int(k): v for k, v in ad.get("by_year", {}).items() if str(k).isdigit()},
                 source_distribution=ad.get("source_distribution", {}),
                 existing_articles=ad.get("existing_articles", []),
                 gaps=ad.get("gaps", []),

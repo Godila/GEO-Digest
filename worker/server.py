@@ -1365,15 +1365,15 @@ def _get_editor() -> "EditorAgent":
     """Create and return an EditorAgent instance."""
     _ensure_engine_imports()
     from engine.agents.editor import EditorAgent
-    from engine.storage.base import JsonlStorage
+    from engine.storage.jsonl_backend import JsonlStorage
     storage = JsonlStorage(data_dir=str(DATA_DIR))
     from engine.llm.minimax import MiniMaxProvider
     from engine.config import get_config
     cfg = get_config()
     llm = MiniMaxProvider(
-        api_key=cfg.llm_api_key,
-        model=cfg.llm_model,
-        base_url=cfg.llm_base_url,
+        api_key=cfg.llm.api_key,
+        model=cfg.llm.model,
+        base_url=cfg.llm.base_url,
     )
     return EditorAgent(storage=storage, llm=llm, jobs_dir=DATA_DIR / "jobs")
 
