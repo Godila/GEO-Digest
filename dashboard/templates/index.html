@@ -806,6 +806,25 @@
 .prop-meta { display:flex; gap:14px; font-size:12px; color:var(--text-muted); margin-bottom:14px; flex-wrap:wrap }
 .prop-actions { display:flex; gap:8px }
 
+/* ── Graph context badges (S8) ── */
+.graph-badge {
+  display:inline-flex; align-items:center; gap:3px; font-size:11px;
+  padding:2px 8px; border-radius:10px; font-weight:500; cursor:default;
+}
+.gb-hub { background:rgba(168,85,247,0.15); color:#a855f7 }
+.gb-bridge { background:rgba(59,130,246,0.15); color:#3b82f6 }
+.gb-peripheral { background:rgba(156,163,175,0.15); color:#9ca3af }
+.graph-metric {
+  font-size:11px; color:var(--text-muted); font-family:var(--mono, monospace);
+}
+.graph-tab-content { line-height:2; font-size:13px }
+.graph-ref-row { display:flex; align-items:center; gap:8px; padding:4px 0 }
+.btn-graph-focus {
+  font-size:10px; padding:2px 6px; border-radius:4px; cursor:pointer;
+  background:var(--bg); border:1px solid var(--border); color:var(--accent);
+}
+.btn-graph:focus { outline:none; border-color:var(--accent) }
+
 .selected-article {
     background:var(--bg-secondary); border-radius:12px; padding:24px;
     margin-top:20px; border:1px solid var(--accent);
@@ -3344,6 +3363,7 @@ function renderProposals(proposals) {
                 <span>📚 ${p.sources_available || 0} ист.</span>
                 <span>🎯 ${escapeHtml(p.target_audience || '—')}</span>
                 ${p.status === 'duplicate' ? '<span style="color:#ef4444;font-weight:500">⚠️ дубликат</span>' : ''}
+                ${_renderGraphBadges(p)}
             </div>
             <div class="prop-actions">
                 <button class="btn-sm btn-primary"
@@ -3395,6 +3415,7 @@ function showSelectedArticle(proposal) {
         <div class="detail-tabs">
             <span class="detail-tab active" id="dtab-thesis" onclick="switchDetailTab('thesis')">Тезис</span>
             <span class="detail-tab" id="dtab-sources" onclick="switchDetailTab('sources')">Источники (${(proposal.key_references || []).length})</span>
+            <span class="detail-tab" id="dtab-graph" onclick="switchDetailTab('graph')">🕸️ Граф</span>
             <span class="detail-tab" id="dtab-develop" onclick="switchDetailTab('develop')">Доработка</span>
         </div>
         <div id="detailContent">
@@ -3429,12 +3450,21 @@ function switchDetailTab(tabName) {
         content.innerHTML = `<p style="line-height:1.7;color:var(--text-secondary);font-size:14px">${escapeHtml(proposal.thesis || '')}</p>`;
     } else if (tabName === 'sources') {
         const refs = proposal.key_references || [];
+        // Build DOI→graph_context lookup
+        const gcMap = {};
+        (proposal.graph_context || []).forEach(g => { gcMap[g.doi || ''] = g; });
         if (!refs.length) {
             content.innerHTML = '<p style="color:var(--text-muted)">Нет источников</p>';
             return;
         }
         content.innerHTML = `<ul style="padding-left:18px;line-height:2;font-size:13px">
-            ${refs.map(r => `<li><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(r.doi || r.id || '')}</code> ${escapeHtml(r.citation || r.title || '')}</li>`).join('')}
+            ${refs.map(r => {
+                const doi = (r.doi || r.id || '').replace(/^DOI:/, '');
+                const gc = gcMap[doi];
+                const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}">${gc.role || '?'}</span>` : '';
+                const focusBtn = doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${doi}')" title="Показать на графе">🎯</button>` : '';
+                return `<li class="graph-ref-row"><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(doi)}</code> ${escapeHtml(r.citation || r.title || '')} ${roleBadge} ${focusBtn}</li>`;
+            }).join('')}
         </ul>`;
     } else if (tabName === 'develop') {
         content.innerHTML = `
@@ -3444,6 +3474,8 @@ function switchDetailTab(tabName) {
             </div>
             <button class="btn-primary btn-sm" onclick="sendForDevelopment('${proposal.id}')">💬 Отправить на доработку</button>
         `;
+    } else if (tabName === 'graph') {
+        content.innerHTML = _renderGraphTabContent(proposal);
     }
 }
 
@@ -3468,6 +3500,94 @@ function reviewArticle(propId) {
 function showProposalDetailModal(propId) {
     // Find proposal from current grid - simplified version just alerts
     alert('Детали предложения ' + propId + ' — модальное окно в следующей версии');
+}
+
+/* ── S8: Graph Context Helpers ── */
+
+/** Render graph role badges for a proposal (hub/bridge/peripheral) */
+function _renderGraphBadges(p) {
+    const gc = p.graph_context;
+    if (!gc || !gc.length) return '';
+
+    // Count roles across all enriched references
+    const roles = new Set();
+    gc.forEach(r => { if (r.role) roles.add(r.role); });
+    if (!roles.size) return '';
+
+    const icons = { hub: '🔮', bridge: '🌉', peripheral: '📍' };
+    return Array.from(roles).map(role =>
+        `<span class="graph-badge gb-${role}" title="Роль в графе знаний">${icons[role] || ''} ${role}</span>`
+    ).join('');
+}
+
+/** Render graph tab content for detail panel */
+function _renderGraphTabContent(proposal) {
+    const gc = proposal.graph_context;
+    const bridges = proposal.cross_topic_bridges;
+
+    let html = '<div class="graph-tab-content">';
+
+    if (!gc || !gc.length) {
+        html += '<p style="color:var(--text-muted)">Данные графа недоступны. Запустите анализ чтобы обогащение применилось.</p>';
+        html += '</div>';
+        return html;
+    }
+
+    // Enriched references table
+    html += '<h4 style="margin:0 0 10px;font-size:14px">📊 Структурная роль источников</h4>';
+    html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+    html += '<tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">DOI</th><th style="text-align:center;padding:4px">Роль</th><th style="text-align:right;padding:4px">PageRank</th><th style="text-align:right;padding:4px">Betweenness</th><th style="text-align:center;padding:4px">Граф</th></tr>';
+
+    gc.forEach(r => {
+        const roleClass = r.role || 'peripheral';
+        const roleIcon = { hub: '🔮', bridge: '🌉', peripheral: '📍' }[roleClass] || '📍';
+        html += `<tr class="graph-ref-row">
+            <td><code style="font-size:10px">${escapeHtml((r.doi || '').substring(0, 20))}...</code></td>
+            <td style="text-align:center"><span class="graph-badge gb-${roleClass}">${roleIcon} ${r.role || '?'}</span></td>
+            <td style="text-align:right"><span class="graph-metric">${(r.page_rank || 0).toFixed(3)}</span></td>
+            <td style="text-align:right"><span class="graph-metric">${(r.betweenness || 0).toFixed(3)}</span></td>
+            <td style="text-align:center"><button class="btn-graph-focus" onclick="focusNodeInGraph('${r.doi || '')')" title="Показать на графе">🎯</button></td>
+        </tr>`;
+    });
+    html += '</table>';
+
+    // Cross-topic bridges
+    if (bridges && bridges.length) {
+        html += '<h4 style="margin:16px 0 10px;font-size:14px">🌉 Кросс-тематические мосты</h4>';
+        html += '<ul style="padding-left:18px">';
+        bridges.forEach(b => {
+            html += `<li>${escapeHtml(b.title || b.doi || 'мост')} <span class="graph-badge gb-bridge">bridge</span></li>`;
+        });
+        html += '</ul>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
+/** Focus a node in Cytoscape graph by DOI */
+function focusNodeInGraph(doi) {
+    if (!cy || !doi) return;
+    // Find node by _graph_id or doi attribute
+    const node = cy.nodes().filter(n => {
+        const d = n.data();
+        return d.doi === doi || d.id?.includes(doi.replace(/\./g, '').substring(0, 8));
+    });
+    if (node.length) {
+        highlightNode(node);
+        cy.animate({
+            fitSelection: [node.id()],
+            easing: 'ease-out',
+            duration: 400
+        });
+    } else {
+        // Fuzzy search by partial match
+        const partial = cy.nodes().filter(n => n.data().doi?.includes(doi.substring(0, 10)) || n.data().label?.toLowerCase().includes(doi.substring(0, 10).toLowerCase()));
+        if (partial.length) {
+            highlightNode(partial);
+            cy.animate({ fitSelection: [partial.id()], easing: 'ease-out', duration: 400 });
+        }
+    }
 }
 
 /** Toggle Scout collapsible section */
