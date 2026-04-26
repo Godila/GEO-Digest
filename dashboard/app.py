@@ -417,6 +417,37 @@ async def api_graph_status():
     return _worker_get("/api/graph/status")
 
 
+# ── Engine Proxy Routes ──────────────────────────────────────────
+
+@app.post("/api/engine/scout")
+async def api_engine_scout(request: Request):
+    """Scout for new sources → proxy to worker."""
+    body = None
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    return _worker_post("/api/engine/scout", json_body=body)
+
+
+@app.get("/api/engine/jobs")
+async def api_engine_jobs():
+    """List engine jobs → proxy to worker."""
+    return _worker_get("/api/engine/jobs")
+
+
+@app.get("/api/engine/jobs/{job_id}")
+async def api_engine_job_detail(job_id: str):
+    """Engine job detail → proxy to worker."""
+    return _worker_get(f"/api/engine/jobs/{job_id}")
+
+
+@app.get("/api/engine/status")
+async def api_engine_status():
+    """Poll engine status → proxy to worker."""
+    return _worker_get("/api/engine/status")
+
+
 # ══════════════════════════════════════════════════════════════════
 #  PAGE ROUTE
 # ══════════════════════════════════════════════════════════════════

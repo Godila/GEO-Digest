@@ -681,6 +681,80 @@
             color: var(--text-muted);
         }
         .empty-state-sm { text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px; }
+
+        /* ── Agent Tab Styles ─────────────────── */
+        .agent-group-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: border-color .15s;
+        }
+        .agent-group-card:hover { border-color: var(--accent); }
+
+        .group-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 16px; cursor: pointer;
+            background: rgba(22,27,34,0.5); border-bottom: 1px solid var(--border);
+        }
+        .group-header-left { display: flex; align-items: center; gap: 10px; }
+
+        .group-type-badge {
+            font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .type-REVIEW {
+            background: rgba(210,153,34,.15); color: #d29922; border: 1px solid rgba(210,153,34,.3);
+        }
+        .type-REPLICATION {
+            background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.3);
+        }
+        .type-DATA_PAPER {
+            background: rgba(88,166,255,.15); color: #58a6ff; border: 1px solid rgba(88,166,255,.3);
+        }
+        .type-METHODS_TRANSFER {
+            background: rgba(188,140,255,.15); color: #bc8cff; border: 1px solid rgba(188,140,255,.3);
+        }
+        .type-UNKNOWN {
+            background: rgba(139,148,158,.15); color: #8b949e; border: 1px solid rgba(139,148,158,.3);
+        }
+
+        .conf-badge {
+            font-size: 14px; font-weight: 800;
+            padding: 2px 10px; border-radius: 8px;
+            min-width: 52px; text-align: center;
+        }
+        .conf-high { background: rgba(63,185,80,.2); color: #3fb950; }
+        .conf-mid { background: rgba(210,153,34,.2); color: #d29922; }
+        .conf-low { background: rgba(139,148,158,.2); color: #8b949e; }
+
+        .group-body { padding: 10px 16px 14px; display: none; }
+        .group-body.open { display: block; }
+
+        .group-article-item {
+            padding: 8px 10px; margin-bottom: 6px;
+            background: rgba(13,17,23,0.4); border-radius: 6px;
+            border: 1px solid transparent; transition: all .15s;
+            cursor: pointer; font-size: 12.5px; line-height: 1.5;
+        }
+        .group-article-item:hover {
+            border-color: var(--border); background: rgba(22,27,34,0.6);
+        }
+        .group-art-title { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+        .group-art-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; }
+        .group-art-meta span b { color: var(--accent); }
+
+        .group-keywords { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+        .kw-tag {
+            font-size: 10.5px; padding: 2px 8px; border-radius: 10px;
+            background: rgba(56,139,253,.08); color: var(--accent);
+            border: 1px solid rgba(56,139,253,.15);
+        }
+
+        .scout-summary-row { display: flex; gap: 20px; flex-wrap: wrap; }
+        .scout-sum-item { display: flex; align-items: center; gap: 6px; }
+        .scout-sum-val { font-weight: 700; color: var(--accent); font-size: 15px; }
+        .scout-sum-label { color: var(--text-muted); font-size: 12px; }
     </style>
 </head>
 <body>
@@ -702,6 +776,7 @@
         <div class="tabs">
             <div class="tab active" onclick="switchTab('articles', this)">Статьи</div>
             <div class="tab" onclick="switchTab('research', this)">Исследование</div>
+            <div class="tab" onclick="switchTab('agents', this)">🤖 Агенты</div>
             <div class="tab" onclick="switchTab('graph', this)">Граф</div>
             <div class="tab" onclick="switchTab('stats', this)">Статистика</div>
         </div>
@@ -841,6 +916,81 @@
             <div class="stats-grid" id="statsGrid">
                 <div class="loading"><div class="spinner"></div></div>
             </div>
+        </div>
+
+        <!-- Agents Tab: ScoutAgent UI -->
+        <div class="tab-content" id="tabAgents">
+
+            <!-- Scout Config -->
+            <div class="research-section">
+                <div class="research-section-title">🔍 Scout Agent — Поиск и классификация</div>
+
+                <div class="config-row">
+                    <div class="config-field" style="flex:2">
+                        <label class="config-label">Тема поиска</label>
+                        <input type="text" id="agentTopic" class="cfg-input"
+                               placeholder="например: Arctic permafrost methane emissions"
+                               value="Arctic permafrost methane emissions tundra">
+                    </div>
+                    <div class="config-field">
+                        <label class="config-label">Режим</label>
+                        <select id="agentMode" class="cfg-input">
+                            <option value="fresh" selected>Свежий поиск (sources/)</option>
+                            <option value="storage">Из хранилища</option>
+                            <option value="mixed">Смешанный</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="config-row">
+                    <div class="config-field">
+                        <label class="config-label">Макс. статей</label>
+                        <input type="number" id="agentMaxArticles" min="1" max="50" value="10" class="cfg-input">
+                    </div>
+                    <div class="config-field" style="display:flex;align-items:flex-end">
+                        <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
+                            ▶ Запустить Scout
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Engine Status -->
+                <div id="engineStatus" class="dedup-info" style="display:none;margin-top:10px"></div>
+            </div>
+
+            <!-- Scout Progress -->
+            <div id="scoutProgress" class="research-section" style="display:none">
+                <div class="research-section-title">⚡ Выполнение...</div>
+                <div class="progress-container">
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="scoutProgressBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-text"><span id="scoutPct">0%</span> · <span id="scoutStep">Инициализация...</span></div>
+                </div>
+                <div class="log-container" id="scoutLog">
+                    <div class="log-line log-info">Ожидание запуска...</div>
+                </div>
+            </div>
+
+            <!-- Scout Results -->
+            <div id="scoutResults" class="research-section" style="display:none">
+                <div class="research-section-title">📊 Результаты Scout Agent</div>
+
+                <!-- Summary bar -->
+                <div id="scoutSummary" style="margin-bottom:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+
+                <!-- Groups -->
+                <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
+            </div>
+
+            <!-- Jobs History -->
+            <div id="agentJobsSection" class="research-section">
+                <div class="research-section-title">📋 История запусков агентов</div>
+                <div id="agentJobsList" class="run-list">
+                    <div class="empty-state-sm">Запусков пока нет</div>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -2176,7 +2326,274 @@ switchTab = function(tabName, el) {
     if (tabName === 'research') {
         loadResearchConfig();
     }
+    if (tabName === 'agents') {
+        loadEngineStatus();
+        loadAgentJobs();
+    }
 };
+
+// ════════════════════════════════════════════════
+//  AGENT ENGINE UI — ScoutAgent
+// ════════════════════════════════════════════════
+
+let scoutPoller = null;
+let currentScoutJobId = null;
+
+const GROUP_TYPE_NAMES = {
+    REVIEW: 'Обзор',
+    REPLICATION: 'Воспроизведение',
+    DATA_PAPER: 'Данные',
+    METHODS_TRANSFER: 'Трансфер методов',
+    UNKNOWN: 'Неизвестно',
+};
+
+/** Run Scout Agent */
+async function runScoutAgent() {
+    const topic = document.getElementById('agentTopic').value.trim();
+    if (!topic) { alert('Введите тему поиска'); return; }
+
+    const mode = document.getElementById('agentMode').value;
+    const maxArticles = parseInt(document.getElementById('agentMaxArticles').value) || 10;
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = true; btn.textContent = '⏳ Запуск...';
+
+    // Show progress, hide results
+    document.getElementById('scoutProgress').style.display = '';
+    document.getElementById('scoutResults').style.display = 'none';
+    document.getElementById('scoutLog').innerHTML = '<div class="log-line log-step">▶ Запуск Scout Agent...</div>';
+    document.getElementById('scoutProgressBar').style.width = '5%';
+    document.getElementById('scoutPct').textContent = '5%';
+    document.getElementById('scoutStep').textContent = 'Отправка запроса...';
+
+    try {
+        const result = await api('/engine/scout', 'POST', { topic, mode, max_articles: maxArticles });
+        currentScoutJobId = result.job_id;
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-ok">Job создан: ${result.job_id}</div>`;
+        startScoutPolling(result.job_id);
+    } catch(e) {
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${e.message}</div>`;
+        btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    }
+}
+
+/** Poll scout job status */
+function startScoutPolling(jobId) {
+    if (scoutPoller) clearInterval(scoutPoller);
+
+    let steps = 0;
+    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
+    const stepPcts = [10, 25, 40, 65, 85, 100];
+
+    scoutPoller = setInterval(async () => {
+        try {
+            const job = await api(`/engine/jobs/${jobId}`);
+            const status = job.status;
+
+            // Update progress
+            steps = Math.min(steps, stepNames.length - 1);
+            if (status === 'running') {
+                steps = Math.min(steps + 1, stepNames.length - 2);
+                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
+                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
+                document.getElementById('scoutStep').textContent = stepNames[steps];
+
+                // Add log lines if any
+                if (job.log_lines && job.log_lines.length > 0) {
+                    const logEl = document.getElementById('scoutLog');
+                    const currentLines = logEl.querySelectorAll('.log-line').length;
+                    if (job.log_lines.length > currentLines) {
+                        job.log_lines.slice(currentLines).forEach(line => {
+                            const cls = line.includes('ERROR') ? 'log-err'
+                                        : line.includes('WARNING') ? 'log-warn'
+                                        : line.includes('[OK]') || line.includes('✓') ? 'log-ok'
+                                        : 'log-info';
+                            logEl.innerHTML += `<div class="log-line ${cls}">${esc(line)}</div>`;
+                        });
+                        logEl.scrollTop = logEl.scrollHeight;
+                    }
+                }
+            }
+
+            // Done or error
+            if (status === 'done' || status === 'error') {
+                clearInterval(scoutPoller);
+                scoutPoller = null;
+
+                document.getElementById('scoutProgressBar').style.width = '100%';
+                document.getElementById('scoutPct').textContent = '100%';
+                document.getElementById('scoutStep').textContent = status === 'done' ? 'Завершено!' : 'Ошибка';
+
+                const btn = document.getElementById('runScoutBtn');
+                btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+
+                if (status === 'done' && job.result) {
+                    renderScoutResults(job.result);
+                } else if (job.error) {
+                    document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${esc(job.error)}</div>`;
+                }
+
+                loadAgentJobs(); // refresh jobs list
+            }
+        } catch(e) {
+            console.error('Scout poll error:', e);
+        }
+    }, 2000);
+}
+
+/** Render scout results */
+function renderScoutResults(result) {
+    document.getElementById('scoutProgress').style.display = 'none';
+    document.getElementById('scoutResults').style.display = '';
+
+    // Summary
+    const sr = result.scout_result || {};
+    const groups = sr.groups || [];
+    const summaryEl = document.getElementById('scoutSummary');
+
+    let reviewCount = 0, replCount = 0;
+    groups.forEach(g => { if (g.group_type === 'REVIEW') reviewCount++; else replCount++; });
+
+    summaryEl.innerHTML = `
+        <div class="scout-summary-row">
+            <span class="scout-sum-item"><span class="scout-sum-val">${sr.total_found || 0}</span> <span class="scout-sum-label">найдено</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val">${sr.after_dedup || groups.length}</span> <span class="scout-sum-label">после дедупа</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#d29922">${reviewCount}</span> <span class="scout-sum-label">обзоров</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#3fb950">${replCount}</span> <span class="scout-sum-label">репликаций</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val">${groups.length}</span> <span class="scout-sum-label">групп</span></span>
+        </div>
+    `;
+
+    // Groups
+    const groupsEl = document.getElementById('scoutGroups');
+    if (!groups.length) {
+        groupsEl.innerHTML = '<div class="empty-state-sm">Нет результатов</div>';
+        return;
+    }
+
+    groupsEl.innerHTML = groups.map((g, i) => {
+        const gt = g.group_type || 'UNKNOWN';
+        const conf = g.confidence || 0;
+        const confClass = conf >= 80 ? 'conf-high' : conf >= 50 ? 'conf-mid' : 'conf-low';
+        const articles = g.articles || [];
+        const keywords = g.keywords || [];
+
+        return `
+        <div class="agent-group-card">
+            <div class="group-header" onclick="toggleGroupBody(this)">
+                <div class="group-header-left">
+                    <span class="group-type-badge type-${gt}">${GROUP_TYPE_NAMES[gt] || gt}</span>
+                    <span style="font-size:13px;font-weight:600;color:var(--text)">Группа ${i+1}${g.group_id ? ': ' + g.group_id : ''}</span>
+                    <span style="font-size:11px;color:var(--text-muted)">${articles.length} статей</span>
+                </div>
+                <span class="conf-badge ${confClass}">${conf}%</span>
+            </div>
+            <div class="group-body">
+                ${keywords.length ? `<div class="group-keywords">${keywords.map(k => `<span class="kw-tag">${esc(k)}</span>`).join('')}</div>` : ''}
+                ${articles.map(a => `
+                <div class="group-article-item" onclick="openArticleFromGroup(this)">
+                    <div class="group-art-title">${esc(a.display_title || a.title || '(без названия)')}</div>
+                    <div class="group-art-meta">
+                        <span><b>DOI:</b> ${esc(a.doi || '—')}</span>
+                        <span><b>Год:</b> ${a.year || '?'}</span>
+                        <span><b>Цит.:</b> ${a.citations || a.citation_count || 0}</span>
+                        ${a.source ? `<span><b>Источник:</b> ${esc(a.source)}</span>` : ''}
+                        ${a.journal ? `<span><b>Журнал:</b> ${esc(a.journal)}</span>` : ''}
+                    </div>
+                </div>
+                `).join('')}
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+/** Toggle group body expand/collapse */
+function toggleGroupBody(header) {
+    const card = header.closest('.agent-group-card');
+    const body = card.querySelector('.group-body');
+    body.classList.toggle('open');
+}
+
+/** Load engine health status */
+async function loadEngineStatus() {
+    try {
+        const st = await api('/engine/status');
+        const el = document.getElementById('engineStatus');
+        const eng = st.engine || {};
+        const stor = st.storage || {};
+        const jobs = st.jobs || {};
+        el.style.display = '';
+        el.innerHTML = `
+            Engine: <b>${eng.ok ? '✓ Ready' : (eng.error || 'ошибка')}</b> ·
+            Статей в хранилище: <b>${stor.article_count || 0}</b> ·
+            Активных задач: <b>${jobs.active || 0}/${jobs.total || 0}</b>
+        `;
+    } catch(e) {
+        console.error('Engine status error:', e);
+    }
+}
+
+/** Load agent jobs history */
+async function loadAgentJobs() {
+    try {
+        const data = await api('/engine/jobs');
+        const jobs = data.jobs || [];
+        const el = document.getElementById('agentJobsList');
+
+        if (!jobs.length) {
+            el.innerHTML = '<div class="empty-state-sm">Запусков пока нет</div>';
+            return;
+        }
+
+        // Sort by started_at desc
+        jobs.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+
+        el.innerHTML = jobs.map(j => {
+            const cls = j.status === 'done' ? 'status-complete'
+                       : j.status === 'error' ? 'status-error'
+                       : j.status === 'running' ? 'status-running' : 'status-stopped';
+            const label = j.status === 'done' ? 'Готово'
+                         : j.status === 'error' ? 'Ошибка'
+                         : j.status === 'running' ? 'Выполняется...' : j.status;
+            const time = j.started_at ? j.started_at.replace('T', ' ').substring(0, 16) : '?';
+            const dur = j.finished_at && j.started_at
+                ? Math.round((new Date(j.finished_at) - new Date(j.started_at)) / 1000) + 'с'
+                : '';
+
+            return `<div class="run-card" onclick="showAgentJobDetail('${j.job_id}')">
+                <div class="run-card-header">
+                    <span class="run-id">${j.job_id}</span>
+                    <span class="status-status-badge ${cls}">${label}</span>
+                </div>
+                <div class="run-stats">
+                    <span>топик: <span class="run-stat-val">${(j.topic || '').substring(0, 40)}</span></span>
+                    <span>${time}</span>
+                    <span>${dur}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) {
+        console.error('Agent jobs error:', e);
+    }
+}
+
+/** Show agent job detail */
+async function showAgentJobDetail(jobId) {
+    try {
+        const job = await api(`/engine/jobs/${jobId}`);
+        let detail = `Status: ${job.status}\nTopic: ${job.topic}\nStarted: ${job.started_at}`;
+        if (job.result) {
+            const sr = job.result.scout_result || {};
+            detail += `\n\nFound: ${sr.total_found}, Groups: ${(sr.groups||[]).length}`;
+            if (job.log_lines) detail += `\n\nLog:\n${job.log_lines.join('\n')}`;
+        }
+        if (job.error) detail += `\n\nError: ${job.error}`;
+        alert(detail);
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
 </script>
 </body>
 </html>
