@@ -72,6 +72,22 @@ def _worker_post(path: str, json_body: dict | None = None, timeout: int = 10) ->
         raise HTTPException(status_code=502, detail=f"Worker error: {e}")
 
 
+def _worker_request(method: str, path: str, timeout: int = 30) -> Response:
+    """Generic request to worker (for DELETE, SSE streams, etc). Returns raw Response."""
+    try:
+        r = requests.request(method, f"{WORKER_URL}{path}", timeout=timeout, stream=True)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            media_type=r.headers.get("content-type", "application/json"),
+            headers={"X-Proxy-From": "dashboard"},
+        )
+    except requests.ConnectionError:
+        raise HTTPException(status_code=503, detail="Worker unavailable")
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Worker error: {e}")
+
+
 # ── Data loaders (fallback: read from shared volume) ────────────
 def load_articles() -> list[dict]:
     """Fallback: read articles from shared volume."""
@@ -415,6 +431,90 @@ async def api_rebuild_graph(use_llm: bool = True, incremental: bool = False):
 async def api_graph_status():
     """Poll graph build status → proxy to worker."""
     return _worker_get("/api/graph/status")
+
+
+# ── Engine Proxy Routes ──────────────────────────────────────────
+
+@app.post("/api/engine/scout")
+async def api_engine_scout(request: Request):
+    """Scout for new sources → proxy to worker."""
+    body = None
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    return _worker_post("/api/engine/scout", json_body=body)
+
+
+@app.get("/api/engine/jobs")
+async def api_engine_jobs():
+    """List engine jobs → proxy to worker."""
+    return _worker_get("/api/engine/jobs")
+
+
+@app.get("/api/engine/jobs/{job_id}")
+async def api_engine_job_detail(job_id: str):
+    """Engine job detail → proxy to worker."""
+    return _worker_get(f"/api/engine/jobs/{job_id}")
+
+
+@app.get("/api/engine/status")
+async def api_engine_status():
+    """Poll engine status -> proxy to worker."""
+    return _worker_get("/api/engine/status")
+
+
+@app.delete("/api/engine/jobs/{job_id}")
+async def api_engine_cancel_job(job_id: str):
+    """Cancel engine job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/engine/jobs/{job_id}")
+
+
+@app.get("/api/engine/jobs/{job_id}/logs")
+async def api_engine_job_logs(job_id: str):
+    """SSE stream of job logs -> proxy to worker."""
+    return _worker_request("GET", f"/api/engine/jobs/{job_id}/logs", timeout=120)
+
+
+# ── Orchestrator Proxy Routes (full pipeline) ──────────────────
+
+@app.post("/api/orchestrator/job")
+async def api_orch_create_job(request: Request):
+    """Create + start pipeline job -> proxy to worker."""
+    body = await request.json()
+    return _worker_post("/api/orchestrator/job", json_body=body, timeout=30)
+
+@app.get("/api/orchestrator/jobs")
+async def api_orch_list_jobs():
+    """List orchestrator jobs -> proxy to worker."""
+    return _worker_get("/api/orchestrator/jobs")
+
+@app.get("/api/orchestrator/jobs/{job_id}")
+async def api_orch_get_job(job_id: str):
+    """Get orchestrator job state -> proxy to worker."""
+    return _worker_get(f"/api/orchestrator/jobs/{job_id}")
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
+async def api_orch_approve_group(job_id: str, request: Request):
+    """Approve scout group -> start reader -> proxy to worker."""
+    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-group", json_body=body, timeout=30)
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
+async def api_orch_approve_draft(job_id: str, request: Request):
+    """Approve draft -> start writer -> proxy to worker."""
+    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-draft", json_body=body, timeout=30)
+
+@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
+async def api_orch_skip_review(job_id: str):
+    """Skip review -> complete -> proxy to worker."""
+    return _worker_post(f"/api/orchestrator/jobs/{job_id}/skip-review")
+
+@app.delete("/api/orchestrator/jobs/{job_id}")
+async def api_orch_cancel_job(job_id: str):
+    """Cancel pipeline job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/orchestrator/jobs/{job_id}")
 
 
 # ══════════════════════════════════════════════════════════════════

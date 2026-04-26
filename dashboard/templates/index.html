@@ -681,6 +681,103 @@
             color: var(--text-muted);
         }
         .empty-state-sm { text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px; }
+
+        /* ── Pipeline Steps ─────────────────── */
+        .pipe-step {
+            display:flex;flex-direction:column;align-items:center;
+            min-width:100px;padding:8px 12px;border-radius:8px;
+            background:var(--bg-card);border:1.5px solid var(--border);
+            position:relative;flex:1;transition:all 0.3s
+        }
+        .pipe-step.active { border-color:#2563eb;background:rgba(37,99,235,.08); }
+        .pipe-step.done { border-color:#16a34a;background:rgba(22,163,74,.06); }
+        .pipe-step.error { border-color:#ef4444;background:rgba(239,68,68,.06); }
+        .pipe-step.waiting { opacity:0.5; }
+        .pipe-step-name { font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase }
+        .pipe-step-status { font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600 }
+        .pipe-step.done .pipe-step-status { background:rgba(22,163,74,.15);color:#16a34a }
+        .pipe-step.active .pipe-step-status { background:rgba(37,99,235,.15);color:#2563eb }
+        .pipe-step.error .pipe-step-status { background:rgba(239,68,68,.15);color:#ef4444 }
+        .pipe-arrow { display:flex;align-items:center;color:var(--border);font-size:18px;padding:0 4px;flex-shrink:0 }
+        .pipe-action-btn { margin-top:6px;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:none;transition:all 0.2s }
+        .pipe-action-btn:hover { transform:translateY(-1px) }
+        .pipe-action-btn.primary { background:rgba(37,99,235,.15);color:#2563eb }
+        .pipe-action-btn.success { background:rgba(22,163,74,.15);color:#16a34a }
+        .pipe-action-btn.warn { background:rgba(234,179,8,.15);color:#ca8a04 }
+
+        /* ── Agent Tab Styles ─────────────────── */
+        .agent-group-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: border-color .15s;
+        }
+        .agent-group-card:hover { border-color: var(--accent); }
+
+        .group-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 16px; cursor: pointer;
+            background: rgba(22,27,34,0.5); border-bottom: 1px solid var(--border);
+        }
+        .group-header-left { display: flex; align-items: center; gap: 10px; }
+
+        .group-type-badge {
+            font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .type-REVIEW {
+            background: rgba(210,153,34,.15); color: #d29922; border: 1px solid rgba(210,153,34,.3);
+        }
+        .type-REPLICATION {
+            background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.3);
+        }
+        .type-DATA_PAPER {
+            background: rgba(88,166,255,.15); color: #58a6ff; border: 1px solid rgba(88,166,255,.3);
+        }
+        .type-METHODS_TRANSFER {
+            background: rgba(188,140,255,.15); color: #bc8cff; border: 1px solid rgba(188,140,255,.3);
+        }
+        .type-UNKNOWN {
+            background: rgba(139,148,158,.15); color: #8b949e; border: 1px solid rgba(139,148,158,.3);
+        }
+
+        .conf-badge {
+            font-size: 14px; font-weight: 800;
+            padding: 2px 10px; border-radius: 8px;
+            min-width: 52px; text-align: center;
+        }
+        .conf-high { background: rgba(63,185,80,.2); color: #3fb950; }
+        .conf-mid { background: rgba(210,153,34,.2); color: #d29922; }
+        .conf-low { background: rgba(139,148,158,.2); color: #8b949e; }
+
+        .group-body { padding: 10px 16px 14px; display: none; }
+        .group-body.open { display: block; }
+
+        .group-article-item {
+            padding: 8px 10px; margin-bottom: 6px;
+            background: rgba(13,17,23,0.4); border-radius: 6px;
+            border: 1px solid transparent; transition: all .15s;
+            cursor: pointer; font-size: 12.5px; line-height: 1.5;
+        }
+        .group-article-item:hover {
+            border-color: var(--border); background: rgba(22,27,34,0.6);
+        }
+        .group-art-title { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+        .group-art-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; }
+        .group-art-meta span b { color: var(--accent); }
+
+        .group-keywords { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+        .kw-tag {
+            font-size: 10.5px; padding: 2px 8px; border-radius: 10px;
+            background: rgba(56,139,253,.08); color: var(--accent);
+            border: 1px solid rgba(56,139,253,.15);
+        }
+
+        .scout-summary-row { display: flex; gap: 20px; flex-wrap: wrap; }
+        .scout-sum-item { display: flex; align-items: center; gap: 6px; }
+        .scout-sum-val { font-weight: 700; color: var(--accent); font-size: 15px; }
+        .scout-sum-label { color: var(--text-muted); font-size: 12px; }
     </style>
 </head>
 <body>
@@ -702,6 +799,7 @@
         <div class="tabs">
             <div class="tab active" onclick="switchTab('articles', this)">Статьи</div>
             <div class="tab" onclick="switchTab('research', this)">Исследование</div>
+            <div class="tab" onclick="switchTab('agents', this)">🤖 Агенты</div>
             <div class="tab" onclick="switchTab('graph', this)">Граф</div>
             <div class="tab" onclick="switchTab('stats', this)">Статистика</div>
         </div>
@@ -841,6 +939,127 @@
             <div class="stats-grid" id="statsGrid">
                 <div class="loading"><div class="spinner"></div></div>
             </div>
+        </div>
+
+        <!-- Agents Tab: ScoutAgent UI -->
+        <div class="tab-content" id="tabAgents">
+
+            <!-- Scout Config -->
+            <div class="research-section">
+                <div class="research-section-title">🔍 Scout Agent — Поиск и классификация</div>
+
+                <div class="config-row">
+                    <div class="config-field" style="flex:2">
+                        <label class="config-label">Тема поиска</label>
+                        <input type="text" id="agentTopic" class="cfg-input"
+                               placeholder="например: Arctic permafrost methane emissions"
+                               value="Arctic permafrost methane emissions tundra">
+                    </div>
+                    <div class="config-field">
+                        <label class="config-label">Режим</label>
+                        <select id="agentMode" class="cfg-input">
+                            <option value="fresh" selected>Свежий поиск (sources/)</option>
+                            <option value="storage">Из хранилища</option>
+                            <option value="mixed">Смешанный</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="config-row">
+                    <div class="config-field">
+                        <label class="config-label">Макс. статей</label>
+                        <input type="number" id="agentMaxArticles" min="1" max="50" value="10" class="cfg-input">
+                    </div>
+                    <div class="config-field" style="display:flex;align-items:flex-end">
+                        <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
+                            ▶ Запустить Scout
+                        </button>
+                        <button id="stopScoutBtn" class="btn-danger" onclick="stopCurrentJob()" style="width:auto;padding:8px 16px;display:none">
+                            ⛹ Остановить
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Engine Status -->
+                <div id="engineStatus" class="dedup-info" style="display:none;margin-top:10px"></div>
+            </div>
+
+            <!-- Scout Progress -->
+            <div id="scoutProgress" class="research-section" style="display:none">
+                <div class="research-section-title">⚡ Выполнение...</div>
+                <div class="progress-container">
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="scoutProgressBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-text"><span id="scoutPct">0%</span> · <span id="scoutStep">Инициализация...</span></div>
+                </div>
+                <div class="log-container" id="scoutLog">
+                    <div class="log-line log-info">Ожидание запуска...</div>
+                </div>
+            </div>
+
+            <!-- Scout Results -->
+            <div id="scoutResults" class="research-section" style="display:none">
+                <div class="research-section-title">📊 Результаты Scout Agent</div>
+
+                <!-- Summary bar -->
+                <div id="scoutSummary" style="margin-bottom:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+
+                <!-- Groups -->
+                <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
+            </div>
+
+            <!-- ═══ Full Pipeline (Orchestrator) ═══ -->
+            <div id="pipelineSection" class="research-section">
+                <div class="research-section-title">🔄 Полный пайплайн (Scout → Reader → Writer)</div>
+
+                <!-- Pipeline Form -->
+                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:15px;flex-wrap:wrap">
+                    <div class="config-field" style="flex:1;min-width:200px">
+                        <label class="config-label">ТЕМА</label>
+                        <input id="pipeTopic" type="text" placeholder="например: Arctic permafrost methane emissions"
+                               value="Arctic permafrost methane emissions tundra" style="width:100%">
+                    </div>
+                    <div class="config-field" style="flex:1;min-width:180px">
+                        <label class="config-label">КОММЕНТАРИЙ</label>
+                        <input id="pipeComment" type="text" placeholder="Дополнительные указания для Writer" style="width:100%">
+                    </div>
+                    <div class="config-field">
+                        <button id="runPipeBtn" class="btn-primary" onclick="runPipeline()" style="padding:8px 20px">
+                            🚀 Запустить Pipeline
+                        </button>
+                        <button id="stopPipeBtn" class="btn-danger" onclick="stopPipeline()" style="padding:8px 14px;display:none">
+                            ⛹ Стоп
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Pipeline Steps Visualization -->
+                <div id="pipelineSteps" style="display:flex;gap:0;align-items:stretch;margin-bottom:15px;overflow-x:auto;padding-bottom:5px">
+                </div>
+
+                <!-- Pipeline Stage Content -->
+                <div id="pipelineStageContent" style="display:none">
+                    <!-- Dynamically filled based on current stage -->
+                </div>
+
+                <!-- Orchestrator Jobs List -->
+                <div style="margin-top:15px">
+                    <div class="research-section-title" style="font-size:13px">📋 История пайплайнов</div>
+                    <div id="orchJobsList" style="display:flex;flex-direction:column;gap:6px">
+                        <div class="empty-state-sm">Пайплайнов пока нет</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jobs History -->
+            <div id="agentJobsSection" class="research-section">
+                <div class="research-section-title">📋 История запусков агентов</div>
+                <div id="agentJobsList" class="run-list">
+                    <div class="empty-state-sm">Запусков пока нет</div>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -2176,7 +2395,729 @@ switchTab = function(tabName, el) {
     if (tabName === 'research') {
         loadResearchConfig();
     }
+    if (tabName === 'agents') {
+        loadEngineStatus();
+        loadAgentJobs();
+        loadOrchJobs();
+    }
 };
+
+// ════════════════════════════════════════════════
+//  AGENT ENGINE UI — ScoutAgent
+// ════════════════════════════════════════════════
+
+let scoutPoller = null;
+let currentScoutJobId = null;
+
+const GROUP_TYPE_NAMES = {
+    REVIEW: 'Обзор',
+    REPLICATION: 'Воспроизведение',
+    DATA_PAPER: 'Данные',
+    METHODS_TRANSFER: 'Трансфер методов',
+    UNKNOWN: 'Неизвестно',
+};
+
+/** Run Scout Agent */
+async function runScoutAgent() {
+    const topic = document.getElementById('agentTopic').value.trim();
+    if (!topic) { alert('Введите тему поиска'); return; }
+
+    const mode = document.getElementById('agentMode').value;
+    const maxArticles = parseInt(document.getElementById('agentMaxArticles').value) || 10;
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = true; btn.textContent = '⏳ Запуск...';
+
+    // Show progress, hide results
+    document.getElementById('scoutProgress').style.display = '';
+    document.getElementById('scoutResults').style.display = 'none';
+    document.getElementById('scoutLog').innerHTML = '<div class="log-line log-step">▶ Запуск Scout Agent...</div>';
+    document.getElementById('scoutProgressBar').style.width = '5%';
+    document.getElementById('scoutPct').textContent = '5%';
+    document.getElementById('scoutStep').textContent = 'Отправка запроса...';
+
+    // Show stop button
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = '';
+
+    try {
+        const result = await api('/engine/scout', 'POST', { topic, mode, max_articles: maxArticles });
+        currentScoutJobId = result.job_id;
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-ok">Job создан: ${result.job_id}</div>`;
+        startSSEStreaming(result.job_id);
+    } catch(e) {
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${e.message}</div>`;
+        btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    }
+}
+
+/** SSE-based real-time log streaming */
+function startSSEStreaming(jobId) {
+    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
+    if (window.scoutEventSource) window.scoutEventSource.close();
+
+    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
+    const stepPcts = [10, 25, 40, 65, 85, 100];
+    let steps = 0;
+    let logEl = document.getElementById('scoutLog');
+
+    try {
+        const es = new EventSource(`/api/engine/jobs/${jobId}/logs`);
+        window.scoutEventSource = es;
+
+        es.onmessage = (evt) => {
+            const data = JSON.parse(evt.data);
+
+            // Log line
+            if (data.line) {
+                const cls = data.line.includes('ERROR') || data.line.includes('Traceback') ? 'log-err'
+                            : data.line.includes('[*]') || data.line.includes('Complete') ? 'log-ok'
+                            : data.line.includes('Warning') ? 'log-warn'
+                            : 'log-info';
+                logEl.innerHTML += `<div class="log-line ${cls}">${esc(data.line)}</div>`;
+                logEl.scrollTop = logEl.scrollHeight;
+
+                // Update progress bar based on keywords
+                const lineLower = data.line.toLowerCase();
+                if (lineLower.includes('source')) { steps = Math.max(steps, 1); }
+                else if (lineLower.includes('collect') || lineLower.includes('article')) { steps = Math.max(steps, 2); }
+                else if (lineLower.includes('dedup')) { steps = Math.max(steps, 3); }
+                else if (lineLower.includes('llm') || lineLower.includes('classif')) { steps = Math.max(steps, 4); }
+                else if (lineLower.includes('group')) { steps = Math.max(steps, 5); }
+
+                steps = Math.min(steps, stepNames.length - 1);
+                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
+                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
+                document.getElementById('scoutStep').textContent = stepNames[steps];
+            }
+
+            // Done
+            if (data.done) {
+                es.close();
+                window.scoutEventSource = null;
+                onScoutFinished(jobId, data.status);
+            }
+        };
+
+        es.onerror = () => {
+            console.warn('SSE error, falling back to polling');
+            es.close();
+            startScoutPollingFallback(jobId);
+        };
+    } catch(e) {
+        console.warn('SSE not supported, using polling:', e);
+        startScoutPollingFallback(jobId);
+    }
+}
+
+/** Fallback: poll-based status check */
+function startScoutPollingFallback(jobId) {
+    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
+    const stepPcts = [10, 25, 40, 65, 85, 100];
+    let steps = 0;
+
+    scoutPoller = setInterval(async () => {
+        try {
+            const job = await api(`/engine/jobs/${jobId}`);
+            if (job.status === 'running') {
+                steps = Math.min(steps + 1, stepNames.length - 2);
+                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
+                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
+                document.getElementById('scoutStep').textContent = stepNames[steps];
+
+                if (job.log_lines && job.log_lines.length > 0) {
+                    const logEl = document.getElementById('scoutLog');
+                    const currentLines = logEl.querySelectorAll('.log-line').length;
+                    if (job.log_lines.length > currentLines) {
+                        job.log_lines.slice(currentLines).forEach(line => {
+                            const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
+                            logEl.innerHTML += `<div class="log-line ${cls}">${esc(line)}</div>`;
+                        });
+                        logEl.scrollTop = logEl.scrollHeight;
+                    }
+                }
+            }
+
+            if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
+                clearInterval(scoutPoller);
+                scoutPoller = null;
+                onScoutFinished(jobId, job.status);
+            }
+        } catch(e) { console.error('Poll error:', e); }
+    }, 2000);
+}
+
+/** Called when scout job finishes (from both SSE and polling) */
+async function onScoutFinished(jobId, status) {
+    document.getElementById('scoutProgressBar').style.width = '100%';
+    document.getElementById('scoutPct').textContent = '100%';
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    if (status === 'done') {
+        document.getElementById('scoutStep').textContent = 'Завершено!';
+        try {
+            const job = await api(`/engine/jobs/${jobId}`);
+            if (job.result) renderScoutResults(job.result);
+        } catch(e) { console.error('Load result error:', e); }
+    } else if (status === 'cancelled') {
+        document.getElementById('scoutStep').textContent = 'Остановлено';
+        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Задача остановлена пользователем</div>';
+    } else {
+        document.getElementById('scoutStep').textContent = 'Ошибка';
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">❌ Завершено с ошибкой</div>`;
+    }
+
+    loadAgentJobs(); loadEngineStatus();
+}
+
+/** Stop running scout job */
+async function stopCurrentJob() {
+    if (!currentScoutJobId) return;
+    if (!confirm('Остановить текущую задачу?')) return;
+
+    // Close SSE
+    if (window.scoutEventSource) { window.scoutEventSource.close(); window.scoutEventSource = null; }
+    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
+
+    try {
+        await api(`/engine/jobs/${currentScoutJobId}`, 'DELETE');
+        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Отправлен запрос на остановку...</div>';
+    } catch(e) {
+        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка остановки: ${e.message}</div>`;
+    }
+
+    const btn = document.getElementById('runScoutBtn');
+    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
+    const stopBtn = document.getElementById('stopScoutBtn');
+    if (stopBtn) stopBtn.style.display = 'none';
+
+    loadAgentJobs(); loadEngineStatus();
+}
+
+/** Render scout results */
+function renderScoutResults(result) {
+    document.getElementById('scoutProgress').style.display = 'none';
+    document.getElementById('scoutResults').style.display = '';
+
+    // Summary
+    const sr = result.scout_result || {};
+    const groups = sr.groups || [];
+    const summaryEl = document.getElementById('scoutSummary');
+
+    let reviewCount = 0, replCount = 0;
+    groups.forEach(g => { if (g.group_type === 'REVIEW') reviewCount++; else replCount++; });
+
+    summaryEl.innerHTML = `
+        <div class="scout-summary-row">
+            <span class="scout-sum-item"><span class="scout-sum-val">${sr.total_found || 0}</span> <span class="scout-sum-label">найдено</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val">${sr.after_dedup || groups.length}</span> <span class="scout-sum-label">после дедупа</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#d29922">${reviewCount}</span> <span class="scout-sum-label">обзоров</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#3fb950">${replCount}</span> <span class="scout-sum-label">репликаций</span></span>
+            <span class="scout-sum-item"><span class="scout-sum-val">${groups.length}</span> <span class="scout-sum-label">групп</span></span>
+        </div>
+    `;
+
+    // Groups
+    const groupsEl = document.getElementById('scoutGroups');
+    if (!groups.length) {
+        groupsEl.innerHTML = '<div class="empty-state-sm">Нет результатов</div>';
+        return;
+    }
+
+    groupsEl.innerHTML = groups.map((g, i) => {
+        const gt = g.group_type || 'UNKNOWN';
+        const conf = g.confidence || 0;
+        const confClass = conf >= 80 ? 'conf-high' : conf >= 50 ? 'conf-mid' : 'conf-low';
+        const articles = g.articles || [];
+        const keywords = g.keywords || [];
+
+        return `
+        <div class="agent-group-card">
+            <div class="group-header" onclick="toggleGroupBody(this)">
+                <div class="group-header-left">
+                    <span class="group-type-badge type-${gt}">${GROUP_TYPE_NAMES[gt] || gt}</span>
+                    <span style="font-size:13px;font-weight:600;color:var(--text)">Группа ${i+1}${g.group_id ? ': ' + g.group_id : ''}</span>
+                    <span style="font-size:11px;color:var(--text-muted)">${articles.length} статей</span>
+                </div>
+                <span class="conf-badge ${confClass}">${conf}%</span>
+            </div>
+            <div class="group-body">
+                ${keywords.length ? `<div class="group-keywords">${keywords.map(k => `<span class="kw-tag">${esc(k)}</span>`).join('')}</div>` : ''}
+                ${articles.map(a => `
+                <div class="group-article-item" onclick="openArticleFromGroup(this)">
+                    <div class="group-art-title">${esc(a.display_title || a.title || '(без названия)')}</div>
+                    <div class="group-art-meta">
+                        <span><b>DOI:</b> ${esc(a.doi || '—')}</span>
+                        <span><b>Год:</b> ${a.year || '?'}</span>
+                        <span><b>Цит.:</b> ${a.citations || a.citation_count || 0}</span>
+                        ${a.source ? `<span><b>Источник:</b> ${esc(a.source)}</span>` : ''}
+                        ${a.journal ? `<span><b>Журнал:</b> ${esc(a.journal)}</span>` : ''}
+                    </div>
+                </div>
+                `).join('')}
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+/** Toggle group body expand/collapse */
+function toggleGroupBody(header) {
+    const card = header.closest('.agent-group-card');
+    const body = card.querySelector('.group-body');
+    body.classList.toggle('open');
+}
+
+/** Load engine health status */
+async function loadEngineStatus() {
+    try {
+        const st = await api('/engine/status');
+        const el = document.getElementById('engineStatus');
+        const eng = st.engine || {};
+        const stor = st.storage || {};
+        const jobs = st.jobs || {};
+        el.style.display = '';
+        el.innerHTML = `
+            Engine: <b>${eng.ok ? '✓ Ready' : (eng.error || 'ошибка')}</b> ·
+            Статей в хранилище: <b>${stor.article_count || 0}</b> ·
+            Активных задач: <b>${jobs.active || 0}/${jobs.total || 0}</b>
+        `;
+    } catch(e) {
+        console.error('Engine status error:', e);
+    }
+}
+
+/** Load agent jobs history */
+async function loadAgentJobs() {
+    try {
+        const data = await api('/engine/jobs');
+        const jobs = data.jobs || [];
+        const el = document.getElementById('agentJobsList');
+
+        if (!jobs.length) {
+            el.innerHTML = '<div class="empty-state-sm">Запусков пока нет</div>';
+            return;
+        }
+
+        // Sort by started_at desc
+        jobs.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+
+        el.innerHTML = jobs.map(j => {
+            const cls = j.status === 'done' ? 'status-complete'
+                       : j.status === 'error' ? 'status-error'
+                       : j.status === 'running' ? 'status-running' : 'status-stopped';
+            const label = j.status === 'done' ? 'Готово'
+                         : j.status === 'error' ? 'Ошибка'
+                         : j.status === 'running' ? 'Выполняется...' : j.status;
+            const time = j.started_at ? j.started_at.replace('T', ' ').substring(0, 16) : '?';
+            const dur = j.finished_at && j.started_at
+                ? Math.round((new Date(j.finished_at) - new Date(j.started_at)) / 1000) + 'с'
+                : '';
+
+            return `<div class="run-card" onclick="showAgentJobDetail('${j.job_id}')">
+                <div class="run-card-header">
+                    <span class="run-id">${j.job_id}</span>
+                    <span class="status-status-badge ${cls}">${label}</span>
+                </div>
+                <div class="run-stats">
+                    <span>топик: <span class="run-stat-val">${(j.params && j.params.topic || '').substring(0, 40)}</span></span>
+                    <span>${time}</span>
+                    <span>${dur}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) {
+        console.error('Agent jobs error:', e);
+    }
+}
+
+/** Show agent job detail in results area */
+async function showAgentJobDetail(jobId) {
+    try {
+        const job = await api(`/engine/jobs/${jobId}`);
+
+        // Switch to agent tab if not already there
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+        // Find and activate agents tab (3rd tab, index 2)
+        const tabs = document.querySelectorAll('.tab');
+        if (tabs[2]) { tabs[2].classList.add('active'); }
+        const contents = document.querySelectorAll('.tab-content');
+        if (contents[2]) { contents[2].style.display = ''; }
+
+        // Show progress area with logs
+        document.getElementById('scoutProgress').style.display = '';
+        document.getElementById('scoutResults').style.display = 'none';
+
+        let logHtml = '';
+        if (job.log_lines && job.log_lines.length > 0) {
+            logHtml = job.log_lines.map(line => {
+                const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
+                return `<div class="log-line ${cls}">${esc(line)}</div>`;
+            }).join('');
+        } else {
+            logHtml = '<div class="log-line log-info">Нет логов</div>';
+        }
+        if (job.error) logHtml += `<div class="log-line log-err">Ошибка: ${esc(job.error)}</div>`;
+
+        document.getElementById('scoutLog').innerHTML = logHtml;
+
+        // Update progress bar
+        const isDone = job.status === 'done';
+        const isError = job.status === 'error';
+        document.getElementById('scoutProgressBar').style.width = isDone || isError ? '100%' : '50%';
+        document.getElementById('scoutPct').textContent = isDone || isError ? '100%' : '50%';
+        document.getElementById('scoutStep').textContent =
+            isDone ? 'Завершено' : isError ? 'Ошибка' : job.status;
+
+        // Render results if done
+        if (isDone && job.result) {
+            renderScoutResults(job.result);
+        }
+
+        // Update stop button visibility
+        const stopBtn = document.getElementById('stopScoutBtn');
+        if (stopBtn) stopBtn.style.display = job.status === 'running' ? '' : 'none';
+        currentScoutJobId = jobId;
+
+    } catch(e) {
+        alert('Ошибка загрузки: ' + e.message);
+    }
+}
+
+// ═══════════════════════════════════════════════════
+// PIPELINE (ORCHESTRATOR) FUNCTIONS
+// ═══════════════════════════════════════════════════
+
+const PIPE_STEPS = [
+    { key: 'scout', name: 'Scout', icon: '🔍' },
+    { key: 'read', name: 'Reader', icon: '📖' },
+    { key: 'write', name: 'Writer', icon: '✍️' },
+    { key: 'review', name: 'Review', icon: '👀' },
+    { key: 'done', name: 'Готово', icon: '✅' },
+];
+
+let currentPipeJobId = null;
+let pipePoller = null;
+
+/** Map orchestrator status string to step index */
+function _pipeStatusToStep(status) {
+    const s = (status || '').toLowerCase().replace('_', '');
+    if (s.includes('created') || s.includes('scouting')) return 0;
+    if (s.includes('scout_done')) return 1; // waiting for approve
+    if (s.includes('reading') || s.includes('read_done')) return 2;
+    if (s.includes('writing') || s.includes('write_done')) return 3;
+    if (s.includes('complete')) return 4;
+    if (s.includes('failed') || s.includes('cancelled')) return -1;
+    return 0;
+}
+
+/** Run full pipeline via Orchestrator */
+async function runPipeline() {
+    const topic = document.getElementById('pipeTopic').value.trim();
+    if (!topic) { alert('Введите тему'); return; }
+    const comment = document.getElementById('pipeComment').value.trim();
+
+    document.getElementById('runPipeBtn').disabled = true;
+    document.getElementById('stopPipeBtn').style.display = '';
+    document.getElementById('pipelineStageContent').style.display = 'none';
+
+    try {
+        const result = await api('/orchestrator/job', 'POST', { topic, pipeline: 'full', user_comment: comment });
+        currentPipeJobId = result.job_id;
+        renderPipelineSteps({ status: result.status || 'SCOUTING', job_id: result.job_id });
+        startPipePolling(result.job_id);
+    } catch(e) {
+        alert('Ошибка запуска пайплайна: ' + e.message);
+        document.getElementById('runPipeBtn').disabled = false;
+        document.getElementById('stopPipeBtn').style.display = 'none';
+    }
+}
+
+/** Render pipeline steps visualization */
+function renderPipelineSteps(job) {
+    const status = job.status || '';
+    const activeIdx = Math.max(0, _pipeStatusToStep(status));
+    const isFailed = status.toLowerCase().includes('fail') || status.toLowerCase().includes('cancel');
+    const isDone = status.toLowerCase().includes('complete');
+
+    let html = '';
+    PIPE_STEPS.forEach((step, i) => {
+        let cls = 'waiting';
+        if (i < activeIdx) cls = 'done';
+        else if (i === activeIdx) cls = isFailed ? 'error' : (isDone ? 'done' : 'active');
+        else cls = 'waiting';
+
+        // Action buttons based on stage
+        let actionBtn = '';
+        if (i === 1 && cls === 'active') { // scout_done → need approve
+            actionBtn = `<button class="pipe-action-btn primary" onclick="showApproveGroup('${job.job_id}')">Выбрать группу</button>`;
+        } else if (i === 2 && cls === 'active') { // read_done → need approve
+            actionBtn = `<button class="pipe-action-btn primary" onclick="approveDraft('${job.job_id}')">Одобрить черновик</button>`;
+        } else if (i === 3 && cls === 'active') { // write_done → review or skip
+            actionBtn = `
+                <button class="pipe-action-btn success" onclick="skipReview('${job.job_id}')">Пропустить</button>
+                <button class="pipe-action-btn warn" style="margin-left:4px" onclick="requestRevision('${job.job_id}')">На доработку</button>`;
+        }
+
+        html += `<div class="pipe-step ${cls}">
+            <span style="font-size:18px">${step.icon}</span>
+            <span class="pipe-step-name">${step.name}</span>
+            <span class="pipe-step-status">${_pipeStatusLabel(status, i)}</span>
+            ${actionBtn}
+        </div>`;
+        if (i < PIPE_STEPS.length - 1) {
+            html += `<div class="pipe-arrow">${i < activeIdx ? '✓' : '→'}</div>`;
+        }
+    });
+
+    document.getElementById('pipelineSteps').innerHTML = html;
+}
+
+function _pipeStatusLabel(status, stepIdx) {
+    const s = (status || '').toLowerCase();
+    if (s.includes('scouting')) return stepIdx === 0 ? 'Поиск...' : 'Ожидание';
+    if (s.includes('scout_done')) return stepIdx <= 1 ? 'Готово' : 'Ожидание';
+    if (s.includes('reading')) return stepIdx === 2 ? 'Чтение...' : 'Ожидание';
+    if (s.includes('read_done')) return stepIdx <= 2 ? 'Готово' : 'Ожидание';
+    if (s.includes('writing')) return stepIdx === 3 ? 'Письмо...' : 'Ожидание';
+    if (s.includes('write_done')) return stepIdx <= 3 ? 'Готово' : 'Ожидание';
+    if (s.includes('complete')) return 'Завершён';
+    if (s.includes('failed')) return 'Ошибка';
+    if (s.includes('cancelled')) return 'Отменён';
+    return '—';
+}
+
+/** Poll pipeline job status */
+function startPipePolling(jobId) {
+    if (pipePoller) clearInterval(pipePoller);
+
+    pipePoller = setInterval(async () => {
+        try {
+            const job = await api(`/orchestrator/jobs/${jobId}`);
+            renderPipelineSteps(job);
+
+            const s = (job.status || '').toLowerCase();
+            if (s.includes('complete') || s.includes('failed') || s.includes('cancelled')) {
+                clearInterval(pipePoller);
+                pipePoller = null;
+                onPipeFinished(job);
+            }
+
+            // Show stage content when scout done
+            if (s.includes('scout_done') && !s.includes('reading')) {
+                showScoutGroupsForApproval(job);
+            } else if (s.includes('read_done') && !s.includes('writing')) {
+                showReaderDraftForApproval(job);
+            } else if (s.includes('write_done')) {
+                showWrittenArticle(job);
+            }
+        } catch(e) {
+            console.error('Pipe poll error:', e);
+        }
+    }, 3000);
+}
+
+/** Show scout groups with selection buttons */
+function showScoutGroupsForApproval(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const scoutResult = job.results && job.results.scout;
+    const groups = scoutResult && scoutResult.groups ? scoutResult.groups : [];
+
+    if (!groups.length) {
+        el.innerHTML = '<div class="empty-state-sm">Нет групп для выбора</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📦 Выберите группу для анализа Reader-агентом:</div>
+        ${groups.map((g, i) => `
+            <div style="padding:10px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <b>${esc(g.group_type || '?')}</b>
+                    <span style="color:var(--text-muted);font-size:12px"> · ${(g.articles||[]).length} статей</span>
+                    ${g.keywords ? `<br><small>${(g.keywords||[]).slice(0,5).join(', ')}</small>` : ''}
+                </div>
+                <button class="pipe-action-btn primary" onclick="approveGroup('${job.job_id}', ${i})">Выбрать →</button>
+            </div>
+        `).join('')}
+    `;
+}
+
+/** Show reader draft with approve button */
+function showReaderDraftForApproval(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const draft = job.results && job.results.read;
+    if (!draft) {
+        el.innerHTML = '<div class="empty-state-sm">Нет данных от Reader</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📝 Черновик от Reader:</div>
+        <div style="background:var(--bg-card);border-radius:8px;padding:12px;border:1px solid var(--border)">
+            ${draft.title_suggestion ? `<b>${esc(draft.title_suggestion)}</b><br>` : ''}
+            ${draft.gap_identified ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Gap:</b> ${esc(draft.gap_identified)}</p>` : ''}
+            ${draft.proposed_contribution ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Contribution:</b> ${esc(draft.proposed_contribution)}</p>` : ''}
+            ${draft.methods_summary ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Methods:</b> ${esc(draft.methods_summary)}</p>` : ''}
+            ${draft.confidence !== undefined ? `<small>Confidence: ${Math.round((draft.confidence||0)*100)}%</small>` : ''}
+        </div>
+        <div style="margin-top:10px;text-align:right">
+            <button class="pipe-action-btn success" onclick="approveDraft('${job.job_id}')">✓ Одобрить → Writer</button>
+        </div>
+    `;
+}
+
+/** Show written article */
+function showWrittenArticle(job) {
+    const el = document.getElementById('pipelineStageContent');
+    el.style.display = '';
+
+    const article = job.results && job.results.write;
+    if (!article) {
+        el.innerHTML = '<div class="empty-state-sm">Нет статьи</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">✍️ Готовая статья:</div>
+        <div style="background:var(--bg-card);border-radius:8px;padding:14px;border:1px solid var(--border);max-height:400px;overflow-y:auto">
+            ${article.title ? `<h4 style="margin:0 0 8px">${esc(article.title)}</h4>` : ''}
+            ${article.text ? `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;margin:0;color:var(--text)">${esc(article.text.substring(0, 5000))}${article.text.length > 5000 ? '...(truncated)' : ''}</pre>` : ''}
+            ${article.word_count ? `<small style="color:var(--text-muted)">Слов: ${article.word_count}</small>` : ''}
+        </div>
+    `;
+}
+
+/** Approve scout group → start Reader */
+async function approveGroup(jobId, groupIndex) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-group`, 'POST', { group_index: groupIndex });
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Reader запущен...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Approve reader draft → start Writer */
+async function approveDraft(jobId) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', {});
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Writer запущен...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Skip review → complete */
+async function skipReview(jobId) {
+    try {
+        await api(`/orchestrator/jobs/${jobId}/skip-review`, 'POST');
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Request revision of written article */
+async function requestRevision(jobId) {
+    const comment = prompt('Укажите комментарий для доработки:');
+    if (comment === null) return;
+    try {
+        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', { comment: 'revision: ' + comment });
+        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Переписывание...</div>';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+/** Stop pipeline */
+async function stopPipeline() {
+    if (!currentPipeJobId) return;
+    if (!confirm('Остановить пайплайн?')) return;
+    if (pipePoller) { clearInterval(pipePoller); pipePoller = null; }
+
+    try {
+        await api(`/orchestrator/jobs/${currentPipeJobId}`, 'DELETE');
+    } catch(e) { console.error('Stop error:', e); }
+
+    document.getElementById('runPipeBtn').disabled = false;
+    document.getElementById('stopPipeBtn').style.display = 'none';
+    currentPipeJobId = null;
+    loadOrchJobs();
+}
+
+/** Pipeline finished callback */
+function onPipeFinished(job) {
+    document.getElementById('runPipeBtn').disabled = false;
+    document.getElementById('stopPipeBtn').style.display = 'none';
+    loadOrchJobs(); loadAgentJobs(); loadEngineStatus();
+}
+
+/** Show approve group dialog (from step button) */
+async function showApproveGroup(jobId) {
+    // Just scroll to stage content which should already be showing groups
+    document.getElementById('pipelineStageContent').scrollIntoView({ behavior: 'smooth' });
+}
+
+/** Load orchestrator jobs list */
+async function loadOrchJobs() {
+    try {
+        const data = await api('/orchestrator/jobs');
+        const jobs = data.jobs || [];
+        const el = document.getElementById('orchJobsList');
+
+        if (!jobs.length) {
+            el.innerHTML = '<div class="empty-state-sm">Пайплайнов пока нет</div>';
+            return;
+        }
+
+        el.innerHTML = jobs.map(j => {
+            const s = j.status || '?';
+            const cls = s.toLowerCase().includes('complete') ? 'status-complete'
+                       : s.toLowerCase().includes('fail') ? 'status-error'
+                       : s.toLowerCase().includes('cancel') ? 'status-stopped'
+                       : 'status-running';
+            const topic = j.input_topic || j.topic || '?';
+            return `<div class="run-card" onclick="showOrchJobDetail('${j.job_id}')">
+                <div class="run-card-header">
+                    <span class="run-id">${j.job_id.substring(0, 12)}</span>
+                    <span class="status-status-badge ${cls}">${s.replace(/_/g, ' ')}</span>
+                </div>
+                <div class="run-stats">
+                    <span>топик: <span class="run-stat-val">${esc(topic.substring(0, 35))}</span></span>
+                    <span>${(j.updated_at || j.started_at || '').substring(0, 16)}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error('Orch jobs error:', e); }
+}
+
+/** Show orchestrator job detail */
+async function showOrchJobDetail(jobId) {
+    try {
+        const job = await api(`/orchestrator/jobs/${jobId}`);
+        currentPipeJobId = jobId;
+        renderPipelineSteps(job);
+
+        // Show appropriate content
+        const s = (job.status || '').toLowerCase();
+        if (s.includes('scout_done')) showScoutGroupsForApproval(job);
+        else if (s.includes('read_done')) showReaderDraftForApproval(job);
+        else if (s.includes('write_done') || s.includes('complete')) showWrittenArticle(job);
+        else document.getElementById('pipelineStageContent').style.display = 'none';
+
+        // Update stop button
+        const running = s.includes('scouting') || s.includes('reading') || s.includes('writing');
+        document.getElementById('stopPipeBtn').style.display = running ? '' : 'none';
+
+        // Resume polling if still running
+        if (running && !pipePoller) startPipePolling(jobId);
+
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// Init: load orch jobs when agents tab opens
+const _origLoadAgents = window.loadAgentTab || (() => {});
 </script>
 </body>
 </html>

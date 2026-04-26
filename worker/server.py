@@ -24,7 +24,7 @@ import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from typing import Optional
 
 # ── Add scripts to path for run_manager import ────────────────
@@ -34,9 +34,74 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 # ── Paths ───────────────────────────────────────────────────────
 # Worker runs scripts from /app/scripts, data lives in /app/data
-WORKER_DIR = Path(__file__).resolve().parent.parent  # /app or project root
+# In Docker: source code mounted at /app/src (see docker-compose.yml)
+_FILE_DIR = Path(__file__).resolve().parent  # /app/worker
+WORKER_DIR = _FILE_DIR.parent               # /app (or project root)
 SCRIPTS_DIR = WORKER_DIR / "scripts"
 DATA_DIR = WORKER_DIR / "data"
+
+# Engine: try Docker mount path first, then local path
+_ENGINE_CANDIDATES = [
+    WORKER_DIR / "src" / "engine",   # Docker: .:/app/src → /app/src/engine
+    _FILE_DIR.parent.parent / "engine",  # Local development
+    Path(__file__).resolve().parent.parent / "engine",  # Alternative resolve
+]
+ENGINE_DIR = None
+for _cand in _ENGINE_CANDIDATES:
+    if (_cand / "__init__.py").exists() or (_cand / "config.py").exists():
+        ENGINE_DIR = _cand
+        break
+if ENGINE_DIR is None:
+    ENGINE_DIR = _ENGINE_CANDIDATES[0]  # fallback
+
+# ── Engine imports ─────────────────────────────────────────────
+# Lazy imports: engine code lives in /app/src/engine (Docker mount)
+# and may not be available at import time. We resolve + import on first use.
+_engine_imports_done = False
+
+def _ensure_engine_imports():
+    """Lazily import engine modules. Safe to call multiple times."""
+    global _engine_imports_done
+    if _engine_imports_done:
+        return
+
+    # Re-resolve ENGINE_DIR at call time (volume is mounted by now)
+    global ENGINE_DIR
+    _candidates = [
+        WORKER_DIR / "src" / "engine",   # Docker: .:/app/src → /app/src/engine
+        Path(__file__).resolve().parent.parent / "engine",
+        WORKER_DIR / "engine",
+    ]
+    for _c in _candidates:
+        if (_c / "config.py").exists():
+            ENGINE_DIR = _c
+            break
+
+    if str(ENGINE_DIR) not in sys.path:
+        # Add parent of engine to path so 'from engine.xxx import' works
+        _engine_parent = ENGINE_DIR.parent
+        if str(_engine_parent) not in sys.path:
+            sys.path.insert(0, str(_engine_parent))
+
+    # Load .env for API keys
+    _env_path = WORKER_DIR / ".env"
+    if _env_path.exists():
+        for _line in _env_path.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                if _k.strip() not in os.environ:
+                    os.environ[_k.strip()] = _v.strip()
+
+    # Now import
+    global get_config, ScoutAgent, JsonlStorage
+    from engine.config import get_config as _gc
+    from engine.agents.scout import ScoutAgent as _sa
+    from engine.storage.jsonl_backend import JsonlStorage as _js
+    get_config = _gc
+    ScoutAgent = _sa
+    JsonlStorage = _js
+    _engine_imports_done = True
 
 # Ensure data dir exists
 DATA_DIR.mkdir(exist_ok=True)
@@ -78,6 +143,9 @@ _jobs = {
         "pid": None,
     },
 }
+
+# ── Engine Job State ────────────────────────────────────────────
+_engine_jobs: dict[str, dict] = {}  # {job_id: {status, started_at, finished_at, result, error, log_lines}}
 
 
 def _update_job(job_type: str, **kwargs):
@@ -888,6 +956,402 @@ async def agent_export(format: str = "compact"):
             status_code=400,
             detail=f"Unknown format '{fmt_clean}'. Supported: compact, jsonld, graph_kg"
         )
+
+
+# ── Engine API ──────────────────────────────────────────────────
+
+def _serialize_scout_result(result):
+    """Serialize ScoutResult groups for JSON response."""
+    if result is None:
+        return None
+    groups = []
+    for g in (result.groups or []):
+        articles = []
+        for a in (g.articles or []):
+            if hasattr(a, "_data"):
+                d = dict(a._data)
+            elif isinstance(a, dict):
+                d = a
+            else:
+                d = {}
+            articles.append({
+                "title": d.get("title_ru") or d.get("title", ""),
+                "doi": d.get("doi", ""),
+                "year": d.get("year"),
+                "citations": d.get("citations", 0),
+            })
+        gt = g.group_type.value if hasattr(g.group_type, "value") else str(g.group_type)
+        groups.append({
+            "group_id": g.group_id,
+            "group_type": gt,
+            "confidence": g.confidence,
+            "keywords": g.keywords or [],
+            "articles": articles,
+        })
+    return {
+        "topic": getattr(result, "topic", ""),
+        "total_found": getattr(result, "total_found", 0),
+        "after_dedup": getattr(result, "after_dedup", 0),
+        "groups": groups,
+    }
+
+
+def _run_scout_bg(job_id: str, topic: str, mode: str, max_articles: int):
+    """Run ScoutAgent in background thread."""
+    job = _engine_jobs[job_id]
+    job["status"] = "running"
+    job["started_at"] = datetime.now(timezone.utc).isoformat()
+    job["log_lines"] = []
+
+    def _log(msg):
+        ts = datetime.now(timezone.utc).isoformat()
+        line = f"[{ts}] {msg}"
+        job["log_lines"].append(line)
+
+    try:
+        config = get_config()
+        storage = JsonlStorage(data_dir=str(DATA_DIR))
+        agent = ScoutAgent(config=config, storage=storage)
+        _log(f"ScoutAgent created, running with topic={topic}, mode={mode}, max_articles={max_articles}")
+        agent_result = agent.run(topic=topic, mode=mode, max_articles=max_articles)
+        if agent_result.success and agent_result.data:
+            job["result"] = _serialize_scout_result(agent_result.data)
+            job["status"] = "done"
+            _log(f"Scout completed successfully: {len(agent_result.data.groups)} groups")
+        else:
+            job["error"] = agent_result.error or "Scout returned no results"
+            job["status"] = "error"
+            _log(f"Scout failed: {job['error']}")
+    except Exception as e:
+        job["error"] = str(e)
+        job["status"] = "error"
+        _log(f"Scout exception: {e}")
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+@app.post("/api/engine/scout")
+async def engine_scout(request: Request):
+    """Run ScoutAgent with fresh search. Returns immediately with job_id.
+    Accepts both JSON body and query params."""
+    _ensure_engine_imports()
+
+    # Try JSON body first, then query params
+    try:
+        body = await request.json()
+        topic = body.get("topic", "")
+        mode = body.get("mode", "fresh")
+        max_articles = body.get("max_articles", 10)
+    except Exception:
+        topic = request.query_params.get("topic", "")
+        mode = request.query_params.get("mode", "fresh")
+        try:
+            max_articles = int(request.query_params.get("max_articles", "10"))
+        except (ValueError, TypeError):
+            max_articles = 10
+
+    if not topic or not topic.strip():
+        raise HTTPException(status_code=422, detail="topic is required")
+
+    job_id = uuid.uuid4().hex[:12]
+
+    _engine_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "pending",
+        "started_at": None,
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "log_lines": [],
+        "params": {"topic": topic.strip(), "mode": mode, "max_articles": max_articles},
+    }
+
+    thread = threading.Thread(
+        target=_run_scout_bg,
+        args=(job_id, topic.strip(), mode, max_articles),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/engine/jobs")
+async def engine_list_jobs():
+    """List all engine jobs."""
+    _ensure_engine_imports()
+    return {
+        "jobs": [
+            {
+                "job_id": jid,
+                "status": j["status"],
+                "started_at": j.get("started_at"),
+                "finished_at": j.get("finished_at"),
+                "params": j.get("params", {}),
+            }
+            for jid, j in _engine_jobs.items()
+        ],
+        "total": len(_engine_jobs),
+    }
+
+
+@app.get("/api/engine/jobs/{job_id}")
+async def engine_get_job(job_id: str):
+    """Get engine job status + results."""
+    _ensure_engine_imports()
+    if job_id not in _engine_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    job = _engine_jobs[job_id]
+    resp = {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "params": job.get("params", {}),
+        "log_lines": job.get("log_lines", []),
+    }
+    if job["result"]:
+        resp["scout_result"] = job["result"]
+    if job["error"]:
+        resp["error"] = job["error"]
+    return resp
+
+
+@app.delete("/api/engine/jobs/{job_id}")
+async def engine_cancel_job(job_id: str):
+    """Cancel a running job."""
+    _ensure_engine_imports()
+    if job_id not in _engine_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    job = _engine_jobs[job_id]
+    if job["status"] in ("done", "error", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Job already {job['status']}")
+    job["status"] = "cancelled"
+    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(timezone.utc).isoformat()
+    job["log_lines"].append(f"[{ts}] Job cancelled by user")
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/api/engine/jobs/{job_id}/logs")
+async def engine_job_logs_stream(job_id: str):
+    """SSE stream of job log lines (real-time)."""
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    _ensure_engine_imports()
+    if job_id not in _engine_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    async def event_generator():
+        last_idx = 0
+        while True:
+            job = _engine_jobs.get(job_id)
+            if not job:
+                yield f"data: {{'done':true}}\n\n"
+                break
+            lines = job.get("log_lines", [])
+            # Send new lines since last check
+            while last_idx < len(lines):
+                import json as _j
+                line = lines[last_idx]
+                yield f"data: {_j.dumps({'line': line})}\n\n"
+                last_idx += 1
+            # Check if job is terminal
+            if job["status"] in ("done", "error", "cancelled"):
+                yield f"data: {{'done':true,'status':'{job['status']}'}}\n\n"
+                break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/engine/status")
+async def engine_status():
+    """Engine health + storage stats."""
+    _ensure_engine_imports()
+    try:
+        config = get_config()
+        engine_ok = True
+        engine_error = None
+    except Exception as e:
+        engine_ok = False
+        engine_error = str(e)
+        config = None
+
+    # Storage stats
+    storage_stats = {}
+    try:
+        storage = JsonlStorage(data_dir=str(DATA_DIR))
+        all_articles = storage.load_all_articles()
+        storage_stats = {
+            "article_count": len(all_articles),
+            "storage_path": str(DATA_DIR),
+            "storage_exists": DATA_DIR.exists(),
+        }
+    except Exception as e:
+        storage_stats = {"error": str(e), "storage_path": str(DATA_DIR)}
+
+    return {
+        "engine": {
+            "ok": engine_ok,
+            "error": engine_error,
+            "config_loaded": config is not None,
+        },
+        "storage": storage_stats,
+        "jobs": {
+            "active": sum(1 for j in _engine_jobs.values() if j["status"] == "running"),
+            "total": len(_engine_jobs),
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# ORCHESTRATOR ENDPOINTS — Full pipeline (Scout→Reader→Writer)
+# Uses engine/orchestrator.py for state machine + disk persistence
+# ═══════════════════════════════════════════════════════════
+
+_orchestrator = None  # lazy init
+
+
+def _get_orch():
+    """Get or create Orchestrator instance."""
+    global _orchestrator
+    if _orchestrator is None:
+        _ensure_engine_imports()
+        from engine.orchestrator import Orchestrator
+        jobs_dir = str(DATA_DIR / "jobs")
+        output_dir = str(DATA_DIR / "output")
+        _orchestrator = Orchestrator(jobs_dir=jobs_dir, output_dir=output_dir)
+    return _orchestrator
+
+
+def _job_state_to_dict(state) -> dict:
+    """Convert JobState to JSON-serializable dict for API."""
+    d = state.to_dict() if hasattr(state, 'to_dict') else {}
+    # Ensure all values are JSON-serializable
+    return json.loads(json.dumps(d, default=str))
+
+
+@app.post("/api/orchestrator/job")
+async def orch_create_job(request: Request):
+    """Create a new pipeline job and start Scout phase.
+    Body: {"topic": str, "pipeline": "full"|"scout_only", "user_comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    topic = body.get("topic", "").strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="topic is required")
+
+    pipeline = body.get("pipeline", "full")
+    user_comment = body.get("user_comment", "")
+
+    orch = _get_orch()
+    state = orch.create_job(topic=topic, pipeline=pipeline, user_comment=user_comment)
+    orch.start_job(state.job_id)
+
+    return {
+        "job_id": state.job_id,
+        "status": state.status.value if hasattr(state.status, 'value') else str(state.status),
+        "topic": topic,
+        "message": f"Pipeline запущен: {state.job_id}",
+    }
+
+
+@app.get("/api/orchestrator/jobs")
+async def orch_list_jobs():
+    """List all orchestrator jobs (from disk — persistent)."""
+    _ensure_engine_imports()
+    try:
+        orch = _get_orch()
+        jobs = orch.list_jobs()
+        return {
+            "jobs": [_job_state_to_dict(j) for j in jobs],
+            "total": len(jobs),
+        }
+    except Exception as e:
+        return {"jobs": [], "total": 0, "error": str(e)}
+
+
+@app.get("/api/orchestrator/jobs/{job_id}")
+async def orch_get_job(job_id: str):
+    """Get full job state including results at each stage."""
+    _ensure_engine_imports()
+    try:
+        orch = _get_orch()
+        state = orch.load_state(job_id)
+        return _job_state_to_dict(state)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
+async def orch_approve_group(job_id: str, request: Request):
+    """Approve Scout result → start Reader phase.
+    Body: {"group_index": int, "comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    except Exception:
+        body = {}
+
+    group_index = body.get("group_index", 0)
+    comment = body.get("comment", "")
+
+    orch = _get_orch()
+    state = orch.approve_group(job_id, group_index=int(group_index), comment=str(comment))
+    return _job_state_to_dict(state)
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
+async def orch_approve_draft(job_id: str, request: Request):
+    """Approve Reader draft → start Writer phase.
+    Body: {"comment": ""}
+    """
+    _ensure_engine_imports()
+    try:
+        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
+    except Exception:
+        body = {}
+
+    comment = body.get("comment", "")
+    orch = _get_orch()
+    state = orch.approve_draft(job_id, comment=str(comment))
+    return _job_state_to_dict(state)
+
+
+@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
+async def orch_skip_review(job_id: str):
+    """Skip review → mark job as complete."""
+    _ensure_engine_imports()
+    orch = _get_orch()
+    state = orch.skip_review(job_id)
+    return _job_state_to_dict(state)
+
+
+@app.delete("/api/orchestrator/jobs/{job_id}")
+async def orch_cancel_job(job_id: str):
+    """Cancel a running pipeline job."""
+    _ensure_engine_imports()
+    orch = _get_orch()
+    try:
+        state = orch.cancel_job(job_id)
+        return _job_state_to_dict(state)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
 
 if __name__ == "__main__":
