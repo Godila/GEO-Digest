@@ -170,7 +170,11 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
     def _parse_classification(
         self, raw: dict | list | str, original_articles: list[Article]
     ) -> list[ArticleGroup]:
-        """Parsim LLM-otvet v spisok ArticleGroup."""
+        """Parsim LLM-otvet v spisok ArticleGroup.
+        Podderzhivayem 2 formata ot LLM:
+        1) { "articles": [{ doi, group_type, confidence }] } -- flatspisk
+        2) { "groups": [{ group_id, articles: [...], confidence }] } -- gruppy
+        """
         import json as _json
         import re as _re
 
@@ -212,14 +216,20 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                             except (_json.JSONDecodeError, ValueError):
                                 continue
 
-        if isinstance(parsed, dict):
-            items = parsed.get("articles", [])
-        elif isinstance(parsed, list):
-            items = parsed
-        else:
+        if not isinstance(parsed, (dict, list)):
             self._log(f"Neponyatnyy format: {type(parsed)}")
             self._log(f"Raw response (first 500 chars): {str(raw)[:500]}")
-            return groups
+            return self._fallback_groups(original_articles)
+
+        # ── Format 1: { "groups": [...] } ──
+        if isinstance(parsed, dict) and "groups" in parsed:
+            return self._parse_group_format(parsed.get("groups", []), original_articles)
+
+        # ── Format 2: { "articles": [...] } (original flat format) ──
+        items = parsed.get("articles", []) if isinstance(parsed, dict) else parsed
+        if not items:
+            self._log(f"Pustoy otvet ot LLM, ispol'zuyu fallback")
+            return self._fallback_groups(original_articles)
 
         doi_map = {a.doi: a for a in original_articles if a.doi}
 
@@ -238,9 +248,6 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
             except KeyError:
                 group_type = GroupType.REVIEW
 
-            # Note: data_requirements & infrastructure_needs are available from LLM
-            # but ArticleGroup schema doesn't store them. If needed later,
-            # extend ArticleGroup or attach as metadata dict.
             source_article = doi_map.get(doi)
             groups.append(ArticleGroup(
                 group_id=f"group_{len(groups):03d}",
@@ -248,19 +255,64 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 articles=[source_article] if source_article else [],
                 confidence=confidence,
                 rationale=rationale,
-                keywords=tags,  # LLM returns 'tags', schema uses 'keywords'
+                keywords=tags,
             ))
 
-        if not groups and original_articles:
-            groups.append(ArticleGroup(
-                group_id="group_000",
-                group_type=GroupType.REVIEW,
-                articles=original_articles[:10],
-                confidence=0.3,
-                rationale="Default group (LLM did not classify)",
-                keywords=["unclassified"],
-            ))
+        if not groups:
+            return self._fallback_groups(original_articles)
         return groups
+
+    def _parse_group_format(self, groups_data, original_articles):
+        """Parse LLM response with { groups: [...] } structure."""
+        groups = []
+        doi_map = {a.doi: a for a in original_articles if a.doi}
+
+        for gdata in groups_data:
+            if not isinstance(gdata, dict):
+                continue
+            g_articles = []
+            for adata in gdata.get("articles", []):
+                if isinstance(adata, dict):
+                    doi = adata.get("doi", "")
+                    art = doi_map.get(doi)
+                    if art:
+                        g_articles.append(art)
+            groups.append(ArticleGroup(
+                group_id=gdata.get("group_id", f"group_{len(groups):03d}"),
+                group_type=gdata.get("group_type", "review"),
+                title_suggestion=gdata.get("title_suggestion", ""),
+                confidence=float(gdata.get("confidence", 0.5)),
+                articles=g_articles,
+                rationale=gdata.get("rationale", ""),
+                keywords=gdata.get("keywords", gdata.get("tags", [])),
+            ))
+
+        # If LLM returned groups but no articles matched by DOI,
+        # distribute original articles across groups
+        total_arts = sum(len(g.articles) for g in groups)
+        if total_arts == 0 and original_articles:
+            self._log(f"LLM vernul gruppy bez statey, raspredelyayu {len(original_articles)} statey")
+            for i, art in enumerate(original_articles):
+                target_group = groups[i % len(groups)] if groups else None
+                if target_group:
+                    target_group.articles.append(art)
+
+        if not groups:
+            return self._fallback_groups(original_articles)
+        return groups
+
+    def _fallback_groups(self, original_articles):
+        """Create default group when LLM parsing fails."""
+        if not original_articles:
+            return []
+        return [ArticleGroup(
+            group_id="group_000",
+            group_type=GroupType.REVIEW,
+            articles=original_articles[:10],
+            confidence=0.3,
+            rationale="Default group (LLM did not classify)",
+            keywords=["unclassified"],
+        )]
 
     def estimate_cost(self, topic: str, max_articles: int = 20) -> dict:
         """Otsenit' stoimost' (tokeny)."""

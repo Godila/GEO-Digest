@@ -146,7 +146,10 @@ class Orchestrator:
         def target():
             try:
                 agent = self._get_agent("scout")
-                result, elapsed = self._timeit(agent.run, topic=state.input_topic)
+                # Always use 'mixed' mode: search fresh + fallback to storage
+                # max_articles=10 to avoid MiniMax timeout on large prompts
+                result, elapsed = self._timeit(agent.run, topic=state.input_topic,
+                                                mode="mixed", max_articles=10)
                 state.set_result("scout", result.data)
                 if result.success:
                     state.status = JobStatus.SCOUT_DONE

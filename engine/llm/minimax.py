@@ -10,7 +10,7 @@ class MiniMaxProvider(LLMProvider):
     DEFAULT_MODEL = "MiniMax-M2.7"
 
     def __init__(self, api_key: str = "", base_url: str = "", model: str = "",
-                 disable_thinking=True, timeout=120, retries=3, **kwargs):
+                 disable_thinking=True, timeout=180, retries=3, **kwargs):
         super().__init__(model or self.DEFAULT_MODEL, **kwargs)
         self.api_key = api_key
         self.base_url = base_url or self.DEFAULT_BASE_URL
