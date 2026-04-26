@@ -1354,6 +1354,215 @@ async def orch_cancel_job(job_id: str):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
 
+# ══════════════════════════════════════════════════════════════════
+#  EDITOR AGENT ENDPOINTS (Tool-Use Architecture)
+# ══════════════════════════════════════════════════════════════════
+
+_editor_jobs: dict[str, dict] = {}  # in-memory cache (checkpoints on disk)
+
+
+def _get_editor() -> "EditorAgent":
+    """Create and return an EditorAgent instance."""
+    _ensure_engine_imports()
+    from engine.agents.editor import EditorAgent
+    from engine.storage.base import JsonlStorage
+    storage = JsonlStorage(data_dir=str(DATA_DIR))
+    from engine.llm.minimax import MiniMaxProvider
+    from engine.config import get_config
+    cfg = get_config()
+    llm = MiniMaxProvider(
+        api_key=cfg.llm_api_key,
+        model=cfg.llm_model,
+        base_url=cfg.llm_base_url,
+    )
+    return EditorAgent(storage=storage, llm=llm, jobs_dir=DATA_DIR / "jobs")
+
+
+@app.post("/api/editor/analyze")
+async def editor_analyze(request: Request):
+    """
+    Запуск Editor Agent: анализ темы + генерация предложений.
+
+    Body:
+      topic (str): Тема для анализа
+      domain (str, optional): Более широкий домен
+      user_instruction (str, optional): Дополнительная инструкция
+      max_proposals (int, default 5): Максимум предложений
+    """
+    _ensure_engine_imports()
+    body = await request.json()
+
+    topic = body.get("topic", "")
+    domain = body.get("domain")
+    instruction = body.get("user_instruction")
+    max_proposals = body.get("max_proposals", 5)
+
+    if not topic and not domain:
+        raise HTTPException(400, "topic or domain required")
+
+    try:
+        editor = _get_editor()
+
+        # Run in background thread with timeout
+        result_container = {"result": None, "error": None}
+
+        def target():
+            try:
+                result_container["result"] = editor.run(
+                    topic=topic,
+                    domain=domain,
+                    user_instruction=instruction,
+                    max_proposals=max_proposals,
+                ).to_dict()
+            except Exception as e:
+                result_container["error"] = str(e)
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        thread.join(timeout=300)  # 5 минут timeout
+
+        if thread.is_alive():
+            raise HTTPException(504, "Editor analysis timeout (>5 min)")
+
+        if result_container["error"]:
+            raise HTTPException(500, result_container["error"])
+
+        result = result_container["result"]
+        _editor_jobs[result["job_id"]] = result
+
+        return {
+            "job_id": result["job_id"],
+            "status": result["status"],
+            "proposals_count": len(result.get("proposals", [])),
+            "duration_sec": result.get("duration_sec"),
+            "message": f"Analysis complete: {len(result.get('proposals', []))} proposals",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/editor/jobs")
+async def editor_list_jobs():
+    """Список всех editor jobs (с диска)."""
+    jobs_dir = DATA_DIR / "jobs"
+    jobs = []
+    if jobs_dir.exists():
+        for f in sorted(jobs_dir.glob("*.json"), reverse=True):
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                # Фильтруем только editor jobs (имеют proposals или analysis поле)
+                if "proposals" in data or "analysis" in data:
+                    jobs.append({
+                        "job_id": data.get("job_id", f.stem),
+                        "topic": data.get("topic", ""),
+                        "phase": data.get("phase", "unknown"),
+                        "proposals_count": len(data.get("proposals") or []),
+                        "status": data.get("phase", "unknown"),
+                        "started_at": data.get("started_at", ""),
+                        "updated_at": data.get("updated_at", ""),
+                    })
+            except (json.JSONDecodeError, KeyError):
+                continue
+    return {"jobs": jobs, "total": len(jobs)}
+
+
+@app.get("/api/editor/jobs/{job_id}")
+async def editor_get_job(job_id: str):
+    """Детали editor job с proposals и анализом."""
+    job_path = DATA_DIR / "jobs" / f"{job_id}.json"
+    if not job_path.exists():
+        raise HTTPException(404, f"Job {job_id} not found")
+
+    with open(job_path) as f:
+        data = json.load(f)
+    return data
+
+
+@app.post("/api/editor/jobs/{job_id}/resume")
+async def editor_resume_job(job_id: str):
+    """Возобновить/перезапустить анализ из checkpoint'а."""
+    _ensure_engine_imports()
+    try:
+        editor = _get_editor()
+        result = editor.resume(job_id)
+        return result.to_dict()
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/editor/jobs/{job_id}/select/{prop_id}")
+async def editor_select_proposal(job_id: str, prop_id: str):
+    """Выбрать предложение для дальнейшей разработки."""
+    job_path = DATA_DIR / "jobs" / f"{job_id}.json"
+    if not job_path.exists():
+        raise HTTPException(404, f"Job {job_id} not found")
+
+    with open(job_path) as f:
+        data = json.load(f)
+
+    proposals = data.get("proposals", [])
+    found = False
+    for p in proposals:
+        if p.get("id") == prop_id:
+            p["status"] = "selected"
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(404, f"Proposal {prop_id} not found")
+
+    data["selected_proposal_id"] = prop_id
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    with open(job_path, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+    return {"status": "selected", "proposal_id": prop_id}
+
+
+@app.delete("/api/editor/jobs/{job_id}")
+async def editor_delete_job(job_id: str):
+    """Удалить editor job."""
+    job_path = DATA_DIR / "jobs" / f"{job_id}.json"
+    if job_path.exists():
+        job_path.unlink()
+    if job_id in _editor_jobs:
+        del _editor_jobs[job_id]
+    return {"deleted": True, "job_id": job_id}
+
+
+@app.get("/api/editor/jobs/{job_id}/logs")
+async def editor_job_logs(job_id: str):
+    """SSE stream логов editor job."""
+    from fastapi.responses import StreamingResponse
+
+    job_path = DATA_DIR / "jobs" / f"{job_id}.json"
+    if not job_path.exists():
+        raise HTTPException(404, "Job not found")
+
+    async def generate():
+        with open(job_path) as f:
+            data = json.load(f)
+
+        yield f"data: {json.dumps({'type': 'status', 'phase': data.get('phase')})}\n\n"
+
+        if data.get("analysis"):
+            yield f"data: {json.dumps({'type': 'analysis', 'clusters': len(data['analysis'].get('clusters', []))})}\n\n"
+
+        if data.get("proposals"):
+            yield f"data: {json.dumps({'type': 'proposals', 'count': len(data['proposals'])})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=3001)

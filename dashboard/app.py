@@ -518,6 +518,65 @@ async def api_orch_cancel_job(job_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  EDITOR AGENT PROXY (Tool-Use Architecture)
+# ══════════════════════════════════════════════════════════════════
+
+@app.post("/api/editor/analyze")
+async def api_editor_analyze(request: Request):
+    """Запуск Editor Agent -> proxy to worker."""
+    body = await request.json()
+    return _worker_post("/api/editor/analyze", json_body=body, timeout=320)
+
+
+@app.get("/api/editor/jobs")
+async def api_editor_list_jobs():
+    """Список editor jobs -> proxy to worker."""
+    return _worker_get("/api/editor/jobs")
+
+
+@app.get("/api/editor/jobs/{job_id}")
+async def api_editor_get_job(job_id: str):
+    """Детали editor job -> proxy to worker."""
+    return _worker_get(f"/api/editor/jobs/{job_id}")
+
+
+@app.post("/api/editor/jobs/{job_id}/resume")
+async def api_editor_resume_job(job_id: str):
+    """Возобновить editor job -> proxy to worker."""
+    return _worker_post(f"/api/editor/jobs/{job_id}/resume", timeout=60)
+
+
+@app.post("/api/editor/jobs/{job_id}/select/{prop_id}")
+async def api_editor_select_proposal(job_id: str, prop_id: str):
+    """Выбрать proposal -> proxy to worker."""
+    return _worker_post(f"/api/editor/jobs/{job_id}/select/{prop_id}", timeout=15)
+
+
+@app.delete("/api/editor/jobs/{job_id}")
+async def api_editor_delete_job(job_id: str):
+    """Удалить editor job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/editor/jobs/{job_id}")
+
+
+@app.get("/api/editor/jobs/{job_id}/logs")
+async def api_editor_logs(job_id: str):
+    """SSE логи editor job -> proxy to worker (streaming)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{WORKER_URL}/api/editor/jobs/{job_id}/logs",
+            headers={"Accept": "text/event-stream"},
+        )
+        from fastapi.responses import StreamingResponse, Response
+        return StreamingResponse(
+            iter([resp.content]),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
 #  PAGE ROUTE
 # ══════════════════════════════════════════════════════════════════
 
