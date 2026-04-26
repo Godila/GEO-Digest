@@ -202,6 +202,7 @@
         .score-high { background: rgba(63,185,80,.15); color: var(--green); }
         .score-mid { background: rgba(210,153,34,.15); color: var(--orange); }
         .score-low { background: rgba(139,148,158,.15); color: var(--text-muted); }
+        .score-fallback { font-style: italic; opacity: 0.75; }  /* ~ = auto-score, not LLM */
 
         .card-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
         .card-meta span { display: flex; align-items: center; gap: 3px; }
@@ -1364,7 +1365,20 @@ function renderArticles(articles) {
     el.innerHTML = articles.map((a, i) => {
         const scores = a.scores || {};
         // [FIX A] Используем взвешенный total (0-1), конвертируем в шкалу 0-5
-        const total = scores.total_5 || (scores.total * 5) || 0;
+        const hasLlmScore = Object.keys(scores).length > 0;
+        let total = 0;
+        if (hasLlmScore) {
+            total = scores.total_5 || (scores.total * 5) || 0;
+        } else {
+            // Fallback: score from citations + recency (not LLM)
+            const cites = a.citations || 0;
+            const year = a.year || 2020;
+            const age = Math.max(0, 2026 - year);
+            const citeScore = Math.min(5, cites > 0 ? Math.sqrt(cites / 100) : 0.1);
+            const recency = Math.max(0, 1.0 - age * 0.15);
+            total = Math.round((citeScore * 1.5 + recency) * 100) / 100;
+        }
+        const isFallback = !hasLlmScore;
         const scoreCls = total > 3.5 ? 'score-high' : total > 2.0 ? 'score-mid' : 'score-low';
         // Русский заголовок с обрезкой (максимум 80 символов)
         const rawTitle = a.title_ru || a.title || 'Без названия';
@@ -1394,7 +1408,7 @@ function renderArticles(articles) {
         return `<div class="article-card" onclick="openArticleModal(${i})" data-id="${i}">
             <div class="card-header">
                 <div class="card-title">${esc(displayTitle)}</div>
-                <div class="card-score ${scoreCls}">${total.toFixed(1)}</div>
+                <div class="card-score ${scoreCls}${isFallback ? ' score-fallback' : ''}">${isFallback ? '~' : ''}${total.toFixed(1)}</div>
                 ${isNew ? '<span class="tag tag-new">НОВЫЙ</span>' : ''}
             </div>
             <div class="card-meta">
@@ -1696,10 +1710,11 @@ async function initGraph() {
         const d = evt.target.data();
         if (d.type === 'article' && d.label_en) {
             const roleBadge = d.is_hub ? ' 🔮 hub' : (d.is_bridge ? ' 🌉 bridge' : '');
+            const fbBadge = d.is_fallback ? ' ⚡ авто' : '';
             const prInfo = d.page_rank ? ` · PR: ${d.page_rank.toFixed(3)}` : '';
             const tt = document.getElementById('tooltip');
             tt.innerHTML = `<div class="tt-rel" style="color:var(--cyan)">${esc(d.label_en)}</div>`
-                + `<div class="tt-desc">${esc(d.topic_ru || '')} · ${d.year || ''} · ${(d.citations||0)} цит.${roleBadge}${prInfo}</div>`;
+                + `<div class="tt-desc">${esc(d.topic_ru || '')} · ${d.year || ''} · ${(d.citations||0)} цит.${roleBadge}${fbBadge}${prInfo}</div>`;
             tt.style.display = 'block';
         }
     });
@@ -1808,8 +1823,20 @@ function openArticleModal(idx) {
     if(card) card.classList.add('selected');
 
     const scores = a.scores || {};
+    const hasLlmScore = Object.keys(scores).length > 0;
     // [FIX A] Правильный взвешенный итог на шкале 0-5
-    const total = scores.total_5 || (scores.total * 5) || 0;
+    let total = 0;
+    if (hasLlmScore) {
+        total = scores.total_5 || (scores.total * 5) || 0;
+    } else {
+        const cites = a.citations || 0;
+        const year = a.year || 2020;
+        const age = Math.max(0, 2026 - year);
+        const citeScore = Math.min(5, cites > 0 ? Math.sqrt(cites / 100) : 0.1);
+        const recency = Math.max(0, 1.0 - age * 0.15);
+        total = Math.round((citeScore * 1.5 + recency) * 100) / 100;
+    }
+    const isFallback = !hasLlmScore;
     const typeColor = TYPE_COLORS[a.article_type] || TYPE_COLORS.unknown;
 
     // Parse LLM summary into sections
@@ -1905,7 +1932,7 @@ function openArticleModal(idx) {
 
                 <!-- Score breakdown -->
                 <div class="modal-section">
-                    <div class="modal-label">⭐ Разбор оценки (итог: ${total.toFixed(1)}/5)</div>
+                    <div class="modal-label">⭐ ${isFallback ? 'Авто-оценка' : 'Разбор оценки'} (итог: ${isFallback ? '~' : ''}${total.toFixed(1)}/5)${isFallback ? ' <span style="font-size:11px;color:var(--text-muted)">по цитированиям, не LLM</span>' : ''}</div>
                     <div class="score-explain">
                         ${Object.entries(scores).filter(([k]) => k !== 'total' && k !== 'total_5').map(([k,v]) => {
                             const pct = Math.min(100, v * 100);  // 0-1 → 0-100%

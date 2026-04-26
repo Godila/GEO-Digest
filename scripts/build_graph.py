@@ -101,6 +101,19 @@ def build_metadata_nodes(articles: list[dict]) -> tuple[list[dict], list[dict]]:
         doi = art.get("doi", f"unknown_{i}")
         scores = art.get("scores", {})
         total_score = sum(scores.values()) if scores else 0
+
+        # Fallback score for articles that skipped LLM enrichment
+        # Uses citation count + recency as proxy for importance
+        is_fallback = total_score == 0
+        if is_fallback:
+            cites = art.get("citations", 0)
+            year = art.get("year") or 2020
+            age = max(0, 2026 - year)
+            # Citation factor: log scale, capped at 5 points
+            cite_score = min(5, (cites / 100) ** 0.5 if cites > 0 else 0.1)
+            # Recency bonus: newer = higher, -0.2 per year
+            recency = max(0, 1.0 - age * 0.15)
+            total_score = round(cite_score * 1.5 + recency, 2)
         
         # Article node — русская метка для графа
         topic_ru = art.get("_topic_name_ru", "")
@@ -128,6 +141,7 @@ def build_metadata_nodes(articles: list[dict]) -> tuple[list[dict], list[dict]]:
                 "is_oa": art.get("is_oa", False),
                 "oa_url": art.get("oa_url", "") or "",
                 "total_score": round(total_score, 2),
+                "is_fallback": is_fallback,  # True = score from citations, not LLM
                 "score_transferability": round(scores.get("transferability", 0), 2),
                 "score_geographic": round(scores.get("geographic_analogy", 0), 2),
                 "score_thematic": round(scores.get("thematic_relevance", 0), 2),
