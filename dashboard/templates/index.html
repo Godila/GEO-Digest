@@ -1309,7 +1309,7 @@ async function loadArticles() {
         topic: document.getElementById('fTopic').value,
         article_type: document.getElementById('fType').value,
         source: document.getElementById('fSource').value,
-        limit: '50',
+        limit: '9999',
     });
 
     try {
@@ -2908,271 +2908,9 @@ async function showAgentJobDetail(jobId) {
 // PIPELINE (ORCHESTRATOR) FUNCTIONS
 // ═══════════════════════════════════════════════════
 
-const PIPE_STEPS = [
-    { key: 'scout', name: 'Scout', icon: '🔍' },
-    { key: 'read', name: 'Reader', icon: '📖' },
-    { key: 'write', name: 'Writer', icon: '✍️' },
-    { key: 'review', name: 'Review', icon: '👀' },
-    { key: 'done', name: 'Готово', icon: '✅' },
-];
-
-let currentPipeJobId = null;
-let pipePoller = null;
-
-/** Map orchestrator status string to step index */
-function _pipeStatusToStep(status) {
-    const s = (status || '').toLowerCase().replace('_', '');
-    if (s.includes('created') || s.includes('scouting')) return 0;
-    if (s.includes('scout_done')) return 1; // waiting for approve
-    if (s.includes('reading') || s.includes('read_done')) return 2;
-    if (s.includes('writing') || s.includes('write_done')) return 3;
-    if (s.includes('complete')) return 4;
-    if (s.includes('failed') || s.includes('cancelled')) return -1;
-    return 0;
-}
-
-/** Run full pipeline via Orchestrator */
-async function runPipeline() {
-    const topic = document.getElementById('pipeTopic').value.trim();
-    if (!topic) { alert('Введите тему'); return; }
-    const comment = document.getElementById('pipeComment').value.trim();
-
-    document.getElementById('runPipeBtn').disabled = true;
-    document.getElementById('stopPipeBtn').style.display = '';
-    document.getElementById('pipelineStageContent').style.display = 'none';
-
-    try {
-        const result = await api('/orchestrator/job', 'POST', { topic, pipeline: 'full', user_comment: comment });
-        currentPipeJobId = result.job_id;
-        renderPipelineSteps({ status: result.status || 'SCOUTING', job_id: result.job_id });
-        startPipePolling(result.job_id);
-    } catch(e) {
-        alert('Ошибка запуска пайплайна: ' + e.message);
-        document.getElementById('runPipeBtn').disabled = false;
-        document.getElementById('stopPipeBtn').style.display = 'none';
-    }
-}
-
-/** Render pipeline steps visualization */
-function renderPipelineSteps(job) {
-    const status = job.status || '';
-    const activeIdx = Math.max(0, _pipeStatusToStep(status));
-    const isFailed = status.toLowerCase().includes('fail') || status.toLowerCase().includes('cancel');
-    const isDone = status.toLowerCase().includes('complete');
-
-    let html = '';
-    PIPE_STEPS.forEach((step, i) => {
-        let cls = 'waiting';
-        if (i < activeIdx) cls = 'done';
-        else if (i === activeIdx) cls = isFailed ? 'error' : (isDone ? 'done' : 'active');
-        else cls = 'waiting';
-
-        // Action buttons based on stage
-        let actionBtn = '';
-        if (i === 1 && cls === 'active') { // scout_done → need approve
-            actionBtn = `<button class="pipe-action-btn primary" onclick="showApproveGroup('${job.job_id}')">Выбрать группу</button>`;
-        } else if (i === 2 && cls === 'active') { // read_done → need approve
-            actionBtn = `<button class="pipe-action-btn primary" onclick="approveDraft('${job.job_id}')">Одобрить черновик</button>`;
-        } else if (i === 3 && cls === 'active') { // write_done → review or skip
-            actionBtn = `
-                <button class="pipe-action-btn success" onclick="skipReview('${job.job_id}')">Пропустить</button>
-                <button class="pipe-action-btn warn" style="margin-left:4px" onclick="requestRevision('${job.job_id}')">На доработку</button>`;
-        }
-
-        html += `<div class="pipe-step ${cls}">
-            <span style="font-size:18px">${step.icon}</span>
-            <span class="pipe-step-name">${step.name}</span>
-            <span class="pipe-step-status">${_pipeStatusLabel(status, i)}</span>
-            ${actionBtn}
-        </div>`;
-        if (i < PIPE_STEPS.length - 1) {
-            html += `<div class="pipe-arrow">${i < activeIdx ? '✓' : '→'}</div>`;
-        }
-    });
-
-    document.getElementById('pipelineSteps').innerHTML = html;
-}
-
-function _pipeStatusLabel(status, stepIdx) {
-    const s = (status || '').toLowerCase();
-    if (s.includes('scouting')) return stepIdx === 0 ? 'Поиск...' : 'Ожидание';
-    if (s.includes('scout_done')) return stepIdx <= 1 ? 'Готово' : 'Ожидание';
-    if (s.includes('reading')) return stepIdx === 2 ? 'Чтение...' : 'Ожидание';
-    if (s.includes('read_done')) return stepIdx <= 2 ? 'Готово' : 'Ожидание';
-    if (s.includes('writing')) return stepIdx === 3 ? 'Письмо...' : 'Ожидание';
-    if (s.includes('write_done')) return stepIdx <= 3 ? 'Готово' : 'Ожидание';
-    if (s.includes('complete')) return 'Завершён';
-    if (s.includes('failed')) return 'Ошибка';
-    if (s.includes('cancelled')) return 'Отменён';
-    return '—';
-}
-
-/** Poll pipeline job status */
-function startPipePolling(jobId) {
-    if (pipePoller) clearInterval(pipePoller);
-
-    pipePoller = setInterval(async () => {
-        try {
-            const job = await api(`/orchestrator/jobs/${jobId}`);
-            renderPipelineSteps(job);
-
-            const s = (job.status || '').toLowerCase();
-            if (s.includes('complete') || s.includes('failed') || s.includes('cancelled')) {
-                clearInterval(pipePoller);
-                pipePoller = null;
-                onPipeFinished(job);
-            }
-
-            // Show stage content when scout done
-            if (s.includes('scout_done') && !s.includes('reading')) {
-                showScoutGroupsForApproval(job);
-            } else if (s.includes('read_done') && !s.includes('writing')) {
-                showReaderDraftForApproval(job);
-            } else if (s.includes('write_done')) {
-                showWrittenArticle(job);
-            }
-        } catch(e) {
-            console.error('Pipe poll error:', e);
-        }
-    }, 3000);
-}
-
-/** Show scout groups with selection buttons */
-function showScoutGroupsForApproval(job) {
-    const el = document.getElementById('pipelineStageContent');
-    el.style.display = '';
-
-    const scoutResult = job.results && job.results.scout;
-    const groups = scoutResult && scoutResult.groups ? scoutResult.groups : [];
-
-    if (!groups.length) {
-        el.innerHTML = '<div class="empty-state-sm">Нет групп для выбора</div>';
-        return;
-    }
-
-    el.innerHTML = `
-        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📦 Выберите группу для анализа Reader-агентом:</div>
-        ${groups.map((g, i) => `
-            <div style="padding:10px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
-                <div>
-                    <b>${esc(g.group_type || '?')}</b>
-                    <span style="color:var(--text-muted);font-size:12px"> · ${(g.articles||[]).length} статей</span>
-                    ${g.keywords ? `<br><small>${(g.keywords||[]).slice(0,5).join(', ')}</small>` : ''}
-                </div>
-                <button class="pipe-action-btn primary" onclick="approveGroup('${job.job_id}', ${i})">Выбрать →</button>
-            </div>
-        `).join('')}
-    `;
-}
-
-/** Show reader draft with approve button */
-function showReaderDraftForApproval(job) {
-    const el = document.getElementById('pipelineStageContent');
-    el.style.display = '';
-
-    const draft = job.results && job.results.read;
-    if (!draft) {
-        el.innerHTML = '<div class="empty-state-sm">Нет данных от Reader</div>';
-        return;
-    }
-
-    el.innerHTML = `
-        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">📝 Черновик от Reader:</div>
-        <div style="background:var(--bg-card);border-radius:8px;padding:12px;border:1px solid var(--border)">
-            ${draft.title_suggestion ? `<b>${esc(draft.title_suggestion)}</b><br>` : ''}
-            ${draft.gap_identified ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Gap:</b> ${esc(draft.gap_identified)}</p>` : ''}
-            ${draft.proposed_contribution ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Contribution:</b> ${esc(draft.proposed_contribution)}</p>` : ''}
-            ${draft.methods_summary ? `<p style="margin:6px 0;color:var(--text-muted)"><b>Methods:</b> ${esc(draft.methods_summary)}</p>` : ''}
-            ${draft.confidence !== undefined ? `<small>Confidence: ${Math.round((draft.confidence||0)*100)}%</small>` : ''}
-        </div>
-        <div style="margin-top:10px;text-align:right">
-            <button class="pipe-action-btn success" onclick="approveDraft('${job.job_id}')">✓ Одобрить → Writer</button>
-        </div>
-    `;
-}
-
-/** Show written article */
-function showWrittenArticle(job) {
-    const el = document.getElementById('pipelineStageContent');
-    el.style.display = '';
-
-    const article = job.results && job.results.write;
-    if (!article) {
-        el.innerHTML = '<div class="empty-state-sm">Нет статьи</div>';
-        return;
-    }
-
-    el.innerHTML = `
-        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">✍️ Готовая статья:</div>
-        <div style="background:var(--bg-card);border-radius:8px;padding:14px;border:1px solid var(--border);max-height:400px;overflow-y:auto">
-            ${article.title ? `<h4 style="margin:0 0 8px">${esc(article.title)}</h4>` : ''}
-            ${article.text ? `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;margin:0;color:var(--text)">${esc(article.text.substring(0, 5000))}${article.text.length > 5000 ? '...(truncated)' : ''}</pre>` : ''}
-            ${article.word_count ? `<small style="color:var(--text-muted)">Слов: ${article.word_count}</small>` : ''}
-        </div>
-    `;
-}
-
-/** Approve scout group → start Reader */
-async function approveGroup(jobId, groupIndex) {
-    try {
-        await api(`/orchestrator/jobs/${jobId}/approve-group`, 'POST', { group_index: groupIndex });
-        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Reader запущен...</div>';
-    } catch(e) { alert('Ошибка: ' + e.message); }
-}
-
-/** Approve reader draft → start Writer */
-async function approveDraft(jobId) {
-    try {
-        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', {});
-        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Writer запущен...</div>';
-    } catch(e) { alert('Ошибка: ' + e.message); }
-}
-
-/** Skip review → complete */
-async function skipReview(jobId) {
-    try {
-        await api(`/orchestrator/jobs/${jobId}/skip-review`, 'POST');
-    } catch(e) { alert('Ошибка: ' + e.message); }
-}
-
-/** Request revision of written article */
-async function requestRevision(jobId) {
-    const comment = prompt('Укажите комментарий для доработки:');
-    if (comment === null) return;
-    try {
-        await api(`/orchestrator/jobs/${jobId}/approve-draft`, 'POST', { comment: 'revision: ' + comment });
-        document.getElementById('pipelineStageContent').innerHTML = '<div class="empty-state-sm">⏳ Переписывание...</div>';
-    } catch(e) { alert('Ошибка: ' + e.message); }
-}
-
-/** Stop pipeline */
-async function stopPipeline() {
-    if (!currentPipeJobId) return;
-    if (!confirm('Остановить пайплайн?')) return;
-    if (pipePoller) { clearInterval(pipePoller); pipePoller = null; }
-
-    try {
-        await api(`/orchestrator/jobs/${currentPipeJobId}`, 'DELETE');
-    } catch(e) { console.error('Stop error:', e); }
-
-    document.getElementById('runPipeBtn').disabled = false;
-    document.getElementById('stopPipeBtn').style.display = 'none';
-    currentPipeJobId = null;
-    loadOrchJobs();
-}
-
-/** Pipeline finished callback */
-function onPipeFinished(job) {
-    document.getElementById('runPipeBtn').disabled = false;
-    document.getElementById('stopPipeBtn').style.display = 'none';
-    loadOrchJobs(); loadAgentJobs(); loadEngineStatus();
-}
-
-/** Show approve group dialog (from step button) */
-async function showApproveGroup(jobId) {
-    // Just scroll to stage content which should already be showing groups
-    document.getElementById('pipelineStageContent').scrollIntoView({ behavior: 'smooth' });
-}
+// ════════════════════════════════════════════════
+//  ORCHESTRATOR JOBS (v2 — упрощённый, без legacy pipeline UI)
+// ════════════════════════════════════════════════
 
 /** Load orchestrator jobs list */
 async function loadOrchJobs() {
@@ -3211,22 +2949,47 @@ async function loadOrchJobs() {
 async function showOrchJobDetail(jobId) {
     try {
         const job = await api(`/orchestrator/jobs/${jobId}`);
-        currentPipeJobId = jobId;
-        renderPipelineSteps(job);
-
-        // Show appropriate content
         const s = (job.status || '').toLowerCase();
-        if (s.includes('scout_done')) showScoutGroupsForApproval(job);
-        else if (s.includes('read_done')) showReaderDraftForApproval(job);
-        else if (s.includes('write_done') || s.includes('complete')) showWrittenArticle(job);
-        else document.getElementById('pipelineStageContent').style.display = 'none';
+        const isRunning = s.includes('scouting') || s.includes('reading') || s.includes('writing') || s.includes('editing');
+        const isDone = s.includes('complete');
+        const isFailed = s.includes('failed') || s.includes('cancelled');
 
-        // Update stop button
-        const running = s.includes('scouting') || s.includes('reading') || s.includes('writing');
-        document.getElementById('stopPipeBtn').style.display = running ? '' : 'none';
+        // Simple status card — no legacy pipeline UI
+        const statusIcon = isDone ? '✅' : (isFailed ? '❌' : '⏳');
+        const statusLabel = isDone ? 'Завершён' : (isFailed ? 'Ошибка' : job.status || 'Неизвестно');
 
-        // Resume polling if still running
-        if (running && !pipePoller) startPipePolling(jobId);
+        let detailHtml = `
+            <div style="background:var(--bg-card);border-radius:10px;padding:16px;border:1px solid var(--border);margin-top:8px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                    <span style="font-weight:600;font-size:14px">${statusIcon} ${statusLabel}</span>
+                    <span style="font-size:11px;color:var(--text-muted)">${(job.updated_at || job.started_at || '').substring(0, 16)}</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted)">
+                    Топик: <b>${esc((job.topic || '').substring(0, 60))}</b>
+                </div>`;
+
+        // Show results if available
+        if (job.results) {
+            if (job.results.scout) detailHtml += `<div style="margin-top:8px;font-size:11px">🔍 Scout: ${(job.results.scout.articles_found || 0)} статей найдено</div>`;
+            if (job.results.read) detailHtml += `<div style="margin-top:4px;font-size:11px">📖 Reader: черновик готов</div>`;
+            if (job.results.write) detailHtml += `<div style="margin-top:4px;font-size:11px">✍️ Writer: статья написана (${(job.results.write.word_count || 0)} слов)</div>`;
+            if (job.results.editor) detailHtml += `<div style="margin-top:4px;font-size:11px">📝 Editor: ${(job.results.editor.proposals || []).length} proposals</div>`;
+        }
+
+        if (isRunning) {
+            detailHtml += `<div style="margin-top:10px"><button class="btn-warn btn-sm" onclick="api('/orchestrator/jobs/${jobId}','DELETE').then(()=>{loadOrchJobs();loadAgentJobs()})">⏹ Остановить</button></div>`;
+        }
+
+        detailHtml += '</div>';
+
+        // Show in the orch jobs section (after the list)
+        let container = document.getElementById('orchJobDetail');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'orchJobDetail';
+            document.getElementById('orchJobsList').parentNode.insertBefore(container, document.getElementById('orchJobsList').nextSibling);
+        }
+        container.innerHTML = detailHtml;
 
     } catch(e) { alert('Ошибка: ' + e.message); }
 }
