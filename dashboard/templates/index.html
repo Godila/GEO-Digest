@@ -3538,15 +3538,16 @@ function _renderGraphTabContent(proposal) {
     html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
     html += '<tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">DOI</th><th style="text-align:center;padding:4px">Роль</th><th style="text-align:right;padding:4px">PageRank</th><th style="text-align:right;padding:4px">Betweenness</th><th style="text-align:center;padding:4px">Граф</th></tr>';
 
-    gc.forEach(r => {
-        const roleClass = r.role || 'peripheral';
-        const roleIcon = { hub: '🔮', bridge: '🌉', peripheral: '📍' }[roleClass] || '📍';
-        html += `<tr class="graph-ref-row">
+        gc.forEach(r => {
+            const roleClass = r.role || 'peripheral';
+            const roleIcon = { hub: '🔮', bridge: '🌉', peripheral: '📍' }[roleClass] || '📍';
+            const safeDoi = (r.doi || '').replace(/'/g, "\\'");
+            html += `<tr class="graph-ref-row">
             <td><code style="font-size:10px">${escapeHtml((r.doi || '').substring(0, 20))}...</code></td>
             <td style="text-align:center"><span class="graph-badge gb-${roleClass}">${roleIcon} ${r.role || '?'}</span></td>
             <td style="text-align:right"><span class="graph-metric">${(r.page_rank || 0).toFixed(3)}</span></td>
             <td style="text-align:right"><span class="graph-metric">${(r.betweenness || 0).toFixed(3)}</span></td>
-            <td style="text-align:center"><button class="btn-graph-focus" onclick="focusNodeInGraph('${r.doi || '')')" title="Показать на графе">🎯</button></td>
+            <td style="text-align:center"><button class="btn-graph-focus" onclick="focusNodeInGraph('${safeDoi}')" title="Показать на графе">🎯</button></td>
         </tr>`;
     });
     html += '</table>';
