@@ -778,7 +778,74 @@
         .scout-sum-item { display: flex; align-items: center; gap: 6px; }
         .scout-sum-val { font-weight: 700; color: var(--accent); font-size: 15px; }
         .scout-sum-label { color: var(--text-muted); font-size: 12px; }
-    </style>
+    /* ── Editor Agent UI ── */
+.editor-form { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px }
+.editor-form .ef-topic { flex:2; min-width:220px }
+.editor-form .ef-instr { flex:1; min-width:180px }
+.editor-form .ef-count { width:100px }
+
+.proposal-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(380px, 1fr)); gap:16px; margin-top:14px }
+.proposal-card {
+    background:var(--bg-secondary); border:1px solid var(--border); border-radius:12px;
+    padding:18px; cursor:pointer; transition:border-color 0.2s, box-shadow 0.2s;
+}
+.proposal-card:hover { border-color:var(--accent); box-shadow:0 2px 12px rgba(0,0,0,0.15) }
+.proposal-card.selected { border-color:#22c55e; background:rgba(34,197,94,0.05); box-shadow:0 0 0 2px rgba(34,197,94,0.15) }
+.proposal-card.duplicate { opacity:0.6; border-style:dashed; border-color:#ef4444 }
+
+.prop-confidence {
+    display:inline-flex; align-items:center; gap:5px; font-size:13px;
+    padding:3px 10px; border-radius:20px; font-weight:600;
+}
+.pc-high { background:rgba(34,197,94,0.15); color:#22c55e }
+.pc-mid { background:rgba(234,179,8,0.15); color:#ca8a04 }
+.pc-low { background:rgba(239,68,68,0.15); color:#ef4444 }
+
+.prop-title { font-size:15px; font-weight:600; margin-bottom:6px; line-height:1.35 }
+.prop-thesis { font-size:13px; color:var(--text-secondary); line-height:1.5; margin-bottom:12px }
+.prop-meta { display:flex; gap:14px; font-size:12px; color:var(--text-muted); margin-bottom:14px; flex-wrap:wrap }
+.prop-actions { display:flex; gap:8px }
+
+.selected-article {
+    background:var(--bg-secondary); border-radius:12px; padding:24px;
+    margin-top:20px; border:1px solid var(--accent);
+}
+.detail-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); margin-bottom:16px }
+.detail-tab {
+    padding:10px 20px; cursor:pointer; border-bottom:2px solid transparent;
+    font-size:13px; color:var(--text-secondary); transition:all 0.2s;
+}
+.detail-tab:hover { color:var(--text-primary) }
+.detail-tab.active { border-bottom-color:var(--accent); color:var(--accent); font-weight:600 }
+
+.tool-call-log {
+    font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
+    font-size:12px; background:var(--bg-primary); border:1px solid var(--border);
+    border-radius:8px; padding:12px; max-height:220px; overflow-y:auto; line-height:1.7;
+}
+.tc-item { display:flex; gap:8px; align-items:center; padding:3px 0 }
+.tc-name { color:var(--accent); font-weight:500; white-space:nowrap }
+.tc-ok::before { content:'✓'; color:#22c55e; font-weight:bold }
+.tc-err::before { content:'✗'; color:#ef4444; font-weight:bold }
+
+/* Collapsible section */
+.collapsible-header {
+    display:flex; align-items:center; justify-content:space-between;
+    cursor:pointer; user-select:none; padding:8px 0;
+}
+.collapsible-header:hover { opacity:0.8 }
+.collap-arrow { transition:transform 0.2s; font-size:11px }
+.collap-arrow.open { transform:rotate(90deg) }
+
+/* Editor history table */
+.ed-hist-table { width:100%; border-collapse:collapse; font-size:12px }
+.ed-hist-table th { text-align:left; padding:6px 10px; background:var(--bg); border-bottom:1px solid var(--border); color:var(--text-muted) }
+.ed-hist-table td { padding:6px 10px; border-bottom:1px solid rgba(128,128,128,0.15) }
+.phase-badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:500 }
+.phase-done { background:rgba(34,197,94,0.15); color:#22c55e }
+.phase-error { background:rgba(239,68,68,0.15); color:#ef4444 }
+.phase-running { background:rgba(59,130,246,0.15); color:#3b82f6 }
+</style>
 </head>
 <body>
 
@@ -941,115 +1008,141 @@
             </div>
         </div>
 
-        <!-- Agents Tab: ScoutAgent UI -->
+        <!-- Agents Tab: Editor Agent UI -->
         <div class="tab-content" id="tabAgents">
 
-            <!-- Scout Config -->
-            <div class="research-section">
-                <div class="research-section-title">🔍 Scout Agent — Поиск и классификация</div>
+            <!-- ═══ Editor Agent (основной режим) ═══ -->
+            <div id="editorSection" class="research-section">
+                <div class="research-section-title">📝 Редактор (Editor Agent)</div>
 
-                <div class="config-row">
-                    <div class="config-field" style="flex:2">
-                        <label class="config-label">Тема поиска</label>
-                        <input type="text" id="agentTopic" class="cfg-input"
-                               placeholder="например: Arctic permafrost methane emissions"
-                               value="Arctic permafrost methane emissions tundra">
-                    </div>
-                    <div class="config-field">
-                        <label class="config-label">Режим</label>
-                        <select id="agentMode" class="cfg-input">
-                            <option value="fresh" selected>Свежий поиск (sources/)</option>
-                            <option value="storage">Из хранилища</option>
-                            <option value="mixed">Смешанный</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="config-row">
-                    <div class="config-field">
-                        <label class="config-label">Макс. статей</label>
-                        <input type="number" id="agentMaxArticles" min="1" max="50" value="10" class="cfg-input">
-                    </div>
-                    <div class="config-field" style="display:flex;align-items:flex-end">
-                        <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
-                            ▶ Запустить Scout
-                        </button>
-                        <button id="stopScoutBtn" class="btn-danger" onclick="stopCurrentJob()" style="width:auto;padding:8px 16px;display:none">
-                            ⛹ Остановить
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Engine Status -->
-                <div id="engineStatus" class="dedup-info" style="display:none;margin-top:10px"></div>
-            </div>
-
-            <!-- Scout Progress -->
-            <div id="scoutProgress" class="research-section" style="display:none">
-                <div class="research-section-title">⚡ Выполнение...</div>
-                <div class="progress-container">
-                    <div class="progress-bar-track">
-                        <div class="progress-bar-fill" id="scoutProgressBar" style="width:0%"></div>
-                    </div>
-                    <div class="progress-text"><span id="scoutPct">0%</span> · <span id="scoutStep">Инициализация...</span></div>
-                </div>
-                <div class="log-container" id="scoutLog">
-                    <div class="log-line log-info">Ожидание запуска...</div>
-                </div>
-            </div>
-
-            <!-- Scout Results -->
-            <div id="scoutResults" class="research-section" style="display:none">
-                <div class="research-section-title">📊 Результаты Scout Agent</div>
-
-                <!-- Summary bar -->
-                <div id="scoutSummary" style="margin-bottom:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-
-                <!-- Groups -->
-                <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
-            </div>
-
-            <!-- ═══ Full Pipeline (Orchestrator) ═══ -->
-            <div id="pipelineSection" class="research-section">
-                <div class="research-section-title">🔄 Полный пайплайн (Scout → Reader → Writer)</div>
-
-                <!-- Pipeline Form -->
-                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:15px;flex-wrap:wrap">
-                    <div class="config-field" style="flex:1;min-width:200px">
-                        <label class="config-label">ТЕМА</label>
-                        <input id="pipeTopic" type="text" placeholder="например: Arctic permafrost methane emissions"
+                <!-- Editor Form -->
+                <div class="editor-form">
+                    <div class="config-field ef-topic">
+                        <label class="config-label">ТЕМА / ДОМЕН</label>
+                        <input type="text" id="editorTopic" placeholder="например: Arctic permafrost methane emissions"
                                value="Arctic permafrost methane emissions tundra" style="width:100%">
                     </div>
-                    <div class="config-field" style="flex:1;min-width:180px">
-                        <label class="config-label">КОММЕНТАРИЙ</label>
-                        <input id="pipeComment" type="text" placeholder="Дополнительные указания для Writer" style="width:100%">
+                    <div class="config-field ef-instr">
+                        <label class="config-label">Инструкция (опц.)</label>
+                        <input type="text" id="editorInstruction" placeholder="Дополнительные указания для редактора" style="width:100%">
                     </div>
-                    <div class="config-field">
-                        <button id="runPipeBtn" class="btn-primary" onclick="runPipeline()" style="padding:8px 20px">
-                            🚀 Запустить Pipeline
+                    <div class="config-field ef-count">
+                        <label class="config-label">Предлож.</label>
+                        <input type="number" id="editorMaxProposals" min="1" max="10" value="5" style="width:100%">
+                    </div>
+                    <div class="config-field" style="display:flex;align-items:flex-end">
+                        <button id="runEditorBtn" class="btn-primary" onclick="runEditor()" style="padding:8px 20px">
+                            🚀 Проанализировать и предложить
                         </button>
-                        <button id="stopPipeBtn" class="btn-danger" onclick="stopPipeline()" style="padding:8px 14px;display:none">
-                            ⛹ Стоп
-                        </button>
                     </div>
                 </div>
 
-                <!-- Pipeline Steps Visualization -->
-                <div id="pipelineSteps" style="display:flex;gap:0;align-items:stretch;margin-bottom:15px;overflow-x:auto;padding-bottom:5px">
-                </div>
-
-                <!-- Pipeline Stage Content -->
-                <div id="pipelineStageContent" style="display:none">
-                    <!-- Dynamically filled based on current stage -->
-                </div>
-
-                <!-- Orchestrator Jobs List -->
-                <div style="margin-top:15px">
-                    <div class="research-section-title" style="font-size:13px">📋 История пайплайнов</div>
-                    <div id="orchJobsList" style="display:flex;flex-direction:column;gap:6px">
-                        <div class="empty-state-sm">Пайплайнов пока нет</div>
+                <!-- Editor Progress -->
+                <div id="editorProgress" style="display:none;margin-top:14px">
+                    <div class="progress-container">
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="editorProgressBar" style="width:0%"></div>
+                        </div>
+                        <div class="progress-text">
+                            <span id="editorPct">0%</span> ·
+                            <span id="editorPhase">Инициализация...</span>
+                        </div>
+                    </div>
+                    <!-- Tool calls log -->
+                    <div class="tool-call-log" id="editorToolLog" style="margin-top:8px;display:none">
+                        <div class="tc-item"><span style="color:var(--text-muted)">Ожидание tool calls...</span></div>
                     </div>
                 </div>
+
+                <!-- Proposals Grid -->
+                <div id="proposalsSection" style="display:none;margin-top:18px">
+                    <div class="research-section-title" style="font-size:14px">📋 Предложения статей</div>
+                    <div class="proposal-grid" id="proposalGrid"></div>
+                </div>
+
+                <!-- Selected Article Detail -->
+                <div id="selectedArticle" class="selected-article" style="display:none"></div>
+            </div>
+
+            <!-- ═══ Быстрый Scout (сворачиваемый) ═══ -->
+            <div id="scoutCollapsible" class="research-section" style="margin-top:12px">
+                <div class="collapsible-header" onclick="toggleScoutCollapse()">
+                    <span style="font-weight:600;font-size:13px">▸ 🔍 Быстрый Scout Agent</span>
+                    <span class="collap-arrow" id="scoutArrow">▾</span>
+                </div>
+                <div id="scoutInner" style="display:none">
+
+                <!-- Scout Config -->
+                <div class="research-section" style="margin-top:10px">
+                    <div class="research-section-title" style="font-size:13px">🔍 Scout — Поиск и классификация</div>
+
+                    <div class="config-row">
+                        <div class="config-field" style="flex:2">
+                            <label class="config-label">Тема поиска</label>
+                            <input type="text" id="agentTopic" class="cfg-input"
+                                   placeholder="например: Arctic permafrost methane emissions"
+                                   value="Arctic permafrost methane emissions tundra">
+                        </div>
+                        <div class="config-field">
+                            <label class="config-label">Режим</label>
+                            <select id="agentMode" class="cfg-input">
+                                <option value="fresh" selected>Свежий поиск (sources/)</option>
+                                <option value="storage">Из хранилища</option>
+                                <option value="mixed">Смешанный</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="config-row">
+                        <div class="config-field">
+                            <label class="config-label">Макс. статей</label>
+                            <input type="number" id="agentMaxArticles" min="1" max="50" value="10" class="cfg-input">
+                        </div>
+                        <div class="config-field" style="display:flex;align-items:flex-end">
+                            <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
+                                ▶ Запустить Scout
+                            </button>
+                            <button id="stopScoutBtn" class="btn-danger" onclick="stopCurrentJob()" style="width:auto;padding:8px 16px;display:none">
+                                ⛹ Остановить
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Engine Status -->
+                    <div id="engineStatus" class="dedup-info" style="display:none;margin-top:10px"></div>
+                </div>
+
+                <!-- Scout Progress -->
+                <div id="scoutProgress" class="research-section" style="display:none;margin-top:10px">
+                    <div class="research-section-title" style="font-size:13px">⚡ Выполнение...</div>
+                    <div class="progress-container">
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="scoutProgressBar" style="width:0%"></div>
+                        </div>
+                        <div class="progress-text"><span id="scoutPct">0%</span> · <span id="scoutStep">Инициализация...</span></div>
+                    </div>
+                    <div class="log-container" id="scoutLog">
+                        <div class="log-line log-info">Ожидание запуска...</div>
+                    </div>
+                </div>
+
+                <!-- Scout Results -->
+                <div id="scoutResults" class="research-section" style="display:none;margin-top:10px">
+                    <div class="research-section-title" style="font-size:13px">📊 Результаты Scout</div>
+                    <div id="scoutSummary" style="margin-bottom:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+                    <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
+                </div>
+
+                </div><!-- /scoutInner -->
+            </div><!-- /scoutCollapsible -->
+
+            <!-- ═══ История Редактора ═══ -->
+            <div id="editorHistorySection" class="research-section" style="margin-top:12px">
+                <div class="research-section-title" style="font-size:13px">📋 История редактора</div>
+                <table class="ed-hist-table" id="editorHistoryTable">
+                    <thead><tr><th>Job ID</th><th>Тема</th><th>Фаза</th><th>Предлож.</th><th>Действия</th></tr></thead>
+                    <tbody id="editorHistoryBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">Запусков пока нет</td></tr></tbody>
+                </table>
             </div>
 
             <!-- Jobs History -->
@@ -2399,6 +2492,7 @@ switchTab = function(tabName, el) {
         loadEngineStatus();
         loadAgentJobs();
         loadOrchJobs();
+        loadEditorHistory();
     }
 };
 
@@ -3118,6 +3212,334 @@ async function showOrchJobDetail(jobId) {
 
 // Init: load orch jobs when agents tab opens
 const _origLoadAgents = window.loadAgentTab || (() => {});
+
+// ════════════════════════════════════════════════
+//  EDITOR AGENT UI
+// ════════════════════════════════════════════════
+
+let currentEditorJobId = null;
+let editorPoller = null;
+let editorEventSource = null;
+
+/** Run Editor Agent — analyze topic and generate proposals */
+async function runEditor() {
+    const topic = document.getElementById('editorTopic').value.trim();
+    if (!topic) { alert('Введите тему или домен'); return; }
+
+    const instruction = document.getElementById('editorInstruction').value.trim();
+    const maxProps = parseInt(document.getElementById('editorMaxProposals').value) || 5;
+
+    const btn = document.getElementById('runEditorBtn');
+    btn.disabled = true; btn.textContent = '⏳ Анализ...';
+
+    // Show progress, hide proposals
+    document.getElementById('editorProgress').style.display = '';
+    document.getElementById('proposalsSection').style.display = 'none';
+    document.getElementById('selectedArticle').style.display = 'none';
+    document.getElementById('editorProgressBar').style.width = '5%';
+    document.getElementById('editorPct').textContent = '5%';
+    document.getElementById('editorPhase').textContent = 'Запуск анализа...';
+    document.getElementById('editorToolLog').style.display = 'none';
+
+    try {
+        const result = await api('/editor/analyze', 'POST', {
+            topic,
+            user_instruction: instruction || undefined,
+            max_proposals: maxProps
+        });
+
+        currentEditorJobId = result.job_id;
+        document.getElementById('editorPhase').textContent =
+            `Анализ завершён: ${result.proposals_count || 0} предложений`;
+
+        // Load job detail (proposals)
+        await loadEditorJobDetail(result.job_id);
+
+        // Start polling for completion
+        startEditorPolling(result.job_id);
+
+    } catch(e) {
+        document.getElementById('editorPhase').textContent = 'Ошибка: ' + e.message;
+        btn.disabled = false; btn.textContent = '🚀 Проанализировать и предложить';
+    }
+}
+
+/** Poll editor job until done */
+function startEditorPolling(jobId) {
+    if (editorPoller) clearInterval(editorPoller);
+    editorPoller = setInterval(async () => {
+        try {
+            const job = await api(`/editor/jobs/${jobId}`);
+            const phaseMap = {
+                analyzing: 'Анализ хранилища...',
+                proposing: 'Генерация предложений...',
+                validating: 'Валидация...',
+                done: 'Завершено',
+                error: 'Ошибка'
+            };
+            const phaseText = phaseMap[job.phase] || job.phase;
+
+            // Update progress bar based on phase
+            const pctMap = { analyzing: 25, proposing: 60, validating: 85, done: 100, error: 0 };
+            const pct = pctMap[job.phase] || 50;
+            document.getElementById('editorProgressBar').style.width = pct + '%';
+            document.getElementById('editorPct').textContent = pct + '%';
+            document.getElementById('editorPhase').textContent = phaseText;
+
+            if (job.phase === 'done' || job.phase === 'error') {
+                clearInterval(editorPoller);
+                editorPoller = null;
+                document.getElementById('runEditorBtn').disabled = false;
+                document.getElementById('runEditorBtn').textContent = '🚀 Проанализировать и предложить';
+
+                if (job.phase === 'done') {
+                    await loadEditorJobDetail(jobId);
+                }
+                // Refresh history
+                loadEditorHistory();
+            }
+        } catch(err) {
+            // ignore poll errors
+        }
+    }, 2000);
+}
+
+/** Load full editor job detail and render proposals */
+async function loadEditorJobDetail(jobId) {
+    try {
+        const job = await api(`/editor/jobs/${jobId}`);
+        renderProposals(job.proposals || []);
+
+        if (job.selected_proposal_id) {
+            const proposal = (job.proposals || []).find(p => p.id === job.selected_proposal_id);
+            if (proposal) showSelectedArticle(proposal);
+        }
+
+        // Show proposals section
+        document.getElementById('proposalsSection').style.display = '';
+    } catch(e) {
+        console.error('Failed to load editor job:', e);
+    }
+}
+
+/** Render proposal cards in grid */
+function renderProposals(proposals) {
+    const container = document.getElementById('proposalGrid');
+    if (!proposals.length) {
+        container.innerHTML = '<div class="empty-state-sm" style="grid-column:1/-1;padding:20px;text-align:center">Нет предложений</div>';
+        return;
+    }
+
+    container.innerHTML = proposals.map(p => `
+        <div class="proposal-card ${p.status === 'duplicate' ? 'duplicate' : ''}"
+             id="prop-${p.id}" onclick="selectProposal('${currentEditorJobId}','${p.id}')">
+            <div class="prop-confidence ${confidenceClass(p.confidence)}">
+                ★ ${(p.confidence || 0).toFixed(2)}
+            </div>
+            <div class="prop-title">${escapeHtml(p.title)}</div>
+            <div class="prop-thesis">${escapeHtml(p.thesis || '')}</div>
+            <div class="prop-meta">
+                <span>📚 ${p.sources_available || 0} ист.</span>
+                <span>🎯 ${escapeHtml(p.target_audience || '—')}</span>
+                ${p.status === 'duplicate' ? '<span style="color:#ef4444;font-weight:500">⚠️ дубликат</span>' : ''}
+            </div>
+            <div class="prop-actions">
+                <button class="btn-sm btn-primary"
+                        onclick="event.stopPropagation();selectProposal('${currentEditorJobId}','${p.id}')">
+                    ✅ Выбрать
+                </button>
+                <button class="btn-sm btn-secondary"
+                        onclick="event.stopPropagation();showProposalDetailModal('${p.id}')">
+                    📋 Детали
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+/** Select a proposal — calls API and shows detail panel */
+async function selectProposal(jobId, propId) {
+    try {
+        await api(`/editor/jobs/${jobId}/select/${propId}`, 'POST');
+
+        // Visual selection
+        document.querySelectorAll('.proposal-card').forEach(c => c.classList.remove('selected'));
+        const card = document.getElementById(`prop-${propId}`);
+        if (card) card.classList.add('selected');
+
+        // Load full detail
+        const job = await api(`/editor/jobs/${jobId}`);
+        const proposal = (job.proposals || []).find(p => p.id === propId);
+        if (proposal) showSelectedArticle(proposal);
+
+        // Refresh history
+        loadEditorHistory();
+    } catch(e) {
+        alert('Ошибка выбора: ' + e.message);
+    }
+}
+
+/** Show selected article detail panel with tabs */
+function showSelectedArticle(proposal) {
+    const panel = document.getElementById('selectedArticle');
+    panel.style.display = '';
+    panel.innerHTML = `
+        <h3 style="margin:0 0 12px;font-size:17px">📄 ${escapeHtml(proposal.title)}</h3>
+        <div style="display:flex;gap:16px;font-size:13px;color:var(--text-secondary);margin-bottom:16px;flex-wrap:wrap">
+            <span>Confidence: <strong>${(proposal.confidence || 0).toFixed(2)}</strong></span>
+            <span>Источников: <strong>${proposal.sources_available || 0}</strong></span>
+            <span>Статус: <strong>${proposal.status || '—'}</strong></span>
+        </div>
+        <div class="detail-tabs">
+            <span class="detail-tab active" id="dtab-thesis" onclick="switchDetailTab('thesis')">Тезис</span>
+            <span class="detail-tab" id="dtab-sources" onclick="switchDetailTab('sources')">Источники (${(proposal.key_references || []).length})</span>
+            <span class="detail-tab" id="dtab-develop" onclick="switchDetailTab('develop')">Доработка</span>
+        </div>
+        <div id="detailContent">
+            <p style="line-height:1.7;color:var(--text-secondary);font-size:14px">${escapeHtml(proposal.thesis || '')}</p>
+        </div>
+        <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn-primary" onclick="finalizeArticle('${proposal.id}')">✍️ Написать статью</button>
+            <button class="btn-secondary" onclick="reviewArticle('${proposal.id}')">👀 Отправить на ревью</button>
+        </div>
+    `;
+
+    // Store proposal data for tab switching
+    panel._proposal = proposal;
+
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Switch detail tabs */
+function switchDetailTab(tabName) {
+    // Update tab styles
+    document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+    const activeTab = document.getElementById('dtab-' + tabName);
+    if (activeTab) activeTab.classList.add('active');
+
+    const panel = document.getElementById('selectedArticle');
+    const proposal = panel._proposal;
+    const content = document.getElementById('detailContent');
+
+    if (!proposal) return;
+
+    if (tabName === 'thesis') {
+        content.innerHTML = `<p style="line-height:1.7;color:var(--text-secondary);font-size:14px">${escapeHtml(proposal.thesis || '')}</p>`;
+    } else if (tabName === 'sources') {
+        const refs = proposal.key_references || [];
+        if (!refs.length) {
+            content.innerHTML = '<p style="color:var(--text-muted)">Нет источников</p>';
+            return;
+        }
+        content.innerHTML = `<ul style="padding-left:18px;line-height:2;font-size:13px">
+            ${refs.map(r => `<li><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(r.doi || r.id || '')}</code> ${escapeHtml(r.citation || r.title || '')}</li>`).join('')}
+        </ul>`;
+    } else if (tabName === 'develop') {
+        content.innerHTML = `
+            <div style="margin-bottom:12px">
+                <label style="font-size:13px;display:block;margin-bottom:6px">Ваш комментарий для доработки:</label>
+                <textarea id="developComment" rows="3" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);font-size:13px;resize:vertical" placeholder="Например: Добавь данные по Сибири, расширь аудиторию..."></textarea>
+            </div>
+            <button class="btn-primary btn-sm" onclick="sendForDevelopment('${proposal.id}')">💬 Отправить на доработку</button>
+        `;
+    }
+}
+
+/** Send article for development/refinement */
+async function sendForDevelopment(propId) {
+    const comment = document.getElementById('developComment')?.value.trim();
+    if (!currentEditorJobId) return;
+    alert('Доработка через Editor Agent (job=' + currentEditorJobId + ', prop=' + propId + ', comment=' + comment + ') — будет реализовано в S6');
+}
+
+/** Finalize / write article */
+function finalizeArticle(propId) {
+    alert('Написание статьи через Writer Agent (prop=' + propId + ') — будет реализовано в S6');
+}
+
+/** Send for review */
+function reviewArticle(propId) {
+    alert('Ревью через Reviewer Agent (prop=' + propId + ') — будет реализовано в S6');
+}
+
+/** Show proposal detail in modal */
+function showProposalDetailModal(propId) {
+    // Find proposal from current grid - simplified version just alerts
+    alert('Детали предложения ' + propId + ' — модальное окно в следующей версии');
+}
+
+/** Toggle Scout collapsible section */
+function toggleScoutCollapse() {
+    const inner = document.getElementById('scoutInner');
+    const arrow = document.getElementById('scoutArrow');
+    if (!inner) return;
+    const hidden = inner.style.display === 'none';
+    inner.style.display = hidden ? '' : 'none';
+    if (arrow) arrow.classList.toggle('open', hidden);
+}
+
+/** Load editor jobs history into table */
+async function loadEditorHistory() {
+    try {
+        const data = await api('/editor/jobs');
+        const jobs = data.jobs || [];
+        const tbody = document.getElementById('editorHistoryBody');
+        if (!jobs.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">Запусков пока нет</td></tr>';
+            return;
+        }
+        tbody.innerHTML = jobs.map(j => {
+            const phaseClass = j.phase === 'done' ? 'phase-done' : j.phase === 'error' ? 'phase-error' : 'phase-running';
+            const shortTopic = (j.topic || '').length > 35 ? (j.topic || '').slice(0, 32) + '...' : (j.topic || '');
+            return `<tr>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.job_id || '')}</td>
+                <td>${escapeHtml(shortTopic)}</td>
+                <td><span class="phase-badge ${phaseClass}">${j.phase || '—'}</span></td>
+                <td>${j.proposals_count || 0}</td>
+                <td>
+                    <button class="btn-sm btn-secondary" onclick="loadEditorJobDetail('${j.job_id}')">Открыть</button>
+                    ${j.phase !== 'running' ? `<button class="btn-sm btn-danger" onclick="deleteEditorJob('${j.job_id}')">🗑</button>` : ''}
+                </td>
+            </tr>`;
+        }).join('');
+    } catch(e) {
+        console.error('Failed to load editor history:', e);
+    }
+}
+
+/** Delete an editor job */
+async function deleteEditorJob(jobId) {
+    if (!confirm('Удалить job ' + jobId + '?')) return;
+    try {
+        await api(`/editor/jobs/${jobId}`, 'DELETE');
+        loadEditorHistory();
+        // Clear detail if it was the deleted job
+        if (currentEditorJobId === jobId) {
+            document.getElementById('proposalsSection').style.display = 'none';
+            document.getElementById('selectedArticle').style.display = 'none';
+            currentEditorJobId = null;
+        }
+    } catch(e) {
+        alert('Ошибка удаления: ' + e.message);
+    }
+}
+
+// ── Helpers ──
+
+/** Confidence → CSS class */
+function confidenceClass(c) {
+    if (c >= 0.7) return 'pc-high';
+    if (c >= 0.4) return 'pc-mid';
+    return 'pc-low';
+}
+
+/** XSS escape */
+function escapeHtml(s) {
+    if (!s) return '';
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(s));
+    return div.innerHTML;
+}
 </script>
 </body>
 </html>
