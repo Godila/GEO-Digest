@@ -1,19 +1,20 @@
-"""Editor Agent — core "brain" of the tool-use architecture.
+"""Editor Agent — core "brain" of the B+ hybrid architecture.
 
-The EditorAgent uses ToolUseLoop + StorageTools to:
-  1. Analyze a topic against article storage (Phase 1: Analysis)
-  2. Generate article proposals based on analysis (Phase 2: Proposals)
-  3. Validate proposals (DOI check, duplicate detection, confidence scoring)
+B+ Architecture (Evidence Pack + LLM Discovery):
+  Phase 0: LOADER   (Python)  — load ALL articles + graph → EvidencePack
+  Phase 1: DISCOVERY (LLM+tools) — explore data, dig deeper → DiscoveryReport
+  Phase 2: SYNTHESIZE (LLM)     — form 1-3 deep proposals based on discovery
+  Phase 3: VALIDATE  (Python)   — DOI gate, scoring, enrichment
 
 Data flow:
-    User topic → ToolUseLoop(Analysis) → StorageAnalysis
-              → ToolUseLoop(Proposals) → raw proposals
+    User topic → EvidencePack → ToolUseLoop(Discovery) → DiscoveryReport
+              → ToolUseLoop(Synthesize) → raw proposals
               → Post-validation → ArticleProposal[]
               → EditorResult
 
 State management:
     Each run creates a job with checkpoints saved to /app/data/jobs/
-    Supports resume from any completed or in-progress phase.
+    Supports resume from completed or failed phases.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ import json
 import logging
 import time
 import uuid
+import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,14 +33,21 @@ from typing import Any
 from engine.llm.tool_loop import ToolUseLoop, ToolUseResult
 from engine.llm.response_parser import parse_proposals_from_text
 from engine.prompts.editor_prompts import (
-    ANALYSIS_SYSTEM_PROMPT,
-    PROPOSAL_SYSTEM_PROMPT,
+    DISCOVERY_SYSTEM_PROMPT,
+    SYNTHESIZE_SYSTEM_PROMPT,
     get_prompt_for_phase,
 )
 from engine.tools.storage_tools import create_storage_tools
 from engine.tools.graph_tools import create_graph_tools
 
 logger = logging.getLogger(__name__)
+
+# ── Constants ──────────────────────────────────────────────────────
+
+DISCOVERY_MAX_ROUNDS = 4       # Max LLM rounds in discovery phase
+SYNTHESIZE_MAX_ROUNDS = 2      # Max LLM rounds in synthesize phase
+ABSTRACT_PREVIEW_LEN = 300     # Chars of abstract in evidence pack
+MAX_PROPOSALS_HARD = 3         # Hard cap on proposals (quality > quantity)
 
 
 # ── Data Models ───────────────────────────────────────────────────
@@ -56,28 +66,56 @@ class ArticleProposal:
     gap_filled: str = ""
     estimated_sections: list[str] = field(default_factory=list)
     status: str = "proposed"  # proposed | selected | duplicate | rejected
+    # B+ enrichment fields
+    enriched_sources: list[dict] = field(default_factory=list)
+    graph_roles: dict = field(default_factory=dict)
+    discovery_depth: str = "shallow"  # shallow | medium | deep
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 @dataclass
-class StorageAnalysis:
-    """Results of Phase 1 storage analysis."""
+class EvidencePack:
+    """Phase 0 output: all data loaded without filtering.
+    Python builds this in ~2 seconds. No LLM involved."""
+    all_articles: list[dict] = field(default_factory=list)
     total_articles: int = 0
-    relevant_count: int = 0
-    clusters: list[dict] = field(default_factory=list)
-    year_range: tuple[int, int] = (0, 0)
-    by_year: dict[int, int] = field(default_factory=dict)
-    source_distribution: dict[str, int] = field(default_factory=dict)
-    existing_articles: list[dict] = field(default_factory=list)
-    gaps: list[str] = field(default_factory=list)
-    raw_llm_analysis: str = ""
+    graph_summary: dict = field(default_factory=dict)
+    domain_stats: dict = field(default_factory=dict)
+    graph_available: bool = False
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        d["year_range"] = list(self.year_range)
-        return d
+        return asdict(self)
+
+
+@dataclass
+class DiscoveryReport:
+    """Phase 1 output: LLM's research findings after exploring evidence pack."""
+    key_findings: str = ""
+    selected_dois: list[str] = field(default_factory=list)
+    explored_dois: list[str] = field(default_factory=list)
+    cross_connections: list[dict] = field(default_factory=list)
+    additional_queries: list[str] = field(default_factory=list)
+    gap_hypotheses: list[str] = field(default_factory=list)
+    material_sufficiency: str = "unknown"  # sufficient | limited | insufficient
+    confidence_note: str = ""
+    raw_llm_discovery: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @property
+    def is_sufficient(self) -> bool:
+        return self.material_sufficiency == "sufficient"
+
+    @property
+    def proposal_count_hint(self) -> int:
+        if self.material_sufficiency == "sufficient":
+            return 3
+        elif self.material_sufficiency == "limited":
+            return 2
+        return 1
 
 
 @dataclass
@@ -85,8 +123,9 @@ class EditorResult:
     """Final result of EditorAgent.run()."""
     job_id: str = ""
     topic: str = ""
-    status: str = "pending"  # done | partial | failed
-    analysis: StorageAnalysis | None = None
+    status: str = "pending"
+    analysis: dict | None = None          # Legacy key — holds DiscoveryReport dict
+    discovery: DiscoveryReport | None = None
     proposals: list[ArticleProposal] = field(default_factory=list)
     tool_rounds_total: int = 0
     total_tokens_used: int = 0
@@ -99,7 +138,8 @@ class EditorResult:
             "job_id": self.job_id,
             "topic": self.topic,
             "status": self.status,
-            "analysis": self.analysis.to_dict() if self.analysis else None,
+            "analysis": self.analysis,
+            "discovery": self.discovery.to_dict() if self.discovery else None,
             "proposals": [p.to_dict() for p in self.proposals],
             "tool_rounds_total": self.tool_rounds_total,
             "total_tokens_used": self.total_tokens_used,
@@ -115,8 +155,11 @@ class EditorState:
     job_id: str = ""
     topic: str = ""
     domain: str | None = None
-    phase: str = "idle"  # idle | analyzing | proposing | developing | done | failed
-    analysis: dict | None = None
+    phase: str = "idle"
+    # idle | loading | discovering | synthesizing | validating | done | failed
+    evidence_pack: dict | None = None
+    discovery: dict | None = None
+    analysis: dict | None = None   # Legacy alias for discovery
     proposals: list[dict] | None = None
     selected_proposal_id: str | None = None
     development_history: list[dict] = field(default_factory=list)
@@ -131,26 +174,16 @@ class EditorState:
 # ── EditorAgent ───────────────────────────────────────────────────
 
 class EditorAgent:
-    """
-    Main editor agent with tool-use architecture.
+    """Main editor agent with B+ hybrid architecture.
 
-    Orchestrates the full analysis → proposal → validation pipeline
-    using LLM function calling to query article storage.
+    Orchestrates: Loader → Discovery(LLM+tools) → Synthesize(LLM) → Validate(Python)
     """
 
     def __init__(self, storage=None, llm=None, jobs_dir: str | Path = "/app/data/jobs"):
-        """
-        Args:
-            storage: JsonlStorage instance (or mock for testing)
-            llm: LLMProvider instance with tool_complete() support
-            jobs_dir: Directory for checkpoint files
-        """
         self.storage = storage
         self.llm = llm
         self.jobs_dir = Path(jobs_dir)
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
-
-        # Lazy init — tools created on first use or explicitly
         self._tools = None
         self._loop = None
 
@@ -158,15 +191,13 @@ class EditorAgent:
     def tools(self):
         if self._tools is None and self.storage is not None:
             self._tools = create_storage_tools(self.storage)
-            # Merge graph tools into the same registry (14 tools total)
             try:
                 graph_reg = create_graph_tools()
                 for name in graph_reg.list_tools():
                     schema = graph_reg.get_schema(name)
                     handler = graph_reg.get(name)
                     self._tools.register(
-                        name=name,
-                        handler=handler,
+                        name=name, handler=handler,
                         description=schema.get("description", ""),
                         **schema.get("input_schema", {}),
                     )
@@ -180,6 +211,12 @@ class EditorAgent:
             self._loop = ToolUseLoop(self.llm, self.tools)
         return self._loop
 
+    def _make_loop(self, max_rounds: int = 8) -> ToolUseLoop:
+        """Create a ToolUseLoop instance with custom max_rounds."""
+        if self.llm is None or self.tools is None:
+            raise RuntimeError("EditorAgent not initialized: need storage and llm")
+        return ToolUseLoop(self.llm, self.tools, max_rounds=max_rounds)
+
     # ── Public API ────────────────────────────────────────────────
 
     def run(
@@ -187,27 +224,13 @@ class EditorAgent:
         topic: str,
         domain: str | None = None,
         user_instruction: str | None = None,
-        max_proposals: int = 5,
-        temperature_analysis: float = 0.1,
-        temperature_proposal: float = 0.25,
+        max_proposals: int = 5,           # legacy param, ignored (B+ decides count)
+        temperature_analysis: float = 0.1, # used for discovery phase
+        temperature_proposal: float = 0.25,# used for synthesize phase
     ) -> EditorResult:
-        """
-        Main method: analyze topic + generate article proposals.
-
-        Args:
-            topic: Topic to analyze (e.g., "Arctic permafrost methane emissions")
-            domain: Broader domain context (optional)
-            user_instruction: Additional user instructions (optional)
-            max_proposals: Maximum number of proposals to generate
-            temperature_analysis: LLM temperature for analysis phase (lower = more factual)
-            temperature_proposal: LLM temperature for proposal phase
-
-        Returns:
-            EditorResult with analysis and validated proposals
-        """
+        """Main method: load evidence → discover → synthesize → validate."""
         t0 = time.monotonic()
 
-        # Validate prerequisites
         if self.loop is None:
             raise RuntimeError("EditorAgent not initialized: need storage and llm")
 
@@ -215,68 +238,94 @@ class EditorAgent:
             job_id=self._gen_job_id(),
             topic=topic,
             domain=domain,
-            phase="analyzing",
+            phase="loading",
             started_at=_now_iso(),
             updated_at=_now_iso(),
         )
-
-        # Save checkpoint IMMEDIATELY so UI shows "analyzing" (not "idle")
         self._save_checkpoint(state)
 
         try:
-            # ═══ Phase 1: Analysis ═══
-            logger.info("[editor] %s Phase 1: Анализ хранилища...", state.job_id)
+            # ════════════════════════════════════════════
+            # PHASE 0: LOADER (Python, ~2 sec)
+            # ════════════════════════════════════════════
+            logger.info("[editor] %s Phase 0: Loading evidence pack...", state.job_id)
+            state.phase = "loading"
 
-            user_msg = f"Проанализируй тему '{topic}'"
-            if domain:
-                user_msg += f" (домен: {domain})"
-            if user_instruction:
-                user_msg += f"\nДополнительно: {user_instruction}"
-
-            analysis_result: ToolUseResult = self.loop.run(
-                user_message=user_msg,
-                system_prompt=ANALYSIS_SYSTEM_PROMPT,
-                temperature=temperature_analysis,
-                max_tokens=2048,
-            )
-
-            analysis = self._build_analysis(analysis_result)
-            state.analysis = analysis.to_dict()
-            state.phase = "proposing"
+            evidence = self._build_evidence_pack(topic)
+            state.evidence_pack = evidence.to_dict()
             state.updated_at = _now_iso()
             self._save_checkpoint(state)
 
             logger.info(
-                "[editor] %s Phase 1 done: %d relevant, %d clusters, %d gaps",
-                state.job_id, analysis.relevant_count,
-                len(analysis.clusters), len(analysis.gaps),
+                "[editor] %s Phase 0 done: %d articles, graph=%s",
+                state.job_id, evidence.total_articles, evidence.graph_available,
             )
 
-            # ═══ Phase 2: Proposals ═══
-            logger.info("[editor] %s Phase 2: Генерация предложений...", state.job_id)
+            # ════════════════════════════════════════════
+            # PHASE 1: DISCOVERY (LLM + tools, up to 4 rounds)
+            # ════════════════════════════════════════════
+            logger.info("[editor] %s Phase 1: Discovery...", state.job_id)
+            state.phase = "discovering"
 
-            context = self._format_analysis_context(analysis)
-            proposal_prompt = self._build_proposal_prompt(
-                context, max_proposals, topic, domain
+            discovery_result = self._run_discovery(
+                topic=topic,
+                domain=domain,
+                user_instruction=user_instruction,
+                evidence=evidence,
+                temperature=temperature_analysis,
+            )
+            discovery = self._parse_discovery(discovery_result, evidence)
+            state.discovery = discovery.to_dict()
+            state.analysis = discovery.to_dict()  # Legacy alias
+            state.phase = "synthesizing"
+            state.updated_at = _now_iso()
+            self._save_checkpoint(state)
+
+            logger.info(
+                "[editor] %s Phase 1 done: sufficiency=%s, selected=%d DOIs, explored=%d",
+                state.job_id, discovery.material_sufficiency,
+                len(discovery.selected_dois), len(discovery.explored_dois),
             )
 
-            proposal_result: ToolUseResult = self.loop.run(
-                user_message=f"Предложи {max_proposals} вариантов статей на русском языке.",
-                system_prompt=proposal_prompt,
+            # ════════════════════════════════════════════
+            # PHASE 2: SYNTHESIZE (LLM, 1-2 rounds)
+            # ════════════════════════════════════════════
+            logger.info("[editor] %s Phase 2: Synthesizing proposals...", state.job_id)
+
+            synthesize_result = self._run_synthesize(
+                topic=topic,
+                domain=domain,
+                discovery=discovery,
+                evidence=evidence,
                 temperature=temperature_proposal,
-                max_tokens=4096,
             )
+            raw_proposals = parse_proposals_from_text(synthesize_result.content)
 
-            raw_proposals = parse_proposals_from_text(proposal_result.content)
+            # ════════════════════════════════════════════
+            # PHASE 3: VALIDATE (Python, ~1 sec)
+            # ════════════════════════════════════════════
+            logger.info("[editor] %s Phase 3: Validating %d raw proposals...", state.job_id, len(raw_proposals))
+            state.phase = "validating"
 
-            # Post-validate each proposal
             validated: list[ArticleProposal] = []
             for i, rp in enumerate(raw_proposals):
-                vp = self._validate_proposal(rp, analysis, index=i)
+                vp = self._validate_proposal_bplus(rp, discovery, evidence, index=i)
                 validated.append(vp)
 
-            # Sort by confidence descending
+            # Sort by confidence descending, cap at MAX_PROPOSALS_HARD
             validated.sort(key=lambda p: p.confidence, reverse=True)
+            validated = validated[:MAX_PROPOSALS_HARD]
+
+            # Warn if material was insufficient
+            warnings = []
+            if discovery.material_sufficiency == "insufficient":
+                warnings.append(
+                    f"Недостаточно материала в базе для темы '{topic}'. "
+                    f"Возвращён 1 вариант с пониженным confidence. "
+                    f"Рекомендуется пополнить digest перед написанием."
+                )
+            warnings.extend(synthesize_result.warnings)
+            warnings.extend(discovery_result.warnings)
 
             state.proposals = [p.to_dict() for p in validated]
             state.phase = "done"
@@ -284,28 +333,31 @@ class EditorAgent:
             self._save_checkpoint(state)
 
             elapsed = time.monotonic() - t0
+            total_tokens = (
+                discovery_result.usage.get("input_tokens", 0)
+                + discovery_result.usage.get("output_tokens", 0)
+                + synthesize_result.usage.get("input_tokens", 0)
+                + synthesize_result.usage.get("output_tokens", 0)
+            )
 
             result = EditorResult(
                 job_id=state.job_id,
                 topic=topic,
                 status="done",
-                analysis=analysis,
+                analysis=discovery.to_dict(),
+                discovery=discovery,
                 proposals=validated,
-                tool_rounds_total=analysis_result.total_rounds + proposal_result.total_rounds,
-                total_tokens_used=(
-                    analysis_result.usage.get("input_tokens", 0) +
-                    analysis_result.usage.get("output_tokens", 0) +
-                    proposal_result.usage.get("input_tokens", 0) +
-                    proposal_result.usage.get("output_tokens", 0)
-                ),
+                tool_rounds_total=discovery_result.total_rounds + synthesize_result.total_rounds,
+                total_tokens_used=total_tokens,
                 duration_sec=elapsed,
-                warnings=analysis_result.warnings + proposal_result.warnings,
+                warnings=warnings,
                 error=None,
             )
 
             logger.info(
-                "[editor] %s Done: %d proposals in %.1fs",
-                state.job_id, len(validated), elapsed,
+                "[editor] %s Done: %d proposals (%s) in %.1fs, %d tokens, %d rounds",
+                state.job_id, len(validated), discovery.material_sufficiency,
+                elapsed, total_tokens, result.tool_rounds_total,
             )
             return result
 
@@ -320,10 +372,11 @@ class EditorAgent:
                 pass
             raise
 
+    # ── Resume ────────────────────────────────────────────────────
+
     def resume(self, job_id: str) -> EditorResult:
         """Resume a previously completed or failed job."""
         state_path = self.jobs_dir / f"{job_id}.json"
-
         if not state_path.exists():
             raise ValueError(f"Job {job_id} not found (no checkpoint at {state_path})")
 
@@ -331,10 +384,8 @@ class EditorAgent:
             state_data = json.load(f)
 
         phase = state_data.get("phase", "unknown")
-
         if phase == "done":
             return self._reconstruct_result(state_data)
-
         if phase == "failed":
             return EditorResult(
                 job_id=job_id,
@@ -342,145 +393,465 @@ class EditorAgent:
                 status="failed",
                 error=state_data.get("error", "Unknown failure"),
             )
-
-        # For in-progress phases, we'd need to resume the loop
-        # This is a simplified version — full resume needs message history
         raise ValueError(
             f"Cannot resume from phase '{phase}'. "
             f"Only 'done' and 'failed' phases support resume."
         )
 
-    # ── Private methods ───────────────────────────────────────────
+    # ── Phase 0: Loader ───────────────────────────────────────────
 
-    @staticmethod
-    def _build_analysis(loop_result: ToolUseResult) -> StorageAnalysis:
-        """Build StorageAnalysis from tool-use loop results."""
-        cluster_data = None
-        stats_data = None
-        search_results = []
-        existing_data = None
-        explore_data = None
+    def _build_evidence_pack(self, topic: str = "") -> EvidencePack:
+        """Load ALL articles + graph summary without any filtering.
+        Pure Python, no LLM. Takes ~2 seconds."""
+        articles_raw = []
+        if self.storage is not None:
+            articles_raw = self.storage.load_articles()
 
-        for tc in loop_result.tool_calls_made:
-            name = tc.get("name", "")
-            result = tc.get("result", {})
+        # Build compact article cards (~200 bytes each)
+        all_articles = []
+        source_counts: Counter = Counter()
+        year_list: list[int] = []
+        topics_all: list[str] = []
+        enriched_count = 0
 
-            if name == "cluster_by_subtopic":
-                cluster_data = result
-            elif name == "count_storage_stats":
-                stats_data = result
-            elif name == "search_articles":
-                search_results.append(result)
-            elif name == "find_similar_existing":
-                existing_data = result
-            elif name == "explore_domain":
-                explore_data = result
-
-        # Extract gaps from LLM text response
-        gaps = EditorAgent._extract_gaps(loop_result.content)
-
-        # Build year range from stats or explore
-        year_range = (0, 0)
-        by_year = {}
-        total_articles = 0
-
-        if explore_data:
-            yr = explore_data.get("year_distribution", {})
-            if yr:
-                years = [int(y) for y in yr.keys() if str(y).isdigit()]
-                year_range = (min(years), max(years)) if years else (0, 0)
-                by_year = {int(y): c for y, c in yr.items() if str(y).isdigit()}
-            total_articles = explore_data.get("total_in_scope", 0)
-        elif stats_data:
-            year_range = (
-                stats_data.get("min_year", 0),
-                stats_data.get("max_year", 0),
-            )
-            by_year = {
-                int(y): c for y, c in stats_data.get("by_year", {}).items()
-                if str(y).isdigit()
+        for art in articles_raw:
+            doi = art.get("doi", "")
+            abstract = art.get("abstract_ru") or art.get("abstract", "") or ""
+            card = {
+                "doi": doi,
+                "title": art.get("title", ""),
+                "title_ru": art.get("title_ru", ""),
+                "year": art.get("year"),
+                "topics_ru": art.get("topics_ru", []) or [],
+                "source": art.get("source", ""),
+                "abstract_preview": abstract[:ABSTRACT_PREVIEW_LEN],
+                "score_total": art.get("scores", {}).get("total_5", 0),
+                "citations": art.get("citations", 0),
+                "has_summary": bool(art.get("llm_summary")),
             }
-            total_articles = stats_data.get("total_articles", 0)
+            all_articles.append(card)
+            source_counts[card["source"]] += 1
+            if isinstance(card["year"], int):
+                year_list.append(card["year"])
+            topics_all.extend(card["topics_ru"])
+            if card["has_summary"]:
+                enriched_count += 1
 
-        # Source distribution
-        source_dist = {}
-        if explore_data:
-            source_dist = explore_data.get("sources", {})
+        # Domain stats
+        top_topics = [t for t, _ in Counter(topics_all).most_common(10)]
+        domain_stats = {
+            "sources": dict(source_counts.most_common()),
+            "years": {
+                "min": min(year_list) if year_list else 0,
+                "max": max(year_list) if year_list else 0,
+            },
+            "top_topics_ru": top_topics,
+            "enriched_pct": round(enriched_count / len(all_articles) * 100, 1) if all_articles else 0,
+        }
 
-        # Existing articles
-        existing_articles = []
-        if existing_data:
-            existing_articles = existing_data.get("matches", [])
+        # Graph summary (if available)
+        graph_summary = {}
+        graph_available = False
+        try:
+            if self.storage is not None:
+                graph_data = self.storage.load_graph()
+                nodes = graph_data.get("nodes", [])
+                edges = graph_data.get("edges", [])
 
-        return StorageAnalysis(
-            total_articles=total_articles,
-            relevant_count=sum(sr.get("total_found", 0) for sr in search_results),
-            clusters=cluster_data.get("clusters", []) if cluster_data else [],
-            year_range=year_range,
-            by_year=by_year,
-            source_distribution=source_dist,
-            existing_articles=existing_articles,
-            gaps=gaps,
-            raw_llm_analysis=loop_result.content,
+                if nodes:
+                    graph_available = True
+                    # Communities
+                    communities = {}
+                    comm_map: dict[str, str] = {}
+                    for n in nodes:
+                        d = n.get("data", {})
+                        cid = d.get("community", "?")
+                        comm_map[d.get("id", "")] = cid
+                        if cid not in communities:
+                            communities[cid] = {"theme": d.get("label", ""), "count": 0, "sample_dois": []}
+                        communities[cid]["count"] += 1
+                        if len(communities[cid]["sample_dois"]) < 3:
+                            doi = d.get("doi", "")
+                            if doi:
+                                communities[cid]["sample_dois"].append(doi)
+
+                    # Hubs (top by page_rank)
+                    hubs = sorted(
+                        [
+                            {"doi": n["data"].get("doi", ""), "title_ru": n["data"].get("label", ""),
+                             "page_rank": n["data"].get("page_rank", 0)}
+                            for n in nodes
+                            if n.get("data", {}).get("is_hub")
+                        ],
+                        key=lambda x: x["page_rank"],
+                        reverse=True,
+                    )[:10]
+
+                    # Bridges (top by betweenness)
+                    bridges = sorted(
+                        [
+                            {"doi": n["data"].get("doi", ""), "title_ru": n["data"].get("label", ""),
+                             "betweenness": n["data"].get("betweenness", 0)}
+                            for n in nodes
+                            if n.get("data", {}).get("is_bridge")
+                        ],
+                        key=lambda x: x["betweenness"],
+                        reverse=True,
+                    )[:10]
+
+                    graph_summary = {
+                        "communities": [
+                            {"id": k, "theme": v["theme"], "count": v["count"], "sample_dois": v["sample_dois"]}
+                            for k, v in sorted(communities.items())
+                        ],
+                        "hubs": hubs,
+                        "bridges": bridges,
+                        "node_count": len(nodes),
+                        "edge_count": len(edges),
+                    }
+        except Exception as e:
+            logger.debug("Graph summary build skipped: %s", e)
+
+        return EvidencePack(
+            all_articles=all_articles,
+            total_articles=len(all_articles),
+            graph_summary=graph_summary,
+            domain_stats=domain_stats,
+            graph_available=graph_available,
         )
 
-    def _validate_proposal(
-        self, raw: dict, analysis: StorageAnalysis, index: int = 0
+    # ── Phase 1: Discovery ─────────────────────────────────────────
+
+    def _run_discovery(
+        self,
+        topic: str,
+        domain: str | None,
+        user_instruction: str | None,
+        evidence: EvidencePack,
+        temperature: float,
+    ) -> ToolUseResult:
+        """Run LLM discovery phase: explore evidence pack with tools."""
+        user_msg = f"Исследуй тему '{topic}' на основе предоставленных данных."
+        if domain:
+            user_msg += f"\nДомен: {domain}"
+        if user_instruction:
+            user_msg += f"\nДополнительно: {user_instruction}"
+
+        # Inject evidence pack into system prompt
+        prompt = DISCOVERY_SYSTEM_PROMPT + "\n\n## EVIDENCE PACK (Phase 0)\n\n"
+        prompt += self._format_evidence_for_discovery(evidence)
+        prompt += f"\n\nТема исследования: {topic}\n"
+
+        result = self._make_loop(DISCOVERY_MAX_ROUNDS).run(
+            user_message=user_msg,
+            system_prompt=prompt,
+            temperature=temperature,
+            max_tokens=4096,
+        )
+        return result
+
+    def _format_evidence_for_discovery(self, evidence: EvidencePack) -> str:
+        """Format evidence pack as compact text for LLM discovery prompt."""
+        parts = []
+
+        # Stats line
+        ds = evidence.domain_stats
+        parts.append(f"**База данных:** {evidence.total_articles} статей, "
+                     f"годы {ds['years']['min']}-{ds['years']['max']}, "
+                     f"{ds['enriched_pct']}% обогащено LLM-summary.")
+        parts.append(f"**Источники:** {ds['sources']}")
+        parts.append(f"**Топ темы:** {', '.join(ds['top_topics_ru'][:12])}")
+        parts.append("")
+
+        # Article listing (compact — DOI + title_ru + year + topics + preview)
+        parts.append("### Все статьи в базе:")
+        for i, a in enumerate(evidence.all_articles):
+            topics_str = ", ".join(a["topics_ru"][:4]) if a["topics_ru"] else "-"
+            parts.append(
+                f"  [{i+1}] DOI:{a['doi']} | {a['title_ru'] or a['title']}"
+                f" ({a['year']}, {a['source']}) | {topics_str}"
+                f" | {a['abstract_preview'][:120]}..."
+            )
+        parts.append("")
+
+        # Graph summary
+        if evidence.graph_available and evidence.graph_summary:
+            gs = evidence.graph_summary
+            parts.append(f"### Граф знаний: {gs['node_count']} узлов, {gs['edge_count']} рёбер")
+
+            if gs.get("communities"):
+                parts.append("**Сообщества:**")
+                for c in gs["communities"][:8]:
+                    parts.append(f"  - Community {c['id']}: {c['theme']} "
+                                 f"({c['count']} статей) — примеры: {', '.join(c['sample_dois'][:3])}")
+
+            if gs.get("hubs"):
+                h_names = [h["title_ru"] or h["doi"] for h in gs["hubs"][:6]]
+                parts.append(f"**Хабы:** {', '.join(h_names)}")
+
+            if gs.get("bridges"):
+                b_names = [b["title_ru"] or b["doi"] for b in gs["bridges"][:6]]
+                parts.append(f"**Мосты:** {', '.join(b_names)}")
+            parts.append("")
+        else:
+            parts.append("*Граф знаний недоступен.*\n")
+
+        return "\n".join(parts)
+
+    def _parse_discovery(self, result: ToolUseResult, evidence: EvidencePack) -> DiscoveryReport:
+        """Parse LLM discovery output into structured DiscoveryReport."""
+        text = result.content or ""
+
+        # Extract selected DOIs from text (look for DOI patterns)
+        doi_pattern = r'(?:DOI[:\s]*|doi[:\s]*|10\.\d{4,}/[^\s,\]\)]+)'
+        found_dois = re.findall(doi_pattern, text, re.IGNORECASE)
+        cleaned_dois = []
+        for d in found_dois:
+            d = d.replace("DOI:", "").replace("doi:", "").strip()
+            if d.startswith("10.") and d not in cleaned_dois:
+                cleaned_dois.append(d)
+
+        # Also collect DOIs from get_article_detail tool calls
+        explored_dois = []
+        for tc in result.tool_calls_made:
+            if tc.get("name") == "get_article_detail":
+                doi = tc.get("arguments", {}).get("doi", "")
+                if doi and doi not in explored_dois:
+                    explored_dois.append(doi)
+            elif tc.get("name") == "search_articles":
+                query = tc.get("arguments", {}).get("query", "")
+                # We'll track queries separately
+
+        # Determine material sufficiency from LLM text
+        sufficiency = "unknown"
+        lower_text = text.lower()
+        if any(w in lower_text for w in ["достаточно", "sufficient", "богат", "обширн", "хорошо покрыт"]):
+            sufficiency = "sufficient"
+        elif any(w in lower_text for w in ["недостаточно", "insufficient", "мало", "ограничен", "слабо"]):
+            sufficiency = "limited"
+        elif any(w in lower_text for w in ["критически", "практически нет", "почти нет", "очень мало"]):
+            sufficiency = "insufficient"
+        else:
+            # Default heuristic: if we found >= 5 relevant-looking DOIs → sufficient
+            if len(cleaned_dois) >= 5 or len(explored_dois) >= 5:
+                sufficiency = "sufficient"
+            elif len(cleaned_dois) >= 2 or len(explored_dois) >= 2:
+                sufficiency = "limited"
+            else:
+                sufficiency = "insufficient"
+
+        # Merge: selected = union of found in text + explored via tools
+        all_found = set(cleaned_dois) | set(explored_dois)
+
+        # Additional queries from search_articles calls
+        additional_queries = []
+        for tc in result.tool_calls_made:
+            if tc.get("name") == "search_articles":
+                q = tc.get("arguments", {}).get("query", "")
+                if q:
+                    additional_queries.append(q)
+
+        # Gap hypotheses
+        gaps = self._extract_gaps(text)
+
+        return DiscoveryReport(
+            key_findings=text[:2000],  # Truncate very long findings
+            selected_dois=list(all_found),
+            explored_dois=explored_dois,
+            cross_connections=[],  # Would need deeper parsing
+            additional_queries=additional_queries,
+            gap_hypotheses=gaps,
+            material_sufficiency=sufficiency,
+            confidence_note=text[-500:] if len(text) > 500 else "",
+            raw_llm_discovery=text,
+        )
+
+    # ── Phase 2: Synthesize ─────────────────────────────────────────
+
+    def _run_synthesize(
+        self,
+        topic: str,
+        domain: str | None,
+        discovery: DiscoveryReport,
+        evidence: EvidencePack,
+        temperature: float,
+    ) -> ToolUseResult:
+        """Run LLM synthesize phase: form proposals based on discovery."""
+        hint = discovery.proposal_count_hint
+
+        user_msg = (
+            f"На основе своего исследования предложи концепты статей по теме '{topic}'.\n"
+            f"Качество >> количество. Предложи от 1 до {hint} вариантов.\n"
+            f"Оценка материала: {discovery.material_sufficiency}."
+        )
+
+        prompt = SYNTHESIZE_SYSTEM_PROMPT + "\n\n"
+        prompt += self._format_synthesis_context(discovery, evidence)
+        prompt += f"\n## ОГРАНИЧЕНИЯ\n"
+        prompt += f"- Максимум {MAX_PROPOSALS_HARD} вариантов (качество > количества)\n"
+        prompt += f"- Материал: {discovery.material_sufficiency} (предложи ~{hint} вариантов)\n"
+        if domain:
+            prompt += f"- Домен: {domain}\n"
+        prompt += f"- Тема: {topic}\n"
+        prompt += f"- Используй ТОЛЬКО DOI из списка selected_dois выше\n"
+        prompt += f"- Отвечай ТОЛЬКО на русском языке\n"
+
+        result = self._make_loop(SYNTHESIZE_MAX_ROUNDS).run(
+            user_message=user_msg,
+            system_prompt=prompt,
+            temperature=temperature,
+            max_tokens=4096,
+        )
+        return result
+
+    def _format_synthesis_context(self, discovery: DiscoveryReport, evidence: EvidencePack) -> str:
+        """Format discovery report + enriched article details for synthesis prompt."""
+        parts = ["## DISCOVERY REPORT (результаты исследования)", ""]
+
+        parts.append(f"### Ключевые находки:")
+        parts.append(discovery.key_findings or "(нет находок)")
+        parts.append("")
+
+        parts.append(f"### Выбранные статьи ({len(discovery.selected_dois)} DOI):")
+        for doi in discovery.selected_dois:
+            # Find full article info from evidence pack
+            art = next((a for a in evidence.all_articles if a["doi"] == doi), None)
+            if art:
+                depth_mark = "**[deep]**" if doi in discovery.explored_dois else ""
+                parts.append(
+                    f"  - DOI:{doi} {depth_mark}\n"
+                    f"    {art['title_ru'] or art['title']} ({art['year']}, {art['source']})\n"
+                    f"    Topics: {', '.join(art['topics_ru'][:5])}\n"
+                    f"    Abstract: {art['abstract_preview'][:200]}"
+                )
+            else:
+                parts.append(f"  - DOI:{doi} (не найдена в evidence pack)")
+        parts.append("")
+
+        if discovery.gap_hypotheses:
+            parts.append("### Гипотезы о пробелах:")
+            for g in discovery.gap_hypotheses[:6]:
+                parts.append(f"  - {g}")
+            parts.append("")
+
+        if discovery.additional_queries:
+            parts.append(f"### Дополнительные запросы: {discovery.additional_queries}")
+            parts.append("")
+
+        parts.append(f"### Оценка материала: **{discovery.material_sufficiency}**")
+        if discovery.confidence_note:
+            parts.append(f"Примечание: {discovery.confidence_note[:300]}")
+        parts.append("")
+
+        return "\n".join(parts)
+
+    # ── Phase 3: Validate ──────────────────────────────────────────
+
+    def _validate_proposal_bplus(
+        self, raw: dict, discovery: DiscoveryReport, evidence: EvidencePack, index: int = 0
     ) -> ArticleProposal:
-        """Validate a raw proposal: DOI check, duplicate check, confidence scoring."""
-        # 1. Collect references from LLM output
-        # NOTE: We trust LLM-generated DOIs even if not in local storage.
-        # _check_doi_exists() only works for articles already in our DB,
-        # but LLM may reference new/published DOIs from its training data.
-        # Filtering them out leaves proposals with empty key_references.
+        """B+ validation: DOI gate against discovery report + enhanced scoring."""
         raw_refs = raw.get("key_references", [])
         valid_refs = []
         unchecked_refs = []
+        valid_in_local = 0
+
+        allowed_dois = set(discovery.selected_dois)
 
         for ref in raw_refs:
             doi = ref.replace("DOI:", "").replace("doi:", "").strip()
             if not doi:
                 continue
+
+            # B+ RULE: DOI must be in discovery's selected_dois OR validate in local DB
+            is_allowed = doi in allowed_dois
+            is_valid_local = False
+
             if self.tools is not None:
                 try:
                     result = self.tools.execute("validate_doi", {"doi": doi})
                     if hasattr(result, 'success') and result.success and result.data.get("valid"):
                         valid_refs.append(ref)
+                        valid_in_local += 1
+                        is_valid_local = True
                         continue
                 except Exception:
                     pass
-            # Keep DOI even if validation failed — LLM knows better than our local DB
-            unchecked_refs.append(ref)
 
-        # Prefer validated refs, fall back to all LLM refs
+            if is_allowed:
+                # In discovery but not validated locally → keep as unchecked
+                unchecked_refs.append(ref)
+            # If NOT in discovery AND NOT local → drop it (wasn't researched)
+
         key_references = valid_refs if valid_refs else unchecked_refs
 
-        # 2. Check for duplicates against existing articles
+        # Duplicate check
         is_duplicate = False
         title = raw.get("title", "")
-        if title and analysis.existing_articles:
-            for ex in analysis.existing_articles:
-                ex_title = ex.get("preview", "") or ex.get("file", "")
-                sim = self._similarity(title.lower(), ex_title.lower())
-                if sim > 0.6:
-                    is_duplicate = True
-                    break
+        # Note: existing_articles check requires find_similar_existing which needs tools
+        # For now, skip duplicate check here (it's done at orchestrator level too)
 
-        # 3. Score confidence based on evidence
+        # Confidence scoring (B+ enhanced)
         base_confidence = float(raw.get("confidence", 0.5))
 
-        # Penalty for few sources
-        if len(valid_refs) < 3:
-            base_confidence *= 0.7
-        elif len(valid_refs) < 5:
+        # Evidence depth bonus
+        refs_with_detail = sum(1 for r in key_references
+                               for d in r.replace("DOI:", "").replace("doi:", "").strip().split()
+                               if d.startswith("10.") and d in discovery.explored_dois)
+        if refs_with_detail >= 5:
+            base_confidence *= 1.1   # Deep research bonus
+        elif refs_with_detail >= 3:
+            base_confidence *= 1.05  # Medium depth
+
+        # Source diversity check
+        ref_sources = set()
+        for ref in key_references:
+            doi_clean = ref.replace("DOI:", "").replace("doi:", "").strip()
+            art = next((a for a in evidence.all_articles if a["doi"] == doi_clean), None)
+            if art:
+                ref_sources.add(art["source"])
+        if len(ref_sources) >= 3:
+            base_confidence *= 1.05  # Diverse sources bonus
+
+        # Material penalty
+        if discovery.material_sufficiency == "insufficient":
+            base_confidence *= 0.6
+        elif discovery.material_sufficiency == "limited":
             base_confidence *= 0.85
 
-        # Penalty for duplicate
+        # Few sources penalty
+        total_refs = len(key_references)
+        if total_refs < 3:
+            base_confidence *= 0.7
+        elif total_refs < 5:
+            base_confidence *= 0.85
+
+        # Duplicate penalty
         if is_duplicate:
             base_confidence *= 0.25
 
-        # Clamp to [0, 1]
         base_confidence = max(0.0, min(1.0, base_confidence))
+
+        # Determine discovery depth
+        if refs_with_detail >= max(3, total_refs * 0.6):
+            depth = "deep"
+        elif refs_with_detail >= 1:
+            depth = "medium"
+        else:
+            depth = "shallow"
+
+        # Enriched sources
+        enriched = []
+        for ref in key_references[:15]:
+            doi_clean = ref.replace("DOI:", "").replace("doi:", "").strip()
+            art = next((a for a in evidence.all_articles if a["doi"] == doi_clean), None)
+            if art:
+                enriched.append({
+                    "doi": doi_clean,
+                    "title_ru": art["title_ru"] or art["title"],
+                    "source": art["source"],
+                    "year": art["year"],
+                })
 
         status = "duplicate" if is_duplicate else "proposed"
 
@@ -496,59 +867,14 @@ class EditorAgent:
             gap_filled=raw.get("gap_filled", ""),
             estimated_sections=raw.get("estimated_sections", []),
             status=status,
+            enriched_sources=enriched,
+            graph_roles={},  # Filled by orchestrator's _enrich_with_graph
+            discovery_depth=depth,
         )
 
-    def _format_analysis_context(self, analysis: StorageAnalysis) -> str:
-        """Format analysis results for inclusion in proposal prompt."""
-        parts = [
-            f"## Результаты анализа хранилища",
-            f"",
-            f"- Всего статей в базе: {analysis.total_articles}",
-            f"- Релевантных по теме: {analysis.relevant_count}",
-            f"- Временной охват: {analysis.year_range[0]}–{analysis.year_range[1]}",
-            f"",
-        ]
-
-        if analysis.clusters:
-            parts.append("### Кластеры по подтемам:")
-            for c in analysis.clusters[:10]:
-                parts.append(f"  - **{c.get('theme', '?')}**: {c.get('count', 0)} статей")
-            parts.append("")
-
-        if analysis.gaps:
-            parts.append("### Выявленные информационные пробелы:")
-            for g in analysis.gaps[:8]:
-                parts.append(f"  - {g}")
-            parts.append("")
-
-        if analysis.existing_articles:
-            parts.append(f"### Уже существующие статьи ({len(analysis.existing_articles)}):")
-            for ex in analysis.existing_articles[:5]:
-                fname = ex.get("file", "?")
-                sim = ex.get("similarity", "?")
-                parts.append(f"  - {fname} (сходство: {sim})")
-            parts.append("")
-
-        return "\n".join(parts)
-
-    def _build_proposal_prompt(
-        self, analysis_context: str, max_proposals: int, topic: str, domain: str | None
-    ) -> str:
-        """Build the system prompt for Phase 2 (proposals)."""
-        base = PROPOSAL_SYSTEM_PROMPT
-        # Insert analysis context after the rules section
-        context_section = f"\n\n## ДАННЫЕ АНАЛИЗА ХРАНИЛИЩА\n\n{analysis_context}\n"
-        # Append constraints
-        constraints = f"\n\n## ОГРАНИЧЕНИЯ\n- Максимум {max_proposals} предложений\n"
-        if domain:
-            constraints += f"- Домен: {domain}\n"
-        constraints += f"- Тема: {topic}\n"
-        constraints += "- Отвечай ТОЛЬКО на русском языке\n"
-
-        return base + context_section + constraints
+    # ── Checkpoint / Resume helpers ─────────────────────────────────
 
     def _save_checkpoint(self, state: EditorState) -> None:
-        """Save state to JSON checkpoint file."""
         path = self.jobs_dir / f"{state.job_id}.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(state.to_dict(), f, ensure_ascii=False, indent=2, default=str)
@@ -556,21 +882,11 @@ class EditorAgent:
 
     def _reconstruct_result(self, state_data: dict) -> EditorResult:
         """Reconstruct EditorResult from saved checkpoint."""
-        analysis = None
-        if state_data.get("analysis"):
-            ad = state_data["analysis"]
-            yr = ad.get("year_range", [0, 0])
-            analysis = StorageAnalysis(
-                total_articles=ad.get("total_articles", 0),
-                relevant_count=ad.get("relevant_count", 0),
-                clusters=ad.get("clusters", []),
-                year_range=(yr[0], yr[1]) if isinstance(yr, list) else (0, 0),
-                by_year={int(k): v for k, v in ad.get("by_year", {}).items() if str(k).isdigit()},
-                source_distribution=ad.get("source_distribution", {}),
-                existing_articles=ad.get("existing_articles", []),
-                gaps=ad.get("gaps", []),
-                raw_llm_analysis=ad.get("raw_llm_analysis", ""),
-            )
+        discovery = None
+        dd = state_data.get("discovery") or state_data.get("analysis")
+        if dd:
+            discovery = DiscoveryReport(**{k: v for k, v in dd.items()
+                                          if k in DiscoveryReport.__dataclass_fields__})
 
         proposals = []
         for pd in state_data.get("proposals", []):
@@ -580,7 +896,8 @@ class EditorAgent:
             job_id=state_data["job_id"],
             topic=state_data.get("topic", ""),
             status=state_data.get("phase", "unknown"),
-            analysis=analysis,
+            analysis=dd,
+            discovery=discovery,
             proposals=proposals,
             error=state_data.get("error"),
         )
@@ -589,44 +906,37 @@ class EditorAgent:
 
     @staticmethod
     def _gen_job_id() -> str:
-        """Generate unique job ID based on timestamp."""
         return f"edit_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
     def _check_doi_exists(self, doi: str) -> bool:
-        """Check if DOI exists in storage via validate_doi tool."""
         if self.tools is None:
-            return False  # Can't validate without tools
+            return False
         result = self.tools.execute("validate_doi", {"doi": doi})
         if hasattr(result, 'success'):
             return result.success and result.data.get("valid", False)
         try:
-            import json as _j
-            d = _j.loads(result) if isinstance(result, str) else result
+            d = json.loads(result) if isinstance(result, str) else result
             return d.get("valid", False)
         except Exception:
             return False
 
     @staticmethod
     def _extract_gaps(text: str) -> list[str]:
-        """Extract information gaps from LLM analysis text."""
         gaps = []
-        # Look for patterns like "пробел:", "не хватает:", "gap:", "недостаточно:"
         patterns = [
             r'(?:пробел|не хватает|недостаточно|gap|missing)[^.:]*[:\.]\s*([^\n]+)',
             r'-\s*(?:нет|отсутствует|не покрыто)[^\n]*',
         ]
-        import re
         for pattern in patterns:
             for m in re.finditer(pattern, text, re.IGNORECASE):
                 gap = m.group(1) if m.lastindex else m.group(0)
                 gap = gap.strip().lstrip("- ").strip()
                 if len(gap) > 5:
                     gaps.append(gap)
-        return gaps[:10]  # Limit to top 10
+        return gaps[:10]
 
     @staticmethod
     def _similarity(a: str, b: str) -> float:
-        """Simple Jaccard similarity between two strings."""
         if not a or not b:
             return 0.0
         sa = set(a.lower().split())
@@ -637,5 +947,4 @@ class EditorAgent:
 
 
 def _now_iso() -> str:
-    """Current UTC time in ISO format."""
     return datetime.now(timezone.utc).isoformat()

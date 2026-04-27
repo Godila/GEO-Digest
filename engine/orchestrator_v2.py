@@ -180,7 +180,6 @@ class EditorOrchestrator:
                 topic=job.topic,
                 domain=job.domain,
                 user_instruction=job.user_comment,
-                max_proposals=5,
             )
             # Сохраняем результат editor как dict
             job.editor_result = self._serialize_editor_result(result)
