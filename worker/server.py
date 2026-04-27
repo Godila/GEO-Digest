@@ -1360,6 +1360,8 @@ async def orch_cancel_job(job_id: str):
 
 _editor_jobs: dict[str, dict] = {}  # in-memory cache (checkpoints on disk)
 
+_job_write_lock = threading.Lock()  # protects concurrent JSON writes to job files
+
 
 def _get_editor() -> "EditorAgent":
     """Create and return an EditorAgent instance."""
@@ -1376,6 +1378,36 @@ def _get_editor() -> "EditorAgent":
         base_url=cfg.llm.base_url,
     )
     return EditorAgent(storage=storage, llm=llm, jobs_dir=DATA_DIR / "jobs")
+
+
+# ── PIPELINE ORCHESTRATOR (v2) ────────────────────────────────
+
+_orchestrator = None
+
+
+def _get_orchestrator() -> "EditorOrchestrator":
+    """Create/reuse EditorOrchestrator singleton with storage + LLM."""
+    global _orchestrator
+    if _orchestrator is None:
+        _ensure_engine_imports()
+        from engine.orchestrator_v2 import EditorOrchestrator
+        from engine.storage.jsonl_backend import JsonlStorage
+        from engine.llm.minimax import MiniMaxProvider
+        from engine.config import get_config
+
+        storage = JsonlStorage(data_dir=str(DATA_DIR))
+        cfg = get_config()
+        llm = MiniMaxProvider(
+            api_key=cfg.llm.api_key,
+            model=cfg.llm.model,
+            base_url=cfg.llm.base_url,
+        )
+        _orchestrator = EditorOrchestrator(
+            jobs_dir=str(DATA_DIR / "jobs"),
+            storage=storage,
+            llm_provider=llm,
+        )
+    return _orchestrator
 
 
 def _enrich_proposals(proposals: list[dict], topic: str = "") -> list[dict]:
@@ -1521,8 +1553,9 @@ async def editor_analyze(request: Request):
         }
         jobs_dir = DATA_DIR / "jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
-        with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
-            json.dump(initial_state, f, ensure_ascii=False, indent=2)
+        with _job_write_lock:
+            with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+                json.dump(initial_state, f, ensure_ascii=False, indent=2)
 
         def target():
             """Background: run EditorAgent → enrich → save final result."""
@@ -1550,8 +1583,9 @@ async def editor_analyze(request: Request):
                 result["job_id"] = job_id
 
                 # Save final enriched result to disk
-                with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
+                with _job_write_lock:
+                    with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
 
             except Exception as e:
                 error_result = dict(initial_state)
@@ -1559,8 +1593,9 @@ async def editor_analyze(request: Request):
                 error_result["error"] = str(e)
                 error_result["updated_at"] = datetime.now().isoformat()
                 try:
-                    with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
-                        json.dump(error_result, f, ensure_ascii=False, indent=2)
+                    with _job_write_lock:
+                        with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+                            json.dump(error_result, f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
 
@@ -1671,8 +1706,9 @@ async def editor_select_proposal(job_id: str, prop_id: str):
     data["selected_proposal_id"] = prop_id
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    with open(job_path, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+    with _job_write_lock:
+        with open(job_path, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
     return {"status": "selected", "proposal_id": prop_id}
 
@@ -1712,6 +1748,207 @@ async def editor_job_logs(job_id: str):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  PIPELINE ENDPOINTS (Orchestrator v2 — full article cycle)
+# ══════════════════════════════════════════════════════════════════
+
+@app.post("/api/pipeline/run")
+async def pipeline_run(request: Request):
+    """Start new pipeline job: topic → editing phase."""
+    body = await request.json()
+    topic = body.get("topic", "")
+    domain = body.get("domain")
+    user_comment = body.get("user_comment")
+
+    if not topic and not domain:
+        raise HTTPException(400, "topic or domain required")
+
+    try:
+        orch = _get_orchestrator()
+        job = orch.create_job(topic=topic, domain=domain, user_comment=user_comment)
+        # create_job() already calls _save_job() internally
+
+        # Run editing phase in background — pass job object
+        _job_obj = job
+
+        def target():
+            try:
+                orch.run_editing_phase(_job_obj)
+            except Exception as e:
+                _log(f"Pipeline editing failed: {e}")
+                try:
+                    loaded = orch.load_job(_job_obj.job_id)
+                    if loaded:
+                        from engine.schemas import PipelineState
+                        loaded.state = PipelineState.FAILED
+                        loaded.error = str(e)
+                        orch._save_job(loaded)
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+
+        return {
+            "job_id": job.job_id,
+            "state": job.state.value if hasattr(job.state, 'value') else str(job.state),
+            "message": f"Pipeline started: {topic or domain}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/pipeline/jobs")
+async def pipeline_list_jobs():
+    """List all pipeline jobs."""
+    orch = _get_orchestrator()
+    jobs = orch.list_jobs()
+    return {
+        "jobs": jobs,
+        "total": len(jobs),
+    }
+
+
+@app.get("/api/pipeline/jobs/{job_id}")
+async def pipeline_get_job(job_id: str):
+    """Get pipeline job details with all phases."""
+    orch = _get_orchestrator()
+    job = orch.load_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Pipeline job {job_id} not found")
+    # PipelineJob is a dataclass — use asdict()
+    from dataclasses import asdict
+    return asdict(job)
+
+
+@app.post("/api/pipeline/jobs/{job_id}/select")
+async def pipeline_select_proposal(job_id: str, request: Request):
+    """Select a proposal → transition to DEVELOPING."""
+    body = await request.json()
+    prop_id = body.get("proposal_id", "")
+    if not prop_id:
+        raise HTTPException(400, "proposal_id required")
+
+    try:
+        orch = _get_orchestrator()
+        job = orch.load_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id} not found")
+        job = orch.select_proposal(job, prop_id)
+        state_val = job.state.value if hasattr(job.state, 'value') else str(job.state)
+        return {"state": state_val, "selected_proposal_id": prop_id}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/pipeline/jobs/{job_id}/develop")
+async def pipeline_develop(job_id: str, request: Request):
+    """Run Reader Agent → StructuredDraft (background)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    feedback = body.get("user_feedback")
+
+    try:
+        orch = _get_orchestrator()
+        job = orch.load_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id} not found")
+
+        _job_obj = job
+        _feedback = feedback
+
+        def target():
+            try:
+                orch.develop(_job_obj, user_feedback=_feedback or "")
+            except Exception as e:
+                _log(f"Pipeline develop failed: {e}")
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+
+        return {"state": "developing", "message": "Development started"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/pipeline/jobs/{job_id}/write")
+async def pipeline_write(job_id: str):
+    """Run Writer Agent → final Article (background)."""
+    try:
+        orch = _get_orchestrator()
+        job = orch.load_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id} not found")
+
+        _job_obj = job
+
+        def target():
+            try:
+                orch.write(_job_obj)
+            except Exception as e:
+                _log(f"Pipeline write failed: {e}")
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+
+        return {"state": "writing", "message": "Writing started"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/pipeline/jobs/{job_id}/review")
+async def pipeline_review(job_id: str):
+    """Run Reviewer Agent → fact-check (background)."""
+    try:
+        orch = _get_orchestrator()
+        job = orch.load_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id} not found")
+
+        _job_obj = job
+
+        def target():
+            try:
+                orch.review(_job_obj)
+            except Exception as e:
+                _log(f"Pipeline review failed: {e}")
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+
+        return {"state": "reviewing", "message": "Review started"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/api/pipeline/jobs/{job_id}")
+async def pipeline_delete_job(job_id: str):
+    """Cancel/delete a pipeline job."""
+    try:
+        orch = _get_orchestrator()
+        job = orch.load_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id} not found")
+        result = orch.cancel(job)
+        return {"cancelled": result, "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 if __name__ == "__main__":

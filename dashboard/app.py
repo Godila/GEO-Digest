@@ -577,6 +577,61 @@ async def api_editor_logs(job_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  PIPELINE PROXY (Orchestrator v2 — full article cycle)
+# ══════════════════════════════════════════════════════════════════
+
+@app.post("/api/pipeline/run")
+async def pipeline_run(request: Request):
+    """Start pipeline job -> proxy to worker."""
+    body = await request.json()
+    return _worker_post("/api/pipeline/run", json_body=body, timeout=320)
+
+
+@app.get("/api/pipeline/jobs")
+async def pipeline_list_jobs():
+    """List pipeline jobs -> proxy to worker."""
+    return _worker_get("/api/pipeline/jobs")
+
+
+@app.get("/api/pipeline/jobs/{job_id}")
+async def pipeline_get_job(job_id: str):
+    """Get pipeline job details -> proxy to worker."""
+    return _worker_get(f"/api/pipeline/jobs/{job_id}")
+
+
+@app.post("/api/pipeline/jobs/{job_id}/select")
+async def pipeline_select_proposal(job_id: str, request: Request):
+    """Select proposal -> proxy to worker."""
+    body = await request.json()
+    return _worker_post(f"/api/pipeline/jobs/{job_id}/select", json_body=body, timeout=15)
+
+
+@app.post("/api/pipeline/jobs/{job_id}/develop")
+async def pipeline_develop(job_id: str, request: Request):
+    """Run Reader Agent -> proxy to worker (background)."""
+    body = await request.json() if await request.body() else {}
+    return _worker_post(f"/api/pipeline/jobs/{job_id}/develop", json_body=body, timeout=120)
+
+
+@app.post("/api/pipeline/jobs/{job_id}/write")
+async def pipeline_write(job_id: str):
+    """Run Writer Agent -> proxy to worker (background)."""
+    return _worker_post(f"/api/pipeline/jobs/{job_id}/write", timeout=120)
+
+
+@app.post("/api/pipeline/jobs/{job_id}/review")
+async def pipeline_review(job_id: str):
+    """Run Reviewer Agent -> proxy to worker (background)."""
+    return _worker_post(f"/api/pipeline/jobs/{job_id}/review", timeout=120)
+
+
+@app.delete("/api/pipeline/jobs/{job_id}")
+async def pipeline_delete_job(job_id: str):
+    """Delete pipeline job -> proxy to worker."""
+    return _worker_request("DELETE", f"/api/pipeline/jobs/{job_id}")
+
+
+# ══════════════════════════════════════════════════════════════════
 #  PAGE ROUTE
 # ══════════════════════════════════════════════════════════════════
 

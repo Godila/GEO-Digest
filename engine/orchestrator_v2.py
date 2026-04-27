@@ -87,9 +87,14 @@ class EditorOrchestrator:
     Reader/Writer/Reviewer — downstream агенты.
     """
 
-    def __init__(self, jobs_dir: str = "/app/data/jobs"):
+    def __init__(self, jobs_dir: str = "/app/data/jobs",
+                 storage=None, llm_provider=None):
         self.jobs_dir = Path(jobs_dir)
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Dependencies for agent creation — passed from server.py
+        self._storage = storage
+        self._llm_provider = llm_provider
 
         # Lazy imports — агенты инициализируются при первом использовании
         self._editor = None
@@ -101,7 +106,11 @@ class EditorOrchestrator:
     def editor(self):
         if self._editor is None:
             from engine.agents.editor import EditorAgent
-            self._editor = EditorAgent()
+            self._editor = EditorAgent(
+                storage=self._storage,
+                llm=self._llm_provider,
+                jobs_dir=str(self.jobs_dir),
+            )
         return self._editor
 
     @property

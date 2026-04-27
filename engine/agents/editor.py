@@ -170,8 +170,8 @@ class EditorAgent:
                         description=schema.get("description", ""),
                         **schema.get("input_schema", {}),
                     )
-            except Exception:
-                pass  # Graph may not exist yet — storage-only mode
+            except Exception as e:
+                logger.warning("Graph tools not available: %s", e)
         return self._tools
 
     @property
@@ -294,7 +294,9 @@ class EditorAgent:
                 tool_rounds_total=analysis_result.total_rounds + proposal_result.total_rounds,
                 total_tokens_used=(
                     analysis_result.usage.get("input_tokens", 0) +
-                    proposal_result.usage.get("input_tokens", 0)
+                    analysis_result.usage.get("output_tokens", 0) +
+                    proposal_result.usage.get("input_tokens", 0) +
+                    proposal_result.usage.get("output_tokens", 0)
                 ),
                 duration_sec=elapsed,
                 warnings=analysis_result.warnings + proposal_result.warnings,
@@ -607,8 +609,8 @@ class EditorAgent:
         """Simple Jaccard similarity between two strings."""
         if not a or not b:
             return 0.0
-        sa = set(a.split())
-        sb = set(b.split())
+        sa = set(a.lower().split())
+        sb = set(b.lower().split())
         intersection = sa & sb
         union = sa | sb
         return len(intersection) / len(union) if union else 0.0
