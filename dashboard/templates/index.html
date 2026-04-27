@@ -3913,6 +3913,9 @@ function startEditorPolling(jobId) {
 /** Load full editor job detail and render proposals */
 async function loadEditorJobDetail(jobId) {
     try {
+        // Set job ID FIRST — renderProposals() uses it in onclick handlers
+        currentEditorJobId = jobId;
+
         const job = await api(`/editor/jobs/${jobId}`);
         // Handle wrapped response (some endpoints return {detail: ...})
         const data = job.detail || job;
@@ -3971,8 +3974,14 @@ function renderProposals(proposals) {
 
 /** Select a proposal — calls API and shows detail panel */
 async function selectProposal(jobId, propId) {
-    try {
-        await api(`/editor/jobs/${jobId}/select/${propId}`, 'POST');
+    if (!jobId || jobId === 'null' || !propId) {
+        toast('Ошибка: отсутствует ID job или proposal', 'error');
+        console.error('selectProposal called with invalid args:', {jobId, propId});
+        return;
+    }
+    (async () => {
+        try {
+            await api(`/editor/jobs/${jobId}/select/${propId}`, 'POST');
 
         // Visual selection
         document.querySelectorAll('.proposal-card').forEach(c => c.classList.remove('selected'));
@@ -3986,9 +3995,10 @@ async function selectProposal(jobId, propId) {
 
         // Refresh history
         loadEditorHistory();
-    } catch(e) {
-        toast('Ошибка выбора: ' + e.message, 'error');
-    }
+        } catch(e) {
+            toast('Ошибка выбора: ' + e.message, 'error');
+        }
+    })();
 }
 
 /** Show selected article detail panel with tabs */
