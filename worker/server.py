@@ -1378,6 +1378,105 @@ def _get_editor() -> "EditorAgent":
     return EditorAgent(storage=storage, llm=llm, jobs_dir=DATA_DIR / "jobs")
 
 
+def _enrich_proposals(proposals: list[dict], topic: str = "") -> list[dict]:
+    """Post-processing: enrich proposals with graph data + full source metadata.
+
+    Called after EditorAgent.run() to add:
+    1. graph_context — PageRank/Betweenness/hub/bridge for each reference
+    2. enriched_sources — DOI resolved to full metadata (title, authors, year)
+    """
+    enriched = []
+    try:
+        from engine.tools.graph_tools import GraphTools
+        gt = GraphTools()
+        graph_ok = True
+    except Exception:
+        graph_ok = False
+
+    # Load articles DB for DOI→metadata resolution
+    articles_db = {}
+    try:
+        import json as _json
+        _articles_file = DATA_DIR / "articles.jsonl"
+        if _articles_file.exists():
+            with open(_articles_file) as _f:
+                for _line in _f:
+                    if _line.strip():
+                        _a = _json.loads(_line)
+                        if _a.get("doi"):
+                            articles_db[_a["doi"].lower().strip()] = _a
+    except Exception:
+        pass
+
+    def _extract_dois(refs):
+        dois = []
+        for r in refs:
+            if isinstance(r, str):
+                doi = r.strip()
+                # Handle both "doi: 10.xxx" and "DOI:10.xxx" formats
+                if doi.lower().startswith("doi:"):
+                    doi = doi[4:].strip()
+                if "/" in doi and len(doi) > 8:
+                    dois.append(doi.lower())
+            elif isinstance(r, dict) and r.get("doi"):
+                dois.append(r["doi"].lower().strip())
+        return dois
+
+    for prop in proposals:
+        p = dict(prop)  # shallow copy
+
+        # ── 1. Graph context ──
+        if graph_ok:
+            gc = []
+            dois = _extract_dois(p.get("key_references", []))
+            for doi in dois:
+                cr = gt.graph_centrality(doi)
+                if cr.success and cr.data:
+                    gc.append({
+                        "doi": doi,
+                        "page_rank": round(cr.data.get("page_rank", 0), 4),
+                        "betweenness": round(cr.data.get("betweenness", 0), 4),
+                        "role": cr.data.get("role", "unknown"),
+                        "degree": cr.data.get("degree", 0),
+                        "is_hub": cr.data.get("is_hub", False),
+                        "is_bridge": cr.data.get("is_bridge", False),
+                    })
+            if gc:
+                p["graph_context"] = gc
+
+        # ── 2. Enriched sources (DOI → full metadata) ──
+        if articles_db:
+            enriched_srcs = []
+            for ref in p.get("key_references", []):
+                raw_doi = ref.strip() if isinstance(ref, str) else ""
+                if raw_doi.lower().startswith("doi:"):
+                    raw_doi = raw_doi[4:].strip()
+                lookup_key = raw_doi.lower().strip()
+
+                art = articles_db.get(lookup_key)
+                if art:
+                    enriched_srcs.append({
+                        "doi": raw_doi,
+                        "title": art.get("title", ""),
+                        "title_ru": art.get("title_ru", ""),
+                        "authors": art.get("authors", ""),
+                        "year": art.get("year"),
+                        "journal": art.get("source", art.get("journal", "")),
+                        "citations": art.get("citations", 0),
+                        "abstract": (art.get("abstract_ru") or art.get("abstract", ""))[:500],
+                        "type": art.get("article_type", ""),
+                        "topics": art.get("topics", []),
+                        "score": art.get("total_score", 0),
+                    })
+                else:
+                    enriched_srcs.append({"doi": raw_doi, "title": "", "not_found": True})
+            p["enriched_sources"] = enriched_srcs
+
+        enriched.append(p)
+
+    return enriched
+
+
 @app.post("/api/editor/analyze")
 async def editor_analyze(request: Request):
     """
@@ -1428,7 +1527,21 @@ async def editor_analyze(request: Request):
             raise HTTPException(500, result_container["error"])
 
         result = result_container["result"]
+
+        # ── Post-processing: enrich proposals with graph + source metadata ──
+        proposals = result.get("proposals", [])
+        if proposals:
+            result["proposals"] = _enrich_proposals(proposals, topic=topic or domain or "")
+
         _editor_jobs[result["job_id"]] = result
+
+        # Also save enriched version to disk so GET reads it too
+        try:
+            job_disk_path = DATA_DIR / "jobs" / f"{result['job_id']}.json"
+            with open(job_disk_path, "w", encoding="utf-8") as _jf:
+                json.dump(result, _jf, ensure_ascii=False, indent=2)
+        except Exception:
+            pass  # non-critical, GET will lazy-enrich
 
         return {
             "job_id": result["job_id"],
@@ -1479,6 +1592,16 @@ async def editor_get_job(job_id: str):
 
     with open(job_path) as f:
         data = json.load(f)
+
+    # ── Lazy enrichment: add missing graph_context / enriched_sources ──
+    proposals = data.get("proposals", [])
+    if proposals:
+        needs_graph = not proposals[0].get("graph_context")
+        needs_sources = not proposals[0].get("enriched_sources")
+        if needs_graph or needs_sources:
+            topic = data.get("topic", "")
+            data["proposals"] = _enrich_proposals(proposals, topic=topic)
+
     return data
 
 

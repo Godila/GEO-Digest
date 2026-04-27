@@ -35,7 +35,7 @@ from typing import Any, Optional
 from engine.tools.base import ToolRegistry, ToolResult
 
 # Default graph path (same as worker/dal.py)
-DEFAULT_GRAPH_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "graph_data.json"
+DEFAULT_GRAPH_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "graph_data.json"
 
 
 # ── JSON Schemas (Anthropic format) ──────────────────────────────

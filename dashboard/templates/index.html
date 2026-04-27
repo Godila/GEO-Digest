@@ -826,6 +826,18 @@
 }
 .btn-graph:focus { outline:none; border-color:var(--accent) }
 
+/* Proposal detail modal tabs */
+.detail-tab-btn {
+  background:none; border:none; border-bottom:2px solid transparent;
+  padding:10px 14px; font-size:13px; color:var(--text-muted);
+  cursor:pointer; transition:all .2s; white-space:nowrap;
+}
+.detail-tab-btn:hover { color:var(--text-primary); background:rgba(255,255,255,.04) }
+.detail-tab-btn.active {
+  color:var(--accent); border-bottom-color:var(--accent);
+  font-weight:600;
+}
+
 .selected-article {
     background:var(--bg-secondary); border-radius:12px; padding:24px;
     margin-top:20px; border:1px solid var(--accent);
@@ -3054,6 +3066,8 @@ const _origLoadAgents = window.loadAgentTab || (() => {});
 // ════════════════════════════════════════════════
 
 let currentEditorJobId = null;
+let currentEditorProposals = null;  // For proposal detail modal
+let currentProposal = null;        // Currently viewed proposal in detail modal
 let editorPoller = null;
 let editorEventSource = null;
 
@@ -3144,7 +3158,9 @@ function startEditorPolling(jobId) {
 async function loadEditorJobDetail(jobId) {
     try {
         const job = await api(`/editor/jobs/${jobId}`);
-        renderProposals(job.proposals || []);
+        const proposals = job.proposals || [];
+        currentEditorProposals = proposals;  // Store for detail modal
+        renderProposals(proposals);
 
         if (job.selected_proposal_id) {
             const proposal = (job.proposals || []).find(p => p.id === job.selected_proposal_id);
@@ -3250,37 +3266,73 @@ function showSelectedArticle(proposal) {
 
 /** Switch detail tabs */
 function switchDetailTab(tabName) {
-    // Update tab styles
-    document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
-    const activeTab = document.getElementById('dtab-' + tabName);
-    if (activeTab) activeTab.classList.add('active');
+    // Update tab button styles
+    document.querySelectorAll('.detail-tab-btn').forEach(t => t.classList.remove('active'));
+    const activeBtn = document.querySelector(`.detail-tab-btn[data-tab="${tabName}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
 
-    const panel = document.getElementById('selectedArticle');
-    const proposal = panel._proposal;
-    const content = document.getElementById('detailContent');
+    // Support both old (#selectedArticle) and new (proposalDetailOverlay) modal
+    const panel = document.getElementById('selectedArticle') || document.getElementById('proposalDetailOverlay');
+    const proposal = panel?._proposal || currentProposal;
+    const content = document.getElementById('detailContent') || document.getElementById('detailTabContent');
 
     if (!proposal) return;
 
     if (tabName === 'thesis') {
         content.innerHTML = `<p style="line-height:1.7;color:var(--text-secondary);font-size:14px">${escapeHtml(proposal.thesis || '')}</p>`;
     } else if (tabName === 'sources') {
-        const refs = proposal.key_references || [];
+        // Prefer enriched_sources (full metadata) over raw key_references (DOI only)
+        const refs = proposal.enriched_sources || proposal.key_references || [];
         // Build DOI→graph_context lookup
         const gcMap = {};
-        (proposal.graph_context || []).forEach(g => { gcMap[g.doi || ''] = g; });
+        (proposal.graph_context || []).forEach(g => { gcMap[(g.doi || '').toLowerCase()] = g; });
         if (!refs.length) {
             content.innerHTML = '<p style="color:var(--text-muted)">Нет источников</p>';
             return;
         }
-        content.innerHTML = `<ul style="padding-left:18px;line-height:2;font-size:13px">
-            ${refs.map(r => {
-                const doi = (r.doi || r.id || '').replace(/^DOI:/, '');
-                const gc = gcMap[doi];
-                const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}">${gc.role || '?'}</span>` : '';
-                const focusBtn = doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${doi}')" title="Показать на графе">🎯</button>` : '';
-                return `<li class="graph-ref-row"><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(doi)}</code> ${escapeHtml(r.citation || r.title || '')} ${roleBadge} ${focusBtn}</li>`;
-            }).join('')}
-        </ul>`;
+
+        // Check if we have enriched data
+        const isEnriched = refs[0] && refs[0].title && !refs[0].not_found;
+
+        if (isEnriched) {
+            // ── Rich source cards with full metadata ──
+            content.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">
+                ${refs.map(r => {
+                    const doiKey = (r.doi || '').toLowerCase();
+                    const gc = gcMap[doiKey];
+                    const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}" style="font-size:11px">${(gc.is_hub ? '🔮 hub' : gc.is_bridge ? '🌉 bridge' : '📍 peripheral')} · PR:${(gc.page_rank||0).toFixed(3)}</span>` : '';
+                    const focusBtn = r.doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${r.doi.replace(/'/g, "\\'")}')">🎯</button>` : '';
+                    const scoreTag = r.score ? `<span class="card-score ${r.score >= 3 ? 'score-high' : r.score >= 1.5 ? 'score-mid' : 'score-low'}" style="font-size:11px;padding:2px 8px">${r.score.toFixed(1)}</span>` : '';
+                    return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:12px">
+                        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:6px">
+                            <strong style="font-size:13px;color:var(--text-primary)">${escapeHtml(r.title_ru || r.title || 'Без названия')}</strong>
+                            ${focusBtn}
+                        </div>
+                        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">
+                            ${escapeHtml(r.authors || '')} ${r.year ? '(' + r.year + ')' : ''} · ${escapeHtml(r.journal || r.type || '')}
+                            ${scoreTag ? '&nbsp;' + scoreTag : ''}
+                        </div>
+                        ${roleBadge ? '<div style="margin-bottom:6px">' + roleBadge + '</div>' : ''}
+                        ${r.abstract ? '<div style="font-size:12px;color:var(--text-muted);line-height:1.5">' + escapeHtml(r.abstract.substring(0, 300)) + (r.abstract.length > 300 ? '...' : '') + '</div>' : ''}
+                        ${r.topics?.length ? '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">' + r.topics.map(t => `<span style="font-size:10px;background:rgba(100,149,237,.15);color:#6495ed;padding:1px 6px;border-radius:4px">${t}</span>`).join('') + '</div>' : ''}
+                        <div style="margin-top:6px;font-size:10px;color:var(--text-muted)">
+                            <code>${escapeHtml(r.doi || '')}</code> ${r.citations ? '· ' + r.citations + ' цит.' : ''}
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>`;
+        } else {
+            // Fallback: plain DOI list (no enrichment available)
+            content.innerHTML = `<ul style="padding-left:18px;line-height:2;font-size:13px">
+                ${refs.map(r => {
+                    const doi = (r.doi || r.id || r || '').replace(/^DOI:/i, '').replace(/^doi:/i, '');
+                    const gc = gcMap[doi.toLowerCase()];
+                    const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}">${gc.role || '?'}</span>` : '';
+                    const focusBtn = doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${doi.replace(/'/g, "\\'")}')">🎯</button>` : '';
+                    return `<li class="graph-ref-row"><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(doi)}</code> ${roleBadge} ${focusBtn}</li>`;
+                }).join('')}
+            </ul>`;
+        }
     } else if (tabName === 'develop') {
         content.innerHTML = `
             <div style="margin-bottom:12px">
@@ -3311,10 +3363,63 @@ function reviewArticle(propId) {
     alert('Ревью через Reviewer Agent (prop=' + propId + ') — будет реализовано в S6');
 }
 
-/** Show proposal detail in modal */
+/** Show proposal detail in modal with tabs */
 function showProposalDetailModal(propId) {
-    // Find proposal from current grid - simplified version just alerts
-    alert('Детали предложения ' + propId + ' — модальное окно в следующей версии');
+    const proposal = currentEditorProposals?.find(p => p.id === propId);
+    if (!proposal) { alert('Предложение не найдено: ' + propId); return; }
+
+    currentProposal = proposal;
+
+    // Build modal HTML
+    let modalHtml = `
+    <div id="proposalDetailOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeProposalDetail()">
+      <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:16px;width:min(720px,92vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+          <div>
+            <h3 style="margin:0;font-size:16px;color:var(--text-primary)">${escapeHtml(proposal.title || '')}</h3>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+              <span class="card-score ${proposal.confidence >= 0.7 ? 'score-high' : proposal.confidence >= 0.5 ? 'score-mid' : 'score-low'}">${(proposal.confidence || 0).toFixed(2)}</span>
+              ${_renderGraphBadges(proposal)}
+              <span style="font-size:12px;color:var(--text-muted)">${proposal.target_audience || ''} · ${proposal.sources_available || 0}/${proposal.sources_needed || 0} ист.</span>
+            </div>
+          </div>
+          <button onclick="closeProposalDetail()" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;padding:4px 8px">&times;</button>
+        </div>
+
+        <div style="display:flex;border-bottom:1px solid var(--border);padding:0 16px">
+          ${['Тезис','Источники (' + (proposal.enriched_sources || proposal.key_references || []).length + ')','★ Граф','Доработка'].map((t,i) =>
+            `<button class="detail-tab-btn${i===0?' active':''}" data-tab="${['thesis','sources','graph','develop'][i]}" onclick="switchDetailTab('${['thesis','sources','graph','develop'][i]}')">${t}</button>`
+          ).join('')}
+        </div>
+
+        <div id="detailTabContent" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
+
+        <div style="display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--border)">
+          <button class="btn-primary btn-sm" onclick="selectProposal('${propId}')">✅ Выбрать</button>
+          <button class="btn-secondary btn-sm" onclick="sendForDevelopment('${propId}')">💬 Доработать</button>
+        </div>
+      </div>
+    </div>`;
+
+    // Remove existing modal
+    const existing = document.getElementById('proposalDetailOverlay');
+    if (existing) existing.remove();
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Store proposal on panel for switchDetailTab compatibility
+    const overlay = document.getElementById('proposalDetailOverlay');
+    if (overlay) overlay._proposal = proposal;
+
+    // Show first tab
+    switchDetailTab('thesis');
+}
+
+/** Close proposal detail modal */
+function closeProposalDetail() {
+    const el = document.getElementById('proposalDetailOverlay');
+    if (el) el.remove();
+    currentProposal = null;
 }
 
 /* ── S8: Graph Context Helpers ── */
