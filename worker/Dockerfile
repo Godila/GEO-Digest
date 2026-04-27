@@ -15,7 +15,8 @@ COPY .env.example /app/.env.example
 # Python deps
 RUN pip install --no-cache-dir \
     fastapi uvicorn python-multipart pyyaml \
-    requests httpx
+    requests httpx \
+    'markitdown[pdf]'
 
 # Data volume (shared with dashboard)
 VOLUME ["/app/data"]

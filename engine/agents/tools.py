@@ -322,7 +322,44 @@ class AgentTools:
         return "\n".join(lines)
     
     # ── PDF handling ──
-    
+
+    def enrich_oa_url(self, article: Article) -> None:
+        """
+        Enrich article with OA URL from Unpaywall API if missing.
+
+        Modifies article in-place: sets oa_url field when found.
+        Free API, no key needed, just email for polite use.
+        """
+        if article.get("oa_url"):
+            return  # Already have it
+
+        doi = article.get("doi", "")
+        if not doi:
+            return
+
+        try:
+            import urllib.parse, json
+            email = "geo-digest@research.bot"
+            url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
+
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+
+            # Best PDF URL from Unpaywall
+            pdf_url = data.get("best_oa_location", {}).get("url_for_pdf", "")
+            if not pdf_url:
+                pdf_url = data.get("first_oa_location", {}).get("url_for_pdf", "")
+
+            if pdf_url:
+                article["oa_url"] = pdf_url
+                print(f"  [Unpaywall] Found OA URL for {doi[:30]}...", file=sys.stderr)
+
+        except Exception as e:
+            print(f"  [Unpaywall] Lookup failed for {doi[:30]}...: {e}", file=sys.stderr)
+
     def download_pdf(self, article: Article, timeout: int = 30) -> Optional[Path]:
         """
         Download PDF for article.
@@ -334,6 +371,9 @@ class AgentTools:
         
         Returns path to cached PDF file, or None.
         """
+        # Enrich with Unpaywall if oa_url missing
+        self.enrich_oa_url(article)
+
         cfg = get_config()
         
         urls_to_try = []
@@ -402,55 +442,25 @@ class AgentTools:
     
     def extract_text_from_pdf(self, pdf_path: Path) -> str:
         """
-        Extract text from PDF file.
-        
-        Tries PyMuPDF first, falls back to pdfplumber, then pdftotext CLI.
+        Extract text from PDF file using MarkItDown (Microsoft).
+
+        Returns markdown-formatted text with structure preserved
+        (headings, lists, tables). Falls back to empty string on error.
         """
-        # Try PyMuPDF (fitz)
         try:
-            import fitz
-            doc = fitz.open(str(pdf_path))
-            texts = []
-            for page in doc:
-                t = page.get_text()
-                if t.strip():
-                    texts.append(t)
-            doc.close()
-            result = "\n\n".join(texts)
-            if len(result.strip()) > 200:
-                return result
-        except ImportError:
-            pass
+            from markitdown import MarkItDown
+
+            md = MarkItDown(enable_plugins=False)
+            result = md.convert(str(pdf_path))
+            text = result.text_content
+
+            if text and len(text.strip()) > 200:
+                print(f"  [PDF] MarkItDown extracted {len(text)} chars", file=sys.stderr)
+                return text
+
         except Exception as e:
-            print(f"  [PDF] PyMuPDF error: {e}", file=sys.stderr)
-        
-        # Try pdfplumber
-        try:
-            import pdfplumber
-            with pdfplumber.open(str(pdf_path)) as pdf:
-                texts = [p.extract_text() or "" for p in pdf.pages]
-            result = "\n\n".join(texts)
-            if len(result.strip()) > 200:
-                return result
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"  [PDF] pdfplumber error: {e}", file=sys.stderr)
-        
-        # Try pdftotext CLI
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["pdftotext", "-layout", str(pdf_path), "-"],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode == 0 and len(result.stdout.strip()) > 200:
-                return result.stdout
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"  [PDF] pdftotext error: {e}", file=sys.stderr)
-        
+            print(f"  [PDF] MarkItDown error: {e}", file=sys.stderr)
+
         return ""
     
     # ── Stats ──
