@@ -1872,7 +1872,13 @@ async def pipeline_develop(job_id: str, request: Request):
             try:
                 orch.develop(_job_obj, user_feedback=_feedback or "")
             except Exception as e:
-                logger.info(f"Pipeline develop failed: {e}")
+                logger.error(f"Pipeline develop FAILED: {e}", exc_info=True)
+                try:
+                    _job_obj.state = PipelineState.FAILED
+                    _job_obj.error = f"Develop failed: {e}"
+                    orch._save_job(_job_obj)
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
@@ -1899,7 +1905,13 @@ async def pipeline_write(job_id: str):
             try:
                 orch.write(_job_obj)
             except Exception as e:
-                logger.info(f"Pipeline write failed: {e}")
+                logger.error(f"Pipeline write FAILED: {e}", exc_info=True)
+                try:
+                    _job_obj.state = PipelineState.FAILED
+                    _job_obj.error = f"Write failed: {e}"
+                    orch._save_job(_job_obj)
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
@@ -1926,7 +1938,14 @@ async def pipeline_review(job_id: str):
             try:
                 orch.review(_job_obj)
             except Exception as e:
-                logger.info(f"Pipeline review failed: {e}")
+                logger.error(f"Pipeline review FAILED: {e}", exc_info=True)
+                # Save error to job so UI can show it
+                try:
+                    _job_obj.state = PipelineState.FAILED
+                    _job_obj.error = f"Review failed: {e}"
+                    orch._save_job(_job_obj)
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
