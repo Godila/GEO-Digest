@@ -4,67 +4,317 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ГЕО-Дайджест — Граф знаний</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
     <style>
+        /* ═══════════════════════════════════════════
+           DESIGN TOKENS — единый источник истины
+           ═══════════════════════════════════════════ */
         :root {
-            --bg: #0d1117;
-            --bg-card: #161b22;
-            --bg-hover: #1c2333;
-            --border: #30363d;
-            --text: #e6edf3;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-            --green: #3fb950;
-            --orange: #d29922;
-            --red: #f85149;
-            --purple: #bc8cff;
-            --cyan: #39d2c0;
+            /* ── Colors (semantic) ──────────── */
+            --bg:             #0a0e14;
+            --bg-elevated:    #0f141b;
+            --bg-card:        #151c26;
+            --bg-hover:       #1a2332;
+            --bg-active:      #212d3f;
+            --border:         #252d3a;
+            --border-subtle:  #1c2430;
+            --text:           #d4dce7;
+            --text-muted:     #6b7a8f;
+            --text-dim:       #455062;
+
+            /* Semantic / functional */
+            --accent:         #4d9fff;
+            --accent-glow:    rgba(77,159,255,.18);
+            --success:        #34d399;
+            --success-bg:     rgba(52,211,153,.10);
+            --warning:         #f5a623;
+            --warning-bg:     rgba(245,166,35,.10);
+            --danger:          #f4514e;
+            --danger-bg:      rgba(244,81,78,.10);
+            --info:            #38bdf8;
+            --info-bg:        rgba(56,189,248,.10);
+
+            /* Legacy aliases (keep for compat) */
+            --green:   var(--success);
+            --orange:  var(--warning);
+            --red:     var(--danger);
+            --purple:  #a78bfa;
+            --cyan:    var(--info);
+
+            /* ── Typography Scale (major third) ─ */
+            --font-sans:      'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-mono:      'JetBrains Mono', 'SF Mono', SFMono-Regular, Consolas, monospace;
+
+            --text-xs:    .6875rem;   /* 11px */
+            --text-sm:    .8125rem;   /* 13px */
+            --text-base:  .9375rem;   /* 15px ← was 13px, now readable */
+            --text-md:    1rem;       /* 16px */
+            --text-lg:    1.125rem;   /* 18px */
+            --text-xl:    1.25rem;    /* 20px */
+            --text-2xl:   1.5rem;     /* 24px */
+            --text-3xl:   1.875rem;   /* 30px */
+            --text-4xl:   2.25rem;    /* 36px */
+
+            --leading-tight:   1.25;
+            --leading-normal:  1.5;
+            --leading-relaxed: 1.65;
+            --tracking-tight:  -.01em;
+            --tracking-normal: 0;
+            --tracking-wide:   .02em;
+
+            /* ── Spacing Scale (8-point grid) ── */
+            --space-0:  0;
+            --space-1:  .25rem;   /* 4px */
+            --space-2:  .5rem;    /* 8px */
+            --space-3:  .75rem;   /* 12px */
+            --space-4:  1rem;     /* 16px */
+            --space-5:  1.25rem;  /* 20px */
+            --space-6:  1.5rem;   /* 24px */
+            --space-8:  2rem;     /* 32px */
+            --space-10: 2.5rem;   /* 40px */
+            --space-12: 3rem;     /* 48px */
+            --space-16: 4rem;     /* 64px */
+
+            /* ── Radius ───────────────────── */
+            --radius-sm:   6px;
+            --radius-md:   10px;
+            --radius-lg:   14px;
+            --radius-xl:   20px;
+            --radius-full: 9999px;
+
+            /* ── Shadows ───────────────────── */
+            --shadow-sm:   0 1px 2px rgba(0,0,0,.25);
+            --shadow-md:   0 4px 12px rgba(0,0,0,.30);
+            --shadow-lg:   0 8px 28px rgba(0,0,0,.35);
+            --shadow-glow: 0 0 20px var(--accent-glow);
+
+            /* ── Transitions ────────────────── */
+            --ease-out:    cubic-bezier(.16,1,.3,1);
+            --ease-in-out: cubic-bezier(.83,0,.17,1);
+            --ease-spring:  cubic-bezier(.34,1.56,.64,1);
+
+            --duration-fast:   120ms;
+            --duration-normal: 200ms;
+            --duration-slow:   350ms;
+
+            /* ── Layout ─────────────────────── */
+            --header-height: 56px;
+            --sidebar-width:  var(--split-pos, 46%);
+            --touch-target:   44px;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* ═══════════════════════════════════════════
+           RESET & BASE
+           ═══════════════════════════════════════════ */
+        *, *::before, *::after {
+            margin: 0; padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            font-size: 100%;
+            -webkit-text-size-adjust: 100%;
+            scroll-behavior: smooth;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-            background: var(--bg);
+            font-family: var(--font-sans);
+            font-size: var(--text-base);
+            font-weight: 400;
+            line-height: var(--leading-normal);
+            letter-spacing: var(--tracking-normal);
             color: var(--text);
+            background: var(--bg);
             min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ═══════════════════════════════════════════
+           ACCESSIBILITY — Focus Visible System
+           ═══════════════════════════════════════════ */
+        /* Skip navigation link */
+        .skip-nav {
+            position: absolute;
+            top: -100%; left: 0;
+            z-index: 9999;
+            padding: var(--space-3) var(--space-5);
+            background: var(--accent);
+            color: #fff;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 0 0 var(--radius-md) 0;
+            transition: top var(--duration-fast) var(--ease-out);
+        }
+        .skip-nav:focus {
+            top: 0;
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
+        }
+
+        /* Global focus-visible ring */
+        :focus {
+            outline: none;
+        }
+        :focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+            box-shadow: 0 0 0 4px var(--accent-glow);
+        }
+
+        /* Remove default focus for mouse users, keep for keyboard */
+        :focus:not(:focus-visible) {
+            outline: none;
+            box-shadow: none;
+        }
+
+        /* ═══════════════════════════════════════════
+           TYPOGRAPHY SYSTEM
+           ═══════════════════════════════════════════ */
+        h1, h2, h3, h4, h5, h6 {
+            font-weight: 600;
+            line-height: var(--leading-tight);
+            letter-spacing: var(--tracking-tight);
+            color: var(--text);
+        }
+        h1 { font-size: var(--text-2xl); }
+        h2 { font-size: var(--text-xl);  }
+        h3 { font-size: var(--text-lg);  }
+        h4 { font-size: var(--text-md);  }
+
+        p { margin-bottom: var(--space-3); }
+        strong { font-weight: 600; color: var(--text); }
+        small { font-size: var(--text-sm); color: var(--text-muted); }
+
+        code, .mono {
+            font-family: var(--font-mono);
+            font-size: .9em;
+            background: var(--bg-active);
+            padding: .15em .35em;
+            border-radius: 4px;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+            transition: color var(--duration-fast) var(--ease-out);
+        }
+        a:hover { color: #80bbff; text-decoration: underline; }
+
+        /* Selection */
+        ::selection {
+            background: var(--accent);
+            color: #fff;
         }
 
         /* ── Header ─────────────────── */
         .header {
-            background: var(--bg-card);
-            border-bottom: 1px solid var(--border);
-            padding: 12px 24px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-subtle);
+            padding: 0 var(--space-6);
+            height: var(--header-height);
             display: flex;
             align-items: center;
             justify-content: space-between;
             position: sticky;
             top: 0;
             z-index: 100;
+            backdrop-filter: blur(12px);
         }
-        .header h1 { font-size: 18px; font-weight: 600; }
+        .header h1 {
+            font-size: var(--text-lg);
+            font-weight: 700;
+            letter-spacing: var(--tracking-tight);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
         .header h1 span { color: var(--accent); }
-        .header-stats { display: flex; gap: 16px; font-size: 13px; }
+        .header-stats {
+            display: flex;
+            gap: var(--space-4);
+            font-size: var(--text-sm);
+        }
         .stat-badge {
             background: var(--bg);
-            border: 1px solid var(--border);
-            padding: 4px 10px;
-            border-radius: 12px;
+            border: 1px solid var(--border-subtle);
+            padding: var(--space-1) var(--space-3);
+            border-radius: var(--radius-full);
             color: var(--text-muted);
+            font-size: var(--text-xs);
+            font-weight: 500;
+            transition: border-color var(--duration-fast) var(--ease-out),
+                        color var(--duration-fast) var(--ease-out);
         }
-        .stat-badge b { color: var(--text); }
+        .stat-badge:hover {
+            border-color: var(--border);
+            color: var(--text);
+        }
+        .stat-badge b { color: var(--text); font-weight: 600; }
+
+        /* ── Tab Navigation ──────────── */
+        .tab-nav {
+            display: flex;
+            gap: var(--space-1);
+            padding: var(--space-3) var(--space-6);
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-subtle);
+            overflow-x: auto;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .tab-nav::-webkit-scrollbar { display: none; }
+        .tab-btn {
+            padding: var(--space-2) var(--space-4);
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: var(--radius-md);
+            white-space: nowrap;
+            min-height: var(--touch-target);
+            transition: all var(--duration-fast) var(--ease-out);
+            position: relative;
+        }
+        .tab-btn:hover {
+            color: var(--text);
+            background: var(--bg-hover);
+        }
+        .tab-btn.active {
+            color: var(--accent);
+            background: var(--accent-glow);
+            font-weight: 600;
+        }
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -1px; left: 20%; right: 20%;
+            height: 2px;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
+        }
 
         /* ── Layout (resizable split) ────── */
         .layout {
             display: flex;
-            height: calc(100vh - 53px);
+            height: calc(100vh - var(--header-height));
             overflow: hidden;
         }
         .side-panel {
-            flex: 0 0 var(--split-pos, 45%);
-            min-width: 300px;
-            max-width: 70%;
+            flex: 0 0 var(--sidebar-width);
+            min-width: 320px;
+            max-width: 72%;
             overflow-y: auto;
-            padding: 12px;
-            border-right: 1px solid var(--border);
+            padding: var(--space-5);
+            border-right: 1px solid var(--border-subtle);
+            scroll-behavior: smooth;
         }
         /* Drag handle */
         .resize-handle {
@@ -877,9 +1127,393 @@
 .phase-done { background:rgba(34,197,94,0.15); color:#22c55e }
 .phase-error { background:rgba(239,68,68,0.15); color:#ef4444 }
 .phase-running { background:rgba(59,130,246,0.15); color:#3b82f6 }
+
+        /* ═══════════════════════════════════════════
+           BUTTON SYSTEM — unified component tokens
+           ═══════════════════════════════════════════ */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: 500;
+            line-height: 1;
+            padding: var(--space-2) var(--space-4);
+            border: 1px solid transparent;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            white-space: nowrap;
+            min-height: var(--touch-target);
+            transition: all var(--duration-fast) var(--ease-out);
+            position: relative;
+            overflow: hidden;
+            user-select: none;
+        }
+        .btn:active { transform: scale(.97); }
+
+        /* Primary */
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+            box-shadow: var(--shadow-sm), 0 0 0 0 transparent;
+        }
+        .btn-primary:hover {
+            background: #3d8ef7;
+            border-color: #3d8ef7;
+            box-shadow: var(--shadow-glow);
+        }
+
+        /* Secondary / Ghost */
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border-color: var(--border-subtle);
+        }
+        .btn-secondary:hover {
+            color: var(--text);
+            border-color: var(--border);
+            background: var(--bg-hover);
+        }
+
+        /* Danger */
+        .btn-danger {
+            background: var(--danger-bg);
+            color: var(--danger);
+            border-color: transparent;
+        }
+        .btn-danger:hover {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        /* Sizes */
+        .btn-sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); min-height: 32px; }
+        .btn-lg { padding: var(--space-3) var(--space-6); font-size: var(--text-base); min-height: 48px; }
+
+        /* Link button */
+        .btn-link {
+            background: none;
+            border: none;
+            color: var(--accent);
+            padding: var(--space-1) var(--space-2);
+            min-height: auto;
+        }
+        .btn-link:hover { text-decoration: underline; color: #80bbff; }
+
+        /* Graph focus button */
+        .btn-graph-focus {
+            background: var(--bg-active);
+            color: var(--accent);
+            border: 1px solid var(--border-subtle);
+            padding: 2px 8px;
+            border-radius: var(--radius-sm);
+            font-size: var(--text-xs);
+            cursor: pointer;
+            transition: all var(--duration-fast) var(--ease-out);
+            min-height: auto;
+        }
+        .btn-graph-focus:hover {
+            background: var(--accent-glow);
+            border-color: var(--accent);
+        }
+
+        /* ═══════════════════════════════════════════
+           CARD SYSTEM — improved states
+           ═══════════════════════════════════════════ */
+        .article-card,
+        .proposal-card,
+        .run-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-5);
+            margin-bottom: var(--space-4);
+            cursor: pointer;
+            transition:
+                border-color var(--duration-normal) var(--ease-out),
+                transform var(--duration-normal) var(--ease-out),
+                box-shadow var(--duration-normal) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
+            position: relative;
+        }
+        .article-card:hover,
+        .proposal-card:hover,
+        .run-card:hover {
+            border-color: var(--border);
+            background: var(--bg-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        .article-card:focus-visible,
+        .proposal-card:focus-visible,
+        .run-card:focus-visible {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: var(--shadow-glow);
+        }
+
+        /* Card score badge — refined */
+        .card-score {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: var(--space-1) var(--space-2);
+            border-radius: var(--radius-full);
+            font-size: var(--text-xs);
+            font-weight: 600;
+            line-height: 1;
+        }
+        .score-high   { background: var(--success-bg);   color: var(--success); }
+        .score-mid    { background: var(--warning-bg);   color: var(--warning); }
+        .score-low    { background: var(--danger-bg);    color: var(--danger);  }
+        .score-fallback { background: rgba(156,139,250,.12); color: var(--purple); }
+
+        /* Card meta line */
+        .card-meta {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            flex-wrap: wrap;
+            font-size: var(--text-xs);
+            color: var(--text-dim);
+            margin-top: var(--space-2);
+        }
+        .card-meta span { display: inline-flex; align-items: center; gap: 4px; }
+
+        /* Card title */
+        .card-title {
+            font-size: var(--text-md);
+            font-weight: 600;
+            line-height: var(--leading-tight);
+            letter-spacing: var(--tracking-tight);
+            color: var(--text);
+            margin-bottom: var(--space-2);
+            /* Clamp to 2 lines */
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* Card abstract / preview */
+        .card-preview,
+        .card-abstract {
+            font-size: var(--text-sm);
+            line-height: var(--leading-relaxed);
+            color: var(--text-muted);
+            /* Clamp to 3 lines */
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* ═══════════════════════════════════════════
+           MOTION SYSTEM — keyframes & animations
+           ═══════════════════════════════════════════ */
+
+        /* Fade in up (for cards, modals, content) */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Fade in (for overlays) */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+
+        /* Scale in (for modals) */
+        @keyframes scaleIn {
+            from { opacity: 0; transform: scale(.96) translateY(8px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        /* Skeleton pulse */
+        @keyframes skeletonPulse {
+            0%, 100% { opacity: .4; }
+            50%      { opacity: .15; }
+        }
+
+        /* Spin (loader) */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Shimmer (skeleton loading effect) */
+        @keyframes shimmer {
+            0%   { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        /* Pulse glow (for active/hub nodes) */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+            50%      { box-shadow: 0 0 16px 4px var(--accent-glow); }
+        }
+
+        /* Staggered card entrance */
+        .animate-in {
+            animation: fadeInUp var(--duration-slow) var(--ease-out) both;
+        }
+        /* Apply stagger via inline style: animation-delay: calc(var(--i, 0) * 30ms) */
+
+        /* Modal backdrop */
+        .modal-backdrop {
+            animation: fadeIn var(--duration-normal) var(--ease-out) both;
+        }
+        .modal-content {
+            animation: scaleIn var(--duration-slow) var(--ease-spring) both;
+        }
+
+        /* ═══════════════════════════════════════════
+           SKELETON & EMPTY STATES
+           ═══════════════════════════════════════════ */
+
+        /* Skeleton card placeholder */
+        .skeleton {
+            background: linear-gradient(
+                90deg,
+                var(--bg-card) 25%,
+                var(--bg-hover) 50%,
+                var(--bg-card) 75%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.5s ease-in-out infinite;
+            border-radius: var(--radius-md);
+        }
+        .skeleton-text {
+            height: 14px;
+            margin-bottom: var(--space-2);
+        }
+        .skeleton-text--sm { height: 11px; width: 60%; }
+        .skeleton-text--lg { height: 18px; width: 85%; margin-bottom: var(--space-3); }
+        .skeleton-title {
+            height: 20px;
+            width: 75%;
+            margin-bottom: var(--space-3);
+            border-radius: var(--radius-sm);
+        }
+        .skeleton-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-5);
+            margin-bottom: var(--space-4);
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-12) var(--space-6);
+            text-align: center;
+            color: var(--text-dim);
+        }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: var(--space-5);
+            opacity: .4;
+        }
+        .empty-state-title {
+            font-size: var(--text-lg);
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: var(--space-2);
+        }
+        .empty-state-desc {
+            font-size: var(--text-sm);
+            max-width: 360px;
+            line-height: var(--leading-relaxed);
+        }
+
+        /* Inline toast/notification */
+        .toast {
+            position: fixed;
+            bottom: var(--space-6);
+            right: var(--space-6);
+            z-index: 9999;
+            padding: var(--space-3) var(--space-5);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            font-size: var(--text-sm);
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            animation: fadeInUp var(--duration-normal) var(--ease-spring) both;
+            max-width: 400px;
+        }
+        .toast--success { border-left: 3px solid var(--success); }
+        .toast--error   { border-left: 3px solid var(--danger); }
+        .toast--info    { border-left: 3px solid var(--info); }
+
+        /* ═══════════════════════════════════════════
+           FORM ELEMENTS — unified inputs
+           ═══════════════════════════════════════════ */
+        input[type="text"],
+        input[type="number"],
+        select,
+        textarea {
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: var(--space-2) var(--space-3);
+            min-height: var(--touch-target);
+            transition: border-color var(--duration-fast) var(--ease-out),
+                        box-shadow var(--duration-fast) var(--ease-out);
+            width: 100%;
+        }
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        select:focus,
+        textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+            outline: none;
+        }
+        input::placeholder,
+        textarea::placeholder {
+            color: var(--text-dim);
+        }
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' stroke='%236b7a8f' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: var(--space-8);
+        }
+
+        /* Progress bar — smooth animation */
+        .progress-bar-track {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-active);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #80bbff);
+            border-radius: 2px;
+            transition: width var(--duration-slow) var(--ease-out);
+        }
 </style>
 </head>
 <body>
+
+<!-- Skip to content (accessibility) -->
+<a href="#main-content" class="skip-nav">Перейти к содержимому</a>
 
 <!-- Header -->
 <div class="header">
@@ -894,17 +1528,17 @@
 
 <div class="layout">
     <!-- Side Panel -->
-    <div class="side-panel">
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('articles', this)">Статьи</div>
-            <div class="tab" onclick="switchTab('research', this)">Исследование</div>
-            <div class="tab" onclick="switchTab('agents', this)">🤖 Агенты</div>
-            <div class="tab" onclick="switchTab('graph', this)">Граф</div>
-            <div class="tab" onclick="switchTab('stats', this)">Статистика</div>
+    <div class="side-panel" id="main-content" role="main" aria-label="Основная панель контента">
+        <div class="tabs" role="tablist" aria-label="Навигация по разделам">
+            <div class="tab active" role="tab" aria-selected="true" aria-controls="tabArticles" tabindex="0" onclick="switchTab('articles', this)">Статьи</div>
+            <div class="tab" role="tab" aria-selected="false" aria-controls="tabResearch" tabindex="-1" onclick="switchTab('research', this)">Исследование</div>
+            <div class="tab" role="tab" aria-selected="false" aria-controls="tabAgents" tabindex="-1" onclick="switchTab('agents', this)">🤖 Агенты</div>
+            <div class="tab" role="tab" aria-selected="false" aria-controls="tabGraph" tabindex="-1" onclick="switchTab('graph', this)">Граф</div>
+            <div class="tab" role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1" onclick="switchTab('stats', this)">Статистика</div>
         </div>
 
         <!-- Articles Tab -->
-        <div class="tab-content active" id="tabArticles">
+        <div class="tab-content active" id="tabArticles" role="tabpanel" aria-labelledby="tab-articles-label">
             <div class="filters">
                 <select class="filter-select" id="fSort" onchange="loadArticles()">
                     <option value="total_score">Сорт: Балл ↓</option>
@@ -933,7 +1567,7 @@
         </div>
 
         <!-- Research Tab: Config + Status + History -->
-        <div class="tab-content" id="tabResearch">
+        <div class="tab-content" id="tabResearch" role="tabpanel" aria-labelledby="tab-research-label">
 
             <!-- === CONFIG PANEL === -->
             <div id="researchConfig" class="research-section">
@@ -1012,7 +1646,7 @@
         </div>
 
         <!-- Graph Tab -->
-        <div class="tab-content" id="tabGraph">
+        <div class="tab-content" id="tabGraph" role="tabpanel" aria-labelledby="tab-graph-label">
             <!-- Graph Actions -->
             <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
                 <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
@@ -1034,14 +1668,14 @@
         </div>
 
         <!-- Stats Tab -->
-        <div class="tab-content" id="tabStats">
+        <div class="tab-content" id="tabStats" role="tabpanel" aria-labelledby="tab-stats-label">
             <div class="stats-grid" id="statsGrid">
                 <div class="loading"><div class="spinner"></div></div>
             </div>
         </div>
 
         <!-- Agents Tab: Editor Agent UI -->
-        <div class="tab-content" id="tabAgents">
+        <div class="tab-content" id="tabAgents" role="tabpanel" aria-labelledby="tab-agents-label">
 
             <!-- ═══ Editor Agent (основной режим) ═══ -->
             <div id="editorSection" class="research-section">
@@ -1192,7 +1826,7 @@
     <div class="resize-handle" id="resizeHandle"></div>
 
     <!-- Graph Panel (right side) -->
-    <div class="graph-panel">
+    <div class="graph-panel" role="complementary" aria-label="Панель графа знаний">
         <div id="cy"></div>
         <div class="graph-overlay">
             <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
@@ -1234,6 +1868,28 @@ const COLORS = {
 const TYPE_COLORS = {
     reproduction: '#3fb950',
     review: '#d29922',
+};
+
+// ── Toast Notification System ─────────────────
+function toast(message, type = 'info', duration = 3500) {
+    // Remove existing toasts to avoid stacking
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+
+    const el = document.createElement('div');
+    el.className = `toast toast--${type}`;
+    const icons = { success: '✓', error: '✗', info: 'ℹ', warning: '⚠' };
+    el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+    document.body.appendChild(el);
+
+    // Auto-remove with fade out
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(8px)';
+        el.style.transition = 'all 0.2s ease-out';
+        setTimeout(() => el.remove(), 200);
+    }, duration);
+}
+const TYPE_COLORS_EXT = {
     methods_transfer: '#f85149',
     unknown: '#8b949e',
 };
@@ -1379,9 +2035,17 @@ function ruScore(name) {
 function renderArticles(articles) {
     const el = document.getElementById('articleList');
     if (!articles.length) {
-        el.innerHTML = '<div class="empty-state"><h3>Статей не найдено</h3>Запустите дайджест.</div>';
+        el.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-title">Статей не найдено</div>
+                <div class="empty-state-desc">Попробуйте изменить фильтры или запустите дайджест для сбора новых статей.</div>
+            </div>`;
         return;
     }
+
+    // Staggered entrance: each card animates in sequence
+    const maxDelay = Math.min(articles.length, 30); // cap at 30 for performance
 
     el.innerHTML = articles.map((a, i) => {
         const scores = a.scores || {};
@@ -1426,7 +2090,7 @@ function renderArticles(articles) {
             } catch { dateStr = ''; }
         }
 
-        return `<div class="article-card" onclick="openArticleModal(${i})" data-id="${i}">
+        return `<div class="article-card animate-in" style="--i:${Math.min(i,30)}" onclick="openArticleModal(${i})" data-id="${i}" tabindex="0" role="article" aria-label="${esc(displayTitle)}">
             <div class="card-header">
                 <div class="card-title">${esc(displayTitle)}</div>
                 <div class="card-score ${scoreCls}${isFallback ? ' score-fallback' : ''}">${isFallback ? '~' : ''}${total.toFixed(1)}</div>
@@ -2095,10 +2759,20 @@ document.addEventListener('keydown', e => {
 
 // ── Tabs ──────────────────────────────────────
 function switchTab(tabName, el) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    // Update tab visual + aria states
+    document.querySelectorAll('.tab').forEach(t => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+        t.setAttribute('tabindex', '-1');
+    });
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
     el.classList.add('active');
-    document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active');
+    el.setAttribute('aria-selected', 'true');
+    el.setAttribute('tabindex', '0');
+
+    const panel = document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+    if (panel) panel.classList.add('active');
 
     // Lazy-init graph when switching to Graph tab
     if (tabName === 'graph' && !cy) {
@@ -2118,7 +2792,7 @@ async function rebuildGraph() {
         if (!result.success) throw new Error(result.detail || 'Failed');
         await pollGraphStatus(btn, 'Перестроить граф');
     } catch(e) {
-        alert('Ошибка перестроения графа: ' + e.message);
+        toast('Ошибка перестроения графа: ' + e.message);
         hideGraphBuildPanel();
         btn.disabled = false; incBtn.disabled = false;
     }
@@ -2136,7 +2810,7 @@ async function rebuildGraphIncremental() {
         if (!result.success) throw new Error(result.detail || 'Failed');
         await pollGraphStatus(btn, '🔄 Обновить граф');
     } catch(e) {
-        alert('Ошибка обновления графа: ' + e.message);
+        toast('Ошибка обновления графа: ' + e.message, 'error');
         hideGraphBuildPanel();
         btn.disabled = false; fullBtn.disabled = false;
     }
@@ -2343,7 +3017,7 @@ async function startDigest() {
     const selectedSources = [...document.querySelectorAll('#sourceCheckboxes input:checked[data-type=source]')].map(el => el.value);
 
     if (!selectedTopics.length) {
-        alert('Выберите хотя бы одну тему для поиска');
+        toast('Выберите хотя бы одну тему для поиска', 'error');
         return;
     }
 
@@ -2388,7 +3062,7 @@ async function startDigest() {
         }).then(r => r.json());
 
         if (result.success === false || result.error) {
-            alert('Ошибка запуска: ' + (result.error || result.detail || 'неизвестная ошибка'));
+            toast('Ошибка запуска: ' + (result.error || result.detail || 'неизвестная ошибка'), 'error');
             return;
         }
 
@@ -2396,7 +3070,7 @@ async function startDigest() {
         showStatusPanel();
 
     } catch(e) {
-        alert('Ошибка запроса: ' + e.message);
+        toast('Ошибка запроса: ' + e.message, 'error');
     }
 }
 
@@ -2477,7 +3151,7 @@ async function stopDigest() {
         await api('/digest/stop', 'POST');
         document.getElementById('digestLog').innerHTML += '<div class="log-line log-warn">⏹ Остановлено пользователем</div>';
     } catch(e) {
-        alert('Ошибка остановки: ' + e.message);
+        toast('Ошибка остановки: ' + e.message, 'error');
     }
 }
 
@@ -2608,7 +3282,7 @@ const GROUP_TYPE_NAMES = {
 /** Run Scout Agent */
 async function runScoutAgent() {
     const topic = document.getElementById('agentTopic').value.trim();
-    if (!topic) { alert('Введите тему поиска'); return; }
+    if (!topic) { toast('Введите тему поиска', 'error'); return; }
 
     const mode = document.getElementById('agentMode').value;
     const maxArticles = parseInt(document.getElementById('agentMaxArticles').value) || 10;
@@ -2973,7 +3647,7 @@ async function showAgentJobDetail(jobId) {
         currentScoutJobId = jobId;
 
     } catch(e) {
-        alert('Ошибка загрузки: ' + e.message);
+        toast('Ошибка загрузки: ' + e.message, 'error');
     }
 }
 
@@ -3064,7 +3738,7 @@ async function showOrchJobDetail(jobId) {
         }
         container.innerHTML = detailHtml;
 
-    } catch(e) { alert('Ошибка: ' + e.message); }
+    } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
 }
 
 // Init: load orch jobs when agents tab opens
@@ -3083,7 +3757,7 @@ let editorEventSource = null;
 /** Run Editor Agent — analyze topic and generate proposals (async: returns job_id immediately) */
 async function runEditor() {
     const topic = document.getElementById('editorTopic').value.trim();
-    if (!topic) { alert('Введите тему или домен'); return; }
+    if (!topic) { toast('Введите тему или домен', 'error'); return; }
 
     const instruction = document.getElementById('editorInstruction').value.trim();
     const maxProps = parseInt(document.getElementById('editorMaxProposals').value) || 5;
@@ -3243,7 +3917,7 @@ async function selectProposal(jobId, propId) {
         // Refresh history
         loadEditorHistory();
     } catch(e) {
-        alert('Ошибка выбора: ' + e.message);
+        toast('Ошибка выбора: ' + e.message, 'error');
     }
 }
 
@@ -3365,53 +4039,53 @@ function switchDetailTab(tabName) {
 async function sendForDevelopment(propId) {
     const comment = document.getElementById('developComment')?.value.trim();
     if (!currentEditorJobId) return;
-    alert('Доработка через Editor Agent (job=' + currentEditorJobId + ', prop=' + propId + ', comment=' + comment + ') — будет реализовано в S6');
+    toast('Доработка через Editor Agent (job=' + currentEditorJobId + ', prop=' + propId + ', comment=' + comment + ') — будет реализовано в S6', 'info');
 }
 
 /** Finalize / write article */
 function finalizeArticle(propId) {
-    alert('Написание статьи через Writer Agent (prop=' + propId + ') — будет реализовано в S6');
+    toast('Написание статьи через Writer Agent (prop=' + propId + ') — будет реализовано в S6', 'info');
 }
 
 /** Send for review */
 function reviewArticle(propId) {
-    alert('Ревью через Reviewer Agent (prop=' + propId + ') — будет реализовано в S6');
+    toast('Ревью через Reviewer Agent (prop=' + propId + ') — будет реализовано в S6', 'info');
 }
 
 /** Show proposal detail in modal with tabs */
 function showProposalDetailModal(propId) {
     const proposal = currentEditorProposals?.find(p => p.id === propId);
-    if (!proposal) { alert('Предложение не найдено: ' + propId); return; }
+    if (!proposal) { toast('Предложение не найдено: ' + propId, 'error'); return; }
 
     currentProposal = proposal;
 
-    // Build modal HTML
+    // Build modal HTML — with accessibility + motion
     let modalHtml = `
-    <div id="proposalDetailOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeProposalDetail()">
-      <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:16px;width:min(720px,92vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.4)">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+    <div id="proposalDetailOverlay" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Детали предложения: ${escapeHtml(proposal.title || '')}" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)" onclick="if(event.target===this)closeProposalDetail()">
+      <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);width:min(720px,92vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--border-subtle)">
           <div>
-            <h3 style="margin:0;font-size:16px;color:var(--text-primary)">${escapeHtml(proposal.title || '')}</h3>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <h3 style="margin:0;font-size:var(--text-md);font-weight:600;color:var(--text)">${escapeHtml(proposal.title || '')}</h3>
+            <div style="display:flex;gap:var(--space-2);align-items:center;margin-top:var(--space-2)">
               <span class="card-score ${proposal.confidence >= 0.7 ? 'score-high' : proposal.confidence >= 0.5 ? 'score-mid' : 'score-low'}">${(proposal.confidence || 0).toFixed(2)}</span>
               ${_renderGraphBadges(proposal)}
-              <span style="font-size:12px;color:var(--text-muted)">${proposal.target_audience || ''} · ${proposal.sources_available || 0}/${proposal.sources_needed || 0} ист.</span>
+              <span style="font-size:var(--text-xs);color:var(--text-muted)">${proposal.target_audience || ''} · ${proposal.sources_available || 0}/${proposal.sources_needed || 0} ист.</span>
             </div>
           </div>
-          <button onclick="closeProposalDetail()" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;padding:4px 8px">&times;</button>
+          <button onclick="closeProposalDetail()" aria-label="Закрыть модальное окно" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;padding:var(--space-2);min-height:var(--touch-target);display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md)}">&times;</button>
         </div>
 
-        <div style="display:flex;border-bottom:1px solid var(--border);padding:0 16px">
+        <div style="display:flex;border-bottom:1px solid var(--border-subtle);padding:0 var(--space-5)" role="tablist">
           ${['Тезис','Источники (' + (proposal.enriched_sources || proposal.key_references || []).length + ')','★ Граф','Доработка'].map((t,i) =>
-            `<button class="detail-tab-btn${i===0?' active':''}" data-tab="${['thesis','sources','graph','develop'][i]}" onclick="switchDetailTab('${['thesis','sources','graph','develop'][i]}')">${t}</button>`
+            `<button class="detail-tab-btn${i===0?' active':''}" role="tab" data-tab="${['thesis','sources','graph','develop'][i]}" onclick="switchDetailTab('${['thesis','sources','graph','develop'][i]}')">${t}</button>`
           ).join('')}
         </div>
 
-        <div id="detailTabContent" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
+        <div id="detailTabContent" role="tabpanel" style="flex:1;overflow-y:auto;padding:var(--space-5) var(--space-6)"></div>
 
-        <div style="display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--border)">
-          <button class="btn-primary btn-sm" onclick="selectProposal('${propId}')">✅ Выбрать</button>
-          <button class="btn-secondary btn-sm" onclick="sendForDevelopment('${propId}')">💬 Доработать</button>
+        <div style="display:flex;gap:var(--space-3);padding:var(--space-4) var(--space-6);border-top:1px solid var(--border-subtle)">
+          <button class="btn btn-primary btn-sm" onclick="selectProposal('${propId}')">✅ Выбрать</button>
+          <button class="btn btn-secondary btn-sm" onclick="sendForDevelopment('${propId}')">💬 Доработать</button>
         </div>
       </div>
     </div>`;
@@ -3436,6 +4110,14 @@ function closeProposalDetail() {
     if (el) el.remove();
     currentProposal = null;
 }
+
+// Keyboard: Escape closes modal
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (document.getElementById('proposalDetailOverlay')) closeProposalDetail();
+        if (document.getElementById('selectedArticle')) closeArticleModal();
+    }
+});
 
 /* ── S8: Graph Context Helpers ── */
 
@@ -3578,7 +4260,7 @@ async function deleteEditorJob(jobId) {
             currentEditorJobId = null;
         }
     } catch(e) {
-        alert('Ошибка удаления: ' + e.message);
+        toast('Ошибка удаления: ' + e.message, 'error');
     }
 }
 
@@ -3595,7 +4277,7 @@ function confidenceClass(c) {
 function escapeHtml(s) {
     if (!s) return '';
     const div = document.createElement('div');
-    div.appendChild(document.createTextNode(s));
+    div.appendChild(document.createTextNode(s), 'error');
     return div.innerHTML;
 }
 </script>
