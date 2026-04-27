@@ -1215,23 +1215,23 @@ async def engine_status():
 
 
 # ═══════════════════════════════════════════════════════════
-# ORCHESTRATOR ENDPOINTS — Full pipeline (Scout→Reader→Writer)
-# Uses engine/orchestrator.py for state machine + disk persistence
+# ═══════════════════════════════════════════════════════════
+#  EDITOR ENDPOINTS (v1 — legacy Orchestrator)
 # ═══════════════════════════════════════════════════════════
 
-_orchestrator = None  # lazy init
+_orch_v1 = None  # legacy orchestrator — separate from v2
 
 
 def _get_orch():
-    """Get or create Orchestrator instance."""
-    global _orchestrator
-    if _orchestrator is None:
+    """Get or create v1 Orchestrator instance (legacy)."""
+    global _orch_v1
+    if _orch_v1 is None:
         _ensure_engine_imports()
         from engine.orchestrator import Orchestrator
         jobs_dir = str(DATA_DIR / "jobs")
         output_dir = str(DATA_DIR / "output")
-        _orchestrator = Orchestrator(jobs_dir=jobs_dir, output_dir=output_dir)
-    return _orchestrator
+        _orch_v1 = Orchestrator(jobs_dir=jobs_dir, output_dir=output_dir)
+    return _orch_v1
 
 
 def _job_state_to_dict(state) -> dict:

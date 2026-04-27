@@ -222,7 +222,8 @@ class EditorOrchestrator:
         if proposal and proposal.get("key_references"):
             dois = self._extract_dois(proposal["key_references"])
             try:
-                draft = self.reader.run(dois=dois, topic=job.topic)
+                result = self.reader.run(dois=dois, topic=job.topic)
+                draft = result.data if hasattr(result, 'data') else result
                 draft_data = self._serialize_draft(draft)
                 job.current_draft = draft_data
             except Exception as e:
@@ -251,12 +252,14 @@ class EditorOrchestrator:
             raise ValueError("Cannot write: no proposal selected")
 
         try:
-            article = self.writer.run(
+            result = self.writer.run(
                 topic=proposal.get("title", job.topic),
                 thesis=proposal.get("thesis", ""),
                 draft_data=job.current_draft,
                 references=proposal.get("key_references", []),
             )
+            # Extract actual article from AgentResult
+            article = result.data if hasattr(result, 'data') else result
             job.final_article = self._serialize_article(article)
             job.state = PipelineState.REVIEWING
         except Exception as e:
@@ -321,6 +324,22 @@ class EditorOrchestrator:
                     return job
 
                 reviewed = result.data  # ReviewedDraft
+
+                # Defensive: handle cases where data might not be a ReviewedDraft
+                if isinstance(reviewed, str):
+                    logger.warning(f"[orch] Reviewer returned string instead of ReviewedDraft: {reviewed[:200]}")
+                    # Try to parse as JSON
+                    try:
+                        import json as _json
+                        reviewed = _json.loads(reviewed)
+                    except Exception:
+                        reviewed = ReviewedDraft(
+                            verdict=ReviewVerdict.NEEDS_REVISION,
+                            overall_score=0.3,
+                            issues=[Edit(section="system", description=f"Parser error: {reviewed[:200]}", seriousness="major")],
+                            fact_checks=[],
+                            improvement_suggestions=["Review failed — manual review required"],
+                        )
 
                 # Store in history
                 review_dict = reviewed.to_dict() if hasattr(reviewed, 'to_dict') else \

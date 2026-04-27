@@ -414,7 +414,7 @@ class AgentTools:
         """Attempt to download PDF from URL. Returns path or None."""
         import hashlib
         
-        safe_name = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        safe_name = hashlib.md5((cache_key or "unknown").encode()).hexdigest()[:12]
         cache_path = self._pdf_cache_dir / f"{safe_name}.pdf"
         
         # Return cached version if exists and non-empty
