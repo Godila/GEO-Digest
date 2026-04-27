@@ -212,16 +212,16 @@ curl -X DELETE http://localhost:3000/api/pipeline/jobs/{id}
 # → {cancelled: true} ✅
 ```
 
-### Phase 2: Reader Agent — PDF Pipeline (~2 часа)
+### Phase 2: Reader Agent — PDF Pipeline (~2 часа) ✅ ЗАВЕРШЕНО (вариант A: MarkItDown)
 
-- [ ] **P2-R1**: Unpaywall integration (проверка OA по DOI)
-- [ ] **P2-R2**: PDF download (httpx streaming, timeout 30s, max 50MB)
-- [ ] **P2-R3**: PyMuPDF text extraction (проверить что есть в Docker image)
-- [ ] **P2-R4**: Abstract-only fallback (критично! работать без PDF)
-- [ ] **P2-R5**: Batch aggregation read_group() для нескольких DOI
-- [ ] **P2-R6**: Тест: ReaderAgent.run(dois=["10.xxxx"]) → StructuredDraft
+- [x] **P2-R1**: MarkItDown[pdf] в Dockerfile.worker — заменяет PyMuPDF/pdfplumber/pdftotext
+- [x] **P2-R2**: `extract_text_from_pdf()` → MarkItDown (55→25 строк, markdown output)
+- [x] **P2-R3**: Unpaywall API v2 lookup (`enrich_oa_url()`) — auto-enrich на download_pdf()
+- [x] **P2-R4**: Abstract-only fallback — Reader работает всегда, качество ниже без PDF
+- [x] **P2-R5**: Batch aggregation — `_extract_all_texts()` обрабатывает все статьи
+- [x] **P2-R6**: E2E тест пройден: run→select→develop → 200 OK
 
-**Acceptance:** develop фаза возвращает StructuredDraft даже когда PDF недоступен
+**Acceptance:** ✅ develop фаза возвращает StructuredDraft (даже abstract-only mode)
 
 ### Phase 3: UI Интеграция — Полный цикл (~3 часа)
 
@@ -280,7 +280,7 @@ curl -X DELETE http://localhost:3000/api/pipeline/jobs/{id}
 | Graph viz | Cytoscape.js | latest (CDN/lazy) | ✅ |
 | Storage | JSONL (articles) + JSON (jobs) | — | ✅ Для <10K статей |
 | Containerisation | Docker Compose | v2 | ✅ |
-| PDF parsing | PyMuPDF | 1.23+ | ⚠️ Нужно проверить |
+| PDF parsing | MarkItDown (Microsoft) | 0.1.x | ✅ PDF+DOCX+PPTX+HTML |
 | Config | YAML | — | ✅ |
 
 ---
