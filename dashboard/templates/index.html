@@ -884,6 +884,67 @@
         }
         .progress-text span:last-child { color: var(--accent); font-weight: 600; }
 
+        /* ═══════════════════════════════════════════
+           TOOLTIP SYSTEM — для усечённых текстов
+           ═══════════════════════════════════════════ */
+        /* Базовый контейнер для элемента с возможным обрезанием */
+        .truncate-wrap {
+            position: relative;
+            display: inline;
+        }
+
+        /* Tooltip появляется при hover на элементе с data-full */
+        [data-tooltip]:hover::after,
+        .truncate-wrap[data-full]:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            padding: var(--space-2) var(--space-3);
+            border-radius: var(--radius-md);
+            font-size: var(--text-xs);
+            font-weight: 400;
+            line-height: var(--leading-normal);
+            color: var(--text);
+            white-space: normal;
+            max-width: 380px;
+            min-width: 100px;
+            word-break: break-word;
+            box-shadow: var(--shadow-lg);
+            z-index: 9999;
+            pointer-events: none;
+            animation: fadeInUp var(--duration-fast) var(--ease-out) both;
+        }
+
+        /* Стрелочка под тултипом */
+        [data-tooltip]:hover::before,
+        .truncate-wrap[data-full]:hover::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: var(--border);
+            z-index: 9999;
+            pointer-events: none;
+        }
+
+        /* Вариант: тултип снизу (для элементов у верхнего края экрана) */
+        [data-tooltip][data-pos="top"]::after {
+            bottom: auto;
+            top: calc(100% + 8px);
+        }
+        [data-tooltip][data-pos="top"]::before {
+            bottom: auto;
+            top: calc(100% + 4px);
+            border-top-color: transparent;
+            border-bottom-color: var(--border);
+        }
+
         /* Log container */
         .log-container {
             max-height: 300px; overflow-y: auto; background: rgba(0,0,0,.25);
@@ -2090,20 +2151,27 @@ function renderArticles(articles) {
             } catch { dateStr = ''; }
         }
 
-        return `<div class="article-card animate-in" style="--i:${Math.min(i,30)}" onclick="openArticleModal(${i})" data-id="${i}" tabindex="0" role="article" aria-label="${esc(displayTitle)}">
+        // Build tooltip data for truncated elements
+        const titleTruncated = rawTitle.length > 80;
+        const journalFull = (a.journal || '').split(';')[0] || '';
+        const journalShort = journalFull.length > 35 ? journalFull.substring(0, 32) + '…' : journalFull;
+        const journalTruncated = journalFull.length > 35;
+        const previewTruncated = preview.length > 140;
+
+        return `<div class="article-card animate-in" style="--i:${Math.min(i,30)}" onclick="openArticleModal(${i})" data-id="${i}" tabindex="0" role="article" aria-label="${esc(rawTitle)}">
             <div class="card-header">
-                <div class="card-title">${esc(displayTitle)}</div>
+                <div class="card-title${titleTruncated ? ' truncate-wrap' : ''}" ${titleTruncated ? `data-tooltip="${esc(rawTitle)}"` : ''}>${esc(displayTitle)}</div>
                 <div class="card-score ${scoreCls}${isFallback ? ' score-fallback' : ''}">${isFallback ? '~' : ''}${total.toFixed(1)}</div>
                 ${isNew ? '<span class="tag tag-new">НОВЫЙ</span>' : ''}
             </div>
             <div class="card-meta">
                 ${dateStr ? `<span>📅 ${esc(dateStr)}</span>` : ''}
                 <span>${a.year || '?'}</span>
-                <span>${esc((a.journal || '').split(';')[0] || '')}</span>
+                <span${journalTruncated ? ` data-tooltip="${esc(journalFull)}"` : ''}>${esc(journalShort)}</span>
                 ${a.citations ? `<span>📎${a.citations}</span>` : ''}
                 ${a.is_oa ? '<span class="tag tag-oa">OA</span>' : ''}
             </div>
-            <div class="card-preview">${esc(preview).substring(0, 140)}${preview.length > 140 ? '…' : ''}</div>
+            <div class="card-preview"${previewTruncated ? ` data-tooltip="${esc(preview.substring(0, 500))}"` : ''}>${esc(preview).substring(0, 140)}${previewTruncated ? '…' : ''}</div>
         </div>`;
     }).join('');
 }
@@ -3984,7 +4052,7 @@ function switchDetailTab(tabName) {
         const isEnriched = refs[0] && refs[0].title && !refs[0].not_found;
 
         if (isEnriched) {
-            // ── Rich source cards with full metadata ──
+            // ── Rich source cards with full metadata + tooltips ──
             content.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">
                 ${refs.map(r => {
                     const doiKey = (r.doi || '').toLowerCase();
@@ -3992,33 +4060,40 @@ function switchDetailTab(tabName) {
                     const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}" style="font-size:11px">${(gc.is_hub ? '🔮 hub' : gc.is_bridge ? '🌉 bridge' : '📍 peripheral')} · PR:${(gc.page_rank||0).toFixed(3)}</span>` : '';
                     const focusBtn = r.doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${r.doi.replace(/'/g, "\\'")}')">🎯</button>` : '';
                     const scoreTag = r.score ? `<span class="card-score ${r.score >= 3 ? 'score-high' : r.score >= 1.5 ? 'score-mid' : 'score-low'}" style="font-size:11px;padding:2px 8px">${r.score.toFixed(1)}</span>` : '';
-                    return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:12px">
-                        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:6px">
-                            <strong style="font-size:13px;color:var(--text-primary)">${escapeHtml(r.title_ru || r.title || 'Без названия')}</strong>
+                    const srcTitle = r.title_ru || r.title || 'Без названия';
+                    const titleLong = srcTitle.length > 80;
+                    const authorsStr = r.authors || '';
+                    const authorsLong = authorsStr.length > 60;
+                    const abstractText = r.abstract || '';
+                    const abstractLong = abstractText.length > 300;
+                    return `<div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-4)">
+                        <div style="display:flex;justify-content:space-between;align-items:start;gap:var(--space-2);margin-bottom:var(--space-2)">
+                            <strong style="font-size:var(--text-sm);color:var(--text)${titleLong ? ';display:inline' : ''}"${titleLong ? ` data-tooltip="${escapeHtml(srcTitle)}"` : ''}>${escapeHtml(titleLong ? srcTitle.substring(0, 77) + '…' : srcTitle)}</strong>
                             ${focusBtn}
                         </div>
-                        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">
-                            ${escapeHtml(r.authors || '')} ${r.year ? '(' + r.year + ')' : ''} · ${escapeHtml(r.journal || r.type || '')}
+                        <div style="font-size:var(--text-xs);color:var(--text-muted);margin-bottom:var(--space-2)"${authorsLong ? ` data-tooltip="${escapeHtml(authorsStr)}"` : ''}>
+                            ${escapeHtml(authorsLong ? authorsStr.substring(0, 57) + '…' : authorsStr)} ${r.year ? '(' + r.year + ')' : ''} · ${escapeHtml(r.journal || r.type || '')}
                             ${scoreTag ? '&nbsp;' + scoreTag : ''}
                         </div>
-                        ${roleBadge ? '<div style="margin-bottom:6px">' + roleBadge + '</div>' : ''}
-                        ${r.abstract ? '<div style="font-size:12px;color:var(--text-muted);line-height:1.5">' + escapeHtml(r.abstract.substring(0, 300)) + (r.abstract.length > 300 ? '...' : '') + '</div>' : ''}
-                        ${r.topics?.length ? '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">' + r.topics.map(t => `<span style="font-size:10px;background:rgba(100,149,237,.15);color:#6495ed;padding:1px 6px;border-radius:4px">${t}</span>`).join('') + '</div>' : ''}
-                        <div style="margin-top:6px;font-size:10px;color:var(--text-muted)">
-                            <code>${escapeHtml(r.doi || '')}</code> ${r.citations ? '· ' + r.citations + ' цит.' : ''}
+                        ${roleBadge ? '<div style="margin-bottom:var(--space-2)">' + roleBadge + '</div>' : ''}
+                        ${abstractText ? `<div style="font-size:var(--text-sm);color:var(--text-muted);line-height:var(--leading-relaxed)"${abstractLong ? ` data-tooltip="${escapeHtml(abstractText.substring(0, 800))}"` : ''}>${escapeHtml(abstractLong ? abstractText.substring(0, 297) + '...' : abstractText)}</div>` : ''}
+                        ${r.topics?.length ? '<div style="margin-top:var(--space-2);display:flex;flex-wrap:wrap;gap:4px">' + r.topics.map(t => `<span style="font-size:10px;background:rgba(100,149,237,.15);color:#6495ed;padding:1px 6px;border-radius:4px">${t}</span>`).join('') + '</div>' : ''}
+                        <div style="margin-top:var(--space-2);font-size:10px;color:var(--text-dim)">
+                            <code style="word-break:break-all"${(r.doi||'').length > 30 ? ` data-tooltip="${escapeHtml(r.doi || '')}"` : ''}>${escapeHtml((r.doi || '').length > 30 ? (r.doi||'').substring(0,27) + '...' : (r.doi || ''))}</code> ${r.citations ? '· ' + r.citations + ' цит.' : ''}
                         </div>
                     </div>`;
                 }).join('')}
             </div>`;
         } else {
-            // Fallback: plain DOI list (no enrichment available)
+            // Fallback: plain DOI list with tooltips (no enrichment available)
             content.innerHTML = `<ul style="padding-left:18px;line-height:2;font-size:13px">
                 ${refs.map(r => {
                     const doi = (r.doi || r.id || r || '').replace(/^DOI:/i, '').replace(/^doi:/i, '');
                     const gc = gcMap[doi.toLowerCase()];
                     const roleBadge = gc ? `<span class="graph-badge gb-${gc.role || 'peripheral'}">${gc.role || '?'}</span>` : '';
                     const focusBtn = doi ? `<button class="btn-graph-focus" onclick="focusNodeInGraph('${doi.replace(/'/g, "\\'")}')">🎯</button>` : '';
-                    return `<li class="graph-ref-row"><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">${escapeHtml(doi)}</code> ${roleBadge} ${focusBtn}</li>`;
+                    const doiLong = doi.length > 35;
+                    return `<li class="graph-ref-row"><code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px;word-break:break-all"${doiLong ? ` data-tooltip="${escapeHtml(doi)}"` : ''}>${escapeHtml(doiLong ? doi.substring(0, 32) + '...' : doi)}</code> ${roleBadge} ${focusBtn}</li>`;
                 }).join('')}
             </ul>`;
         }
@@ -4158,9 +4233,11 @@ function _renderGraphTabContent(proposal) {
         gc.forEach(r => {
             const roleClass = r.role || 'peripheral';
             const roleIcon = { hub: '🔮', bridge: '🌉', peripheral: '📍' }[roleClass] || '📍';
-            const safeDoi = (r.doi || '').replace(/'/g, "\\'");
+            const fullDoi = r.doi || '';
+            const safeDoi = fullDoi.replace(/'/g, "\\'");
+            const doiTruncated = fullDoi.length > 20;
             html += `<tr class="graph-ref-row">
-            <td><code style="font-size:10px">${escapeHtml((r.doi || '').substring(0, 20))}...</code></td>
+            <td><code style="font-size:10px;word-break:break-all"${doiTruncated ? ` data-tooltip="${escapeHtml(fullDoi)}"` : ''}>${escapeHtml(doiTruncated ? fullDoi.substring(0, 17) + '...' : fullDoi)}</code></td>
             <td style="text-align:center"><span class="graph-badge gb-${roleClass}">${roleIcon} ${r.role || '?'}</span></td>
             <td style="text-align:right"><span class="graph-metric">${(r.page_rank || 0).toFixed(3)}</span></td>
             <td style="text-align:right"><span class="graph-metric">${(r.betweenness || 0).toFixed(3)}</span></td>
