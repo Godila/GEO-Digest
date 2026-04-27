@@ -1946,8 +1946,12 @@ async def pipeline_delete_job(job_id: str):
         job = orch.load_job(job_id)
         if not job:
             raise HTTPException(404, f"Job {job_id} not found")
-        result = orch.cancel(job)
-        return {"cancelled": result, "job_id": job_id}
+        orch.cancel(job)
+        # Really delete the file (cancel() only sets state=CANCELLED)
+        job_path = DATA_DIR / "jobs" / f"{job_id}.json"
+        if job_path.exists():
+            job_path.unlink()
+        return {"deleted": True, "job_id": job_id}
     except HTTPException:
         raise
     except Exception as e:
