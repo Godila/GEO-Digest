@@ -1482,6 +1482,7 @@ async def editor_analyze(request: Request):
     """
     Запуск Editor Agent: анализ темы + генерация предложений.
 
+    АСИНХРОННЫЙ: возвращает job_id немедленно, прогресс через polling.
     Body:
       topic (str): Тема для анализа
       domain (str, optional): Более широкий домен
@@ -1502,53 +1503,68 @@ async def editor_analyze(request: Request):
     try:
         editor = _get_editor()
 
-        # Run in background thread with timeout
-        result_container = {"result": None, "error": None}
+        # Generate job_id upfront so UI can poll immediately
+        job_id = f"edit_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        # Write initial checkpoint so polling has something to read
+        initial_state = {
+            "job_id": job_id,
+            "topic": topic or domain or "",
+            "domain": domain or "",
+            "phase": "idle",
+            "status": "running",
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "proposals": [],
+            "analysis": None,
+            "error": None,
+        }
+        jobs_dir = DATA_DIR / "jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+            json.dump(initial_state, f, ensure_ascii=False, indent=2)
 
         def target():
+            """Background: run EditorAgent → enrich → save final result."""
             try:
-                result_container["result"] = editor.run(
+                result = editor.run(
                     topic=topic,
                     domain=domain,
                     user_instruction=instruction,
                     max_proposals=max_proposals,
                 ).to_dict()
+
+                # Enrich proposals with graph + source metadata
+                proposals = result.get("proposals", [])
+                if proposals:
+                    result["proposals"] = _enrich_proposals(
+                        proposals, topic=topic or domain or ""
+                    )
+
+                _editor_jobs[job_id] = result
+
+                # Save final enriched result to disk
+                with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+
             except Exception as e:
-                result_container["error"] = str(e)
+                error_result = dict(initial_state)
+                error_result["phase"] = "failed"
+                error_result["error"] = str(e)
+                error_result["updated_at"] = datetime.now().isoformat()
+                try:
+                    with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
+                        json.dump(error_result, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
-        thread.join(timeout=300)  # 5 минут timeout
-
-        if thread.is_alive():
-            raise HTTPException(504, "Editor analysis timeout (>5 min)")
-
-        if result_container["error"]:
-            raise HTTPException(500, result_container["error"])
-
-        result = result_container["result"]
-
-        # ── Post-processing: enrich proposals with graph + source metadata ──
-        proposals = result.get("proposals", [])
-        if proposals:
-            result["proposals"] = _enrich_proposals(proposals, topic=topic or domain or "")
-
-        _editor_jobs[result["job_id"]] = result
-
-        # Also save enriched version to disk so GET reads it too
-        try:
-            job_disk_path = DATA_DIR / "jobs" / f"{result['job_id']}.json"
-            with open(job_disk_path, "w", encoding="utf-8") as _jf:
-                json.dump(result, _jf, ensure_ascii=False, indent=2)
-        except Exception:
-            pass  # non-critical, GET will lazy-enrich
 
         return {
-            "job_id": result["job_id"],
-            "status": result["status"],
-            "proposals_count": len(result.get("proposals", [])),
-            "duration_sec": result.get("duration_sec"),
-            "message": f"Analysis complete: {len(result.get('proposals', []))} proposals",
+            "job_id": job_id,
+            "status": "running",
+            "message": f"Analysis started for: {topic or domain}",
         }
 
     except HTTPException:

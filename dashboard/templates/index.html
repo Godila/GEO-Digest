@@ -1299,15 +1299,24 @@ function initResizeHandle() {
 }
 
 // ── API helpers ────────────────────────────────
-async function api(path, method = 'GET', body = null) {
+async function api(path, method = 'GET', body = null, timeoutSec = 120) {
     const opts = { method };
     if (body && method === 'POST') {
         opts.headers = {'Content-Type': 'application/json'};
         opts.body = JSON.stringify(body);
     }
-    const r = await fetch('/api' + path, opts);
-    if (!r.ok) throw new Error(`API ${r.status}`);
-    return r.json();
+    // Editor analyze needs longer timeout (up to 5 min server-side)
+    if (path.includes('/editor/analyze')) timeoutSec = 360;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
+    opts.signal = controller.signal;
+    try {
+        const r = await fetch('/api' + path, opts);
+        if (!r.ok) throw new Error(`API ${r.status}`);
+        return r.json();
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 // ── Articles ───────────────────────────────────
@@ -3071,7 +3080,7 @@ let currentProposal = null;        // Currently viewed proposal in detail modal
 let editorPoller = null;
 let editorEventSource = null;
 
-/** Run Editor Agent — analyze topic and generate proposals */
+/** Run Editor Agent — analyze topic and generate proposals (async: returns job_id immediately) */
 async function runEditor() {
     const topic = document.getElementById('editorTopic').value.trim();
     if (!topic) { alert('Введите тему или домен'); return; }
@@ -3092,6 +3101,7 @@ async function runEditor() {
     document.getElementById('editorToolLog').style.display = 'none';
 
     try {
+        // POST returns immediately with job_id (async mode)
         const result = await api('/editor/analyze', 'POST', {
             topic,
             user_instruction: instruction || undefined,
@@ -3100,12 +3110,9 @@ async function runEditor() {
 
         currentEditorJobId = result.job_id;
         document.getElementById('editorPhase').textContent =
-            `Анализ завершён: ${result.proposals_count || 0} предложений`;
+            `${result.message || 'Анализ запущен...'} (job: ${result.job_id.slice(0,12)}...)`;
 
-        // Load job detail (proposals)
-        await loadEditorJobDetail(result.job_id);
-
-        // Start polling for completion
+        // Start real-time polling immediately (POST is async now)
         startEditorPolling(result.job_id);
 
     } catch(e) {
@@ -3121,22 +3128,26 @@ function startEditorPolling(jobId) {
         try {
             const job = await api(`/editor/jobs/${jobId}`);
             const phaseMap = {
+                idle: 'Инициализация...',
                 analyzing: 'Анализ хранилища...',
                 proposing: 'Генерация предложений...',
                 validating: 'Валидация...',
                 done: 'Завершено',
-                error: 'Ошибка'
+                failed: 'Ошибка',
+                error: 'Ошибка',
+                unknown: 'Ожидание...'
             };
             const phaseText = phaseMap[job.phase] || job.phase;
 
             // Update progress bar based on phase
-            const pctMap = { analyzing: 25, proposing: 60, validating: 85, done: 100, error: 0 };
+            const pctMap = { idle: 5, analyzing: 25, proposing: 60, validating: 85, done: 100, failed: 0, error: 0, unknown: 50 };
             const pct = pctMap[job.phase] || 50;
             document.getElementById('editorProgressBar').style.width = pct + '%';
             document.getElementById('editorPct').textContent = pct + '%';
             document.getElementById('editorPhase').textContent = phaseText;
 
-            if (job.phase === 'done' || job.phase === 'error') {
+            // Terminal states: stop polling and show results
+            if (job.phase === 'done' || job.phase === 'failed' || job.phase === 'error') {
                 clearInterval(editorPoller);
                 editorPoller = null;
                 document.getElementById('runEditorBtn').disabled = false;
@@ -3144,6 +3155,10 @@ function startEditorPolling(jobId) {
 
                 if (job.phase === 'done') {
                     await loadEditorJobDetail(jobId);
+                } else {
+                    // Show error
+                    document.getElementById('editorPhase').textContent =
+                        'Ошибка: ' + (job.error || job.phase);
                 }
                 // Refresh history
                 loadEditorHistory();
