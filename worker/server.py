@@ -18,6 +18,7 @@ Data shared with dashboard via /app/data volume:
 import json
 import os
 import sys
+import logging
 import subprocess
 import threading
 import uuid
@@ -26,6 +27,8 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ── Add scripts to path for run_manager import ────────────────
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -1777,7 +1780,7 @@ async def pipeline_run(request: Request):
             try:
                 orch.run_editing_phase(_job_obj)
             except Exception as e:
-                _log(f"Pipeline editing failed: {e}")
+                logger.info(f"Pipeline editing failed: {e}")
                 try:
                     loaded = orch.load_job(_job_obj.job_id)
                     if loaded:
@@ -1869,7 +1872,7 @@ async def pipeline_develop(job_id: str, request: Request):
             try:
                 orch.develop(_job_obj, user_feedback=_feedback or "")
             except Exception as e:
-                _log(f"Pipeline develop failed: {e}")
+                logger.info(f"Pipeline develop failed: {e}")
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
@@ -1896,7 +1899,7 @@ async def pipeline_write(job_id: str):
             try:
                 orch.write(_job_obj)
             except Exception as e:
-                _log(f"Pipeline write failed: {e}")
+                logger.info(f"Pipeline write failed: {e}")
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
@@ -1923,7 +1926,7 @@ async def pipeline_review(job_id: str):
             try:
                 orch.review(_job_obj)
             except Exception as e:
-                _log(f"Pipeline review failed: {e}")
+                logger.info(f"Pipeline review failed: {e}")
 
         thread = threading.Thread(target=target, daemon=True)
         thread.start()

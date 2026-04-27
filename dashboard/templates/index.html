@@ -1166,6 +1166,23 @@
 .detail-tab:hover { color:var(--text-primary) }
 .detail-tab.active { border-bottom-color:var(--accent); color:var(--accent); font-weight:600 }
 
+/* Pipeline Status Bar */
+.pipe-step {
+  display:inline-flex; align-items:center; gap:3px;
+  padding:4px 10px; border-radius:12px; font-size:11px; font-weight:500;
+  white-space:nowrap; transition:all 0.2s;
+}
+.pipe-step-done { background:rgba(34,197,94,0.12); color:#22c55e }
+.pipe-step-active { 
+  background:rgba(77,159,255,0.15); color:#4d9fff; 
+  box-shadow:0 0 8px rgba(77,159,255,0.25); animation:pulse-subtle 2s infinite;
+}
+.pipe-step-future { color:var(--text-muted); opacity:0.5 }
+@keyframes pulse-subtle {
+  0%,100% { box-shadow:0 0 8px rgba(77,159,255,0.15) }
+  50% { box-shadow:0 0 14px rgba(77,159,255,0.35) }
+}
+
 .tool-call-log {
     font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
     font-size:12px; background:var(--bg-primary); border:1px solid var(--border);
@@ -3837,18 +3854,19 @@ async function runEditor() {
     document.getElementById('editorToolLog').style.display = 'none';
 
     try {
-        // POST returns immediately with job_id (async mode)
-        const result = await api('/editor/analyze', 'POST', {
+        // Use pipeline endpoint (orchestrator manages full cycle)
+        const result = await api('/pipeline/run', 'POST', {
             topic,
-            user_instruction: instruction || undefined,
-            max_proposals: maxProps
+            domain: undefined,  // TODO: add domain selector to UI
+            user_comment: instruction || undefined
         });
 
         currentEditorJobId = result.job_id;
+        currentPipelineState = result.state || 'editing';
         document.getElementById('editorPhase').textContent =
-            `${result.message || 'Анализ запущен...'} (job: ${result.job_id.slice(0,12)}...)`;
+            `${result.message || 'Pipeline запущен...'} (job: ${result.job_id.slice(0,12)}...)`;
 
-        // Start real-time polling immediately (POST is async now)
+        // Start real-time polling (pipeline endpoint)
         startEditorPolling(result.job_id);
 
     } catch(e) {
@@ -3857,51 +3875,55 @@ async function runEditor() {
     }
 }
 
-/** Poll editor job until done */
+/** Poll pipeline job until editing phase completes */
 function startEditorPolling(jobId) {
     if (editorPoller) clearInterval(editorPoller);
     editorPoller = setInterval(async () => {
         try {
-            const job = await api(`/editor/jobs/${jobId}`);
-            // Resolve actual phase (fallback to status if phase missing/null)
-            const resolvedPhase = job.phase || job.status || 'unknown';
+            // Poll from pipeline endpoint (works for both pipeline + legacy editor jobs)
+            const job = await api(`/pipeline/jobs/${jobId}`);
+            const data = job.detail || job;
+            const state = data.state || data.phase || data.status || 'unknown';
 
-            const phaseMap = {
+            // Pipeline state → UI text mapping
+            const stateMap = {
                 idle: 'Инициализация...',
-                analyzing: 'Анализ хранилища...',
-                proposing: 'Генерация предложений...',
-                validating: 'Валидация...',
+                editing: 'Редактор анализирует...',
+                selecting: 'Выбор предложения...',
+                developing: 'Reader Agent работает...',
+                writing: 'Написание статьи...',
+                reviewing: 'Ревью...',
                 done: 'Завершено',
-                failed: 'Ошибка',
+                cancelled: 'Отменено',
                 error: 'Ошибка',
-                unknown: 'Ожидание...'
+                failed: 'Ошибка'
             };
-            const phaseText = phaseMap[resolvedPhase] || resolvedPhase;
+            const phaseText = stateMap[state] || state;
 
-            // Update progress bar based on phase
-            const pctMap = { idle: 5, analyzing: 25, proposing: 60, validating: 85, done: 100, failed: 0, error: 0, unknown: 50 };
-            const pct = pctMap[resolvedPhase] || 50;
+            // Progress bar based on pipeline phase
+            const pctMap = { idle:5, editing:25, selecting:45, developing:60, writing:80, reviewing:90, done:100, cancelled:0, error:0, failed:0 };
+            const pct = pctMap[state] || 50;
             document.getElementById('editorProgressBar').style.width = pct + '%';
             document.getElementById('editorPct').textContent = pct + '%';
             document.getElementById('editorPhase').textContent = phaseText;
 
-            // Terminal states: stop polling and show results (check both phase AND status)
-            const isTerminal = resolvedPhase === 'done' || resolvedPhase === 'failed' || resolvedPhase === 'error'
-                || job.status === 'done' || job.status === 'failed';
+            // Update status bar if modal is open
+            if (state !== 'idle') renderPipelineStatusBar(state);
+
+            // Terminal states: stop polling
+            const isTerminal = ['done', 'cancelled', 'error', 'failed'].includes(state);
             if (isTerminal) {
                 clearInterval(editorPoller);
                 editorPoller = null;
                 document.getElementById('runEditorBtn').disabled = false;
                 document.getElementById('runEditorBtn').textContent = '🚀 Проанализировать и предложить';
 
-                if (resolvedPhase === 'done' || job.status === 'done') {
+                if (state === 'done') {
                     await loadEditorJobDetail(jobId);
                 } else {
-                    // Show error
                     document.getElementById('editorPhase').textContent =
-                        'Ошибка: ' + (job.error || resolvedPhase);
+                        state === 'cancelled' ? 'Отменено' : ('Ошибка: ' + (data.error || state));
                 }
-                // Refresh history
                 loadEditorHistory();
             }
         } catch(err) {
@@ -3916,16 +3938,33 @@ async function loadEditorJobDetail(jobId) {
         // Set job ID FIRST — renderProposals() uses it in onclick handlers
         currentEditorJobId = jobId;
 
-        const job = await api(`/editor/jobs/${jobId}`);
-        // Handle wrapped response (some endpoints return {detail: ...})
-        const data = job.detail || job;
-        const proposals = data.proposals || [];
+        // Try pipeline endpoint first (handles both pipeline + editor jobs)
+        let data;
+        try {
+            const job = await api(`/pipeline/jobs/${jobId}`);
+            data = job.detail || job;
+        } catch {
+            // Fallback: legacy editor endpoint
+            const job = await api(`/editor/jobs/${jobId}`);
+            data = job.detail || job;
+        }
+
+        // Pipeline jobs store proposals inside editor_result
+        const proposals = data.proposals || data.editor_result?.proposals || [];
         currentEditorProposals = proposals;  // Store for detail modal
+        currentPipelineState = data.state || null;  // Track pipeline state
         renderProposals(proposals);
 
-        if (data.selected_proposal_id) {
-            const proposal = (data.proposals || []).find(p => p.id === data.selected_proposal_id);
+        // Show selected proposal if any
+        const selId = data.selected_proposal_id;
+        if (selId) {
+            const proposal = proposals.find(p => p.id === selId);
             if (proposal) showSelectedArticle(proposal);
+        }
+
+        // Render pipeline status bar if available
+        if (data.state && data.state !== 'idle') {
+            renderPipelineStatusBar(data.state);
         }
 
         // Show proposals section
@@ -3972,7 +4011,7 @@ function renderProposals(proposals) {
     `).join('');
 }
 
-/** Select a proposal — calls API and shows detail panel */
+/** Select a proposal — calls pipeline API and shows detail panel */
 async function selectProposal(jobId, propId) {
     if (!jobId || jobId === 'null' || !propId) {
         toast('Ошибка: отсутствует ID job или proposal', 'error');
@@ -3981,17 +4020,23 @@ async function selectProposal(jobId, propId) {
     }
     (async () => {
         try {
-            await api(`/editor/jobs/${jobId}/select/${propId}`, 'POST');
+            // Use pipeline select endpoint (works for both pipeline + legacy editor jobs)
+            await api(`/pipeline/jobs/${jobId}/select`, 'POST', { proposal_id: propId });
 
         // Visual selection
         document.querySelectorAll('.proposal-card').forEach(c => c.classList.remove('selected'));
         const card = document.getElementById(`prop-${propId}`);
         if (card) card.classList.add('selected');
 
-        // Load full detail
-        const job = await api(`/editor/jobs/${jobId}`);
-        const proposal = (job.proposals || []).find(p => p.id === propId);
+        // Load full detail from pipeline endpoint
+        const job = await api(`/pipeline/jobs/${jobId}`);
+        const data = job.detail || job;
+        const proposals = data.proposals || data.editor_result?.proposals || [];
+        const proposal = proposals.find(p => p.id === propId);
         if (proposal) showSelectedArticle(proposal);
+
+        // Update status bar
+        if (data.state) renderPipelineStatusBar(data.state);
 
         // Refresh history
         loadEditorHistory();
@@ -4122,21 +4167,273 @@ function switchDetailTab(tabName) {
     }
 }
 
+/* ── Pipeline State Tracking ── */
+let currentPipelineState = null;  // editing|selecting|developing|writing|reviewing|done|cancelled
+
+const PIPELINE_STEPS = [
+    {key:'editing',    label:'✍️ Редактор', icon:'📝'},
+    {key:'selecting',  label:'Выбор',     icon:'👆'},
+    {key:'developing', label:'Доработка', icon:'💬'},
+    {key:'writing',    label:'Написание', icon:'✍️'},
+    {key:'reviewing',  label:'Ревью',     icon:'👀'},
+    {key:'done',       label:'Готово',    icon:'✅'},
+];
+
+/** Render pipeline status bar inside #pipelineStatusBar or any container */
+function renderPipelineStatusBar(state, containerId) {
+    const sb = document.getElementById(containerId || 'pipelineStatusBar');
+    if (!sb) return;
+    
+    const idx = PIPELINE_STEPS.findIndex(s => s.key === state);
+    
+    sb.innerHTML = PIPELINE_STEPS.map((step, i) => {
+        const isPast = i < idx;
+        const isCurrent = i === idx;
+        const isFuture = i > idx;
+        let cls = 'pipe-step';
+        if (isCurrent) cls += ' pipe-step-active';
+        else if (isPast) cls += ' pipe-step-done';
+        else cls += ' pipe-step-future';
+        
+        // Arrow separator
+        const arrow = i < PIPELINE_STEPS.length - 1 
+            ? '<span style="color:var(--text-muted);font-size:10px;margin:0 2px">→</span>' : '';
+        
+        return `<span class="${cls}" title="${step.label}">${step.icon} ${step.label}</span>${arrow}`;
+    }).join('');
+}
+
+/** Poll pipeline job until state changes */
+async function pollPipelineJob(jobId, targetState, maxWaitSec=120) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitSec * 1000) {
+        try {
+            const job = await api(`/pipeline/jobs/${jobId}`);
+            const data = job.detail || job;
+            const state = data.state;
+            
+            if (state !== 'editing' && state !== 'developing' && state !== 'writing' && state !== 'reviewing') {
+                currentPipelineState = state;
+                renderPipelineStatusBar(state);
+                
+                if (state === 'done') toast('✅ Pipeline завершён!', 'success', 4000);
+                else if (state === 'cancelled') toast('Pipeline отменён', 'warning');
+                else toast(`Состояние: ${state}`, 'info', 3000);
+                
+                // Reload detail to show new data
+                loadEditorJobDetail(jobId);
+                return data;
+            }
+            
+            renderPipelineStatusBar(state);
+        } catch(e) { /* ignore poll errors */ }
+        await new Promise(r => setTimeout(r, 3000));
+    }
+    toast('⏳ Операция всё ещё выполняется...', 'warning');
+}
+
 /** Send article for development/refinement */
 async function sendForDevelopment(propId) {
     const comment = document.getElementById('developComment')?.value.trim();
-    if (!currentEditorJobId) return;
-    toast('Доработка через Editor Agent (job=' + currentEditorJobId + ', prop=' + propId + ', comment=' + comment + ') — будет реализовано в S6', 'info');
+    if (!currentEditorJobId || !propId) { toast('Ошибка: отсутствует job или proposal', 'error'); return; }
+    try {
+        toast('Отправка на доработку Reader Agent...', 'info', 5000);
+        const result = await api(`/pipeline/${currentEditorJobId}/develop`, 'POST', { user_feedback: comment || '' });
+        if (result.error) throw new Error(result.error);
+        currentPipelineState = result.state || 'developing';
+        toast('✅ Доработка запущена! Reader Agent анализирует источники...', 'success', 4000);
+        pollPipelineJob(currentEditorJobId);
+    } catch(e) { toast('❌ Ошибка доработки: ' + e.message, 'error'); }
 }
 
 /** Finalize / write article */
-function finalizeArticle(propId) {
-    toast('Написание статьи через Writer Agent (prop=' + propId + ') — будет реализовано в S6', 'info');
+async function finalizeArticle(propId) {
+    if (!currentEditorJobId) { toast('Ошибка: отсутствует job ID', 'error'); return; }
+    try {
+        toast('Запуск Writer Agent...', 'info', 5000);
+        const result = await api(`/pipeline/${currentEditorJobId}/write`, 'POST');
+        if (result.error) throw new Error(result.error);
+        currentPipelineState = result.state || 'writing';
+        toast('✅ Writer Agent пишет статью...', 'success', 4000);
+        pollPipelineJob(currentEditorJobId);
+    } catch(e) { toast('❌ Ошибка написания: ' + e.message, 'error'); }
 }
 
 /** Send for review */
-function reviewArticle(propId) {
-    toast('Ревью через Reviewer Agent (prop=' + propId + ') — будет реализовано в S6', 'info');
+async function reviewArticle(propId) {
+    if (!currentEditorJobId) { toast('Ошибка: отсутствует job ID', 'error'); return; }
+    try {
+        toast('Запуск Reviewer Agent...', 'info', 5000);
+        const result = await api(`/pipeline/${currentEditorJobId}/review`, 'POST');
+        if (result.error) throw new Error(result.error);
+        currentPipelineState = result.state || 'reviewing';
+        toast('✅ Ревью запущено...', 'success', 4000);
+        pollPipelineJob(currentEditorJobId);
+    } catch(e) { toast('❌ Ошибка ревью: ' + e.message, 'error'); }
+}
+
+/* ── Pipeline Polling & Status Bar ── */
+
+function pollPipelineJob(jobId, maxPolls = 60) {
+    let polls = 0;
+    const interval = setInterval(async () => {
+        polls++;
+        if (polls > maxPolls) { clearInterval(interval); return; }
+        try {
+            const job = await api(`/pipeline/jobs/${jobId}`);
+            const newState = job.state || job.status || 'unknown';
+            if (newState !== currentPipelineState) {
+                currentPipelineState = newState;
+                updatePipelineStatusBar(newState);
+                if (newState === 'done') {
+                    clearInterval(interval);
+                    toast('✅ Пайплайн завершён!', 'success', 5000);
+                    loadEditorHistory(); // refresh list
+                    showPipelineResult(job);
+                    return;
+                }
+                if (newState === 'cancelled') { clearInterval(interval); return; }
+            }
+            // Update progress indicators
+            updateProgressIndicators(job);
+        } catch(e) { /* silent */ }
+    }, 3000);
+}
+
+function updatePipelineStatusBar(state) {
+    const bar = document.getElementById('pipelineStatusBar');
+    if (!bar) return;
+    const steps = ['editing','selecting','developing','writing','reviewing','done'];
+    const idx = steps.indexOf(state);
+    const labels = {editing:'🔍 Анализ',selecting:'📋 Выбор',developing:'📖 Чтение',writing:'✍️ Написание',reviewing:'👀 Ревью',done:'✅ Готово'};
+    bar.innerHTML = steps.map((s,i) =>
+        `<span style="padding:4px 10px;border-radius:12px;font-size:11px;font-weight:${i<=idx?'600':'400'};background:${i<idx?'var(--success)':i===idx?'var(--accent)':'var(--bg-elevated)'};color:${i<=idx?'#fff':'var(--text-muted)'};margin-right:4px;transition:all .3s">${labels[s]||s}</span>`
+    ).join('');
+}
+
+function showPipelineResult(job) {
+    // Show final article or review results in modal
+    if (job.final_article) {
+        showArticlePreviewModal(job.final_article, job.job_id);
+    } else if (job.review_result) {
+        showReviewResultsModal(job.review_result, job);
+    }
+}
+
+/* ── Article Preview Modal & Download ── */
+
+function showArticlePreviewModal(article, jobId) {
+    const content = typeof article === 'string' ? article : (article.content || article.body || JSON.stringify(article, null, 2));
+    // Simple markdown-like render: **bold**, # headings, - lists, ```code```
+    const rendered = renderSimpleMarkdown(content);
+
+    const modal = document.createElement('div');
+    modal.id = 'articlePreviewOverlay';
+    modal.className = 'modal-backdrop';
+    modal.setAttribute('role', 'dialog');
+    modal.innerHTML = `
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);width:min(800px,95vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--border-subtle)">
+        <h3 style="margin:0;font-size:var(--text-md);font-weight:600;color:var(--text)">📄 Финальная статья</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="downloadArticle('${jobId}')" class="btn-primary btn-sm">⬇ Скачать .md</button>
+          <button onclick="this.closest('.modal-backdrop').remove()" aria-label="Закрыть" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer">&times;</button>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:var(--space-6);font-size:14px;line-height:1.8;color:var(--text-primary)" id="articlePreviewContent">${rendered}</div>
+    </div>`;
+    modal.onclick = function(e) { if(e.target===this) this.remove(); };
+    document.body.appendChild(modal);
+}
+
+function downloadArticle(jobId) {
+    api(`/pipeline/jobs/${jobId}`).then(job => {
+        const article = job.final_article;
+        const content = typeof article === 'string' ? article : (article.content || article.body || JSON.stringify(article, null, 2));
+        const blob = new Blob([content], {type: 'text/markdown'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `article_${jobId}.md`; a.click();
+        URL.revokeObjectURL(url);
+        toast('✅ Статья скачана!', 'success');
+    });
+}
+
+function renderSimpleMarkdown(md) {
+    if (!md) return '';
+    let h = escapeHtml(md);
+    // Code blocks
+    h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre style="background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.5"><code>$2</code></pre>');
+    // Headers
+    h = h.replace(/^#### (.+)$/gm, '<h4 style="font-size:13px;margin:16px 0 4px;color:var(--text-secondary)">$1</h4>');
+    h = h.replace(/^### (.+)$/gm, '<h3 style="font-size:15px;margin:18px 0 6px;color:var(--text)">$1</h3>');
+    h = h.replace(/^## (.+)$/gm, '<h2 style="font-size:17px;margin:20px 0 8px;color:var(--text);border-bottom:1px solid var(--border-subtle);padding-bottom:4px">$1</h2>');
+    h = h.replace(/^# (.+)$/gm, '<h1 style="font-size:20px;margin:24px 0 10px;color:var(--text)">$1</h1>');
+    // Bold + italic
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Lists
+    h = h.replace(/^[\-\*] (.+)$/gm, '<li style="margin-left:20px">$1</li>');
+    h = h.replace(/^\d+\. (.+)$/gm, '<li style="margin-left:20px;list-style:decimal">$1</li>');
+    // Paragraphs (double newline)
+    h = h.replace(/\n\n/g, '</p><p style="margin:8px 0">');
+    return '<p style="margin:8px 0">' + h + '</p>';
+}
+
+/* ── Review Results Modal ── */
+
+function showReviewResultsModal(review, job) {
+    const verdict = review.verdict || review.verdict_type || 'unknown';
+    const verdictColors = {accept: 'var(--success)', minor_revision: 'var(--warning)', major_revision: '#d29922', reject: 'var(--danger)'};
+    const vColor = verdictColors[verdict] || 'var(--text-muted)';
+    const edits = review.edits || review.suggested_edits || [];
+    const factChecks = review.fact_checks || [];
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop';
+    modal.setAttribute('role', 'dialog');
+    modal.innerHTML = `
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);width:min(780px,95vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--border-subtle)">
+        <h3 style="margin:0;font-size:var(--text-md);font-weight:600;color:var(--text)">👀 Результаты ревью</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span style="padding:4px 12px;border-radius:12px;font-size:12px;font-weight:700;background:${vColor};color:#fff;text-transform:uppercase">${verdict}</span>
+          <button onclick="this.closest('.modal-backdrop').remove()" aria-label="Закрыть" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer">&times;</button>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:var(--space-5) var(--space-6)">
+        ${review.summary ? `<div style="margin-bottom:16px;padding:12px;background:var(--bg-elevated);border-radius:8px;font-size:13px;line-height:1.6"><strong>Резюме:</strong><br>${escapeHtml(review.summary)}</div>` : ''}
+        ${edits.length ? `<div style="margin-bottom:16px"><strong style="font-size:14px;display:block;margin-bottom:8px">✏️ Правки (${edits.length}):</strong>${edits.map((e,i) => `<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg-elevated);border-radius:6px;font-size:12px;border-left:3px solid ${(e.severity==='high'||e.severity==='critical')?'var(--danger)':(e.severity==='medium'||e.severity==='minor')?'var(--warning)':'var(--success)'}"><strong>[${e.severity||'info'}]</strong> ${escapeHtml(e.original_text||e.location||e.description||`Edit #${i+1}`)} → <em>${escapeHtml(e.replacement||e.suggestion||e.description||'')}</em></div>`).join('')}</div>` : ''}
+        ${factChecks.length ? `<div><strong style="font-size:14px;display:block;margin-bottom:8px">🔍 Fact-check (${factChecks.length}):</strong>${factChecks.map(f => `<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg-elevated);border-radius:6px;font-size:12px;border-left:3px solid ${f.verified!==false?'var(--success)':'var(--danger)'}">${f.verified===false?'❌':'✅'} ${escapeHtml(f.claim||f.statement||'')} ${f.source?'— <code style="font-size:10px">'+escapeHtml(f.source)+'</code>':''}</div>`).join('')}</div>` : ''}
+        ${verdict === 'major_revision' || verdict === 'minor_revision' ? `<div style="margin-top:16px;text-align:right"><button onclick="this.closest('.modal-backdrop').remove();sendForDevelopment('${job.selected_proposal_id}')" class="btn-primary btn-sm">🔄 Отправить на доработку</button></div>` : ''}
+      </div>
+    </div>`;
+    modal.onclick = function(e) { if(e.target===this) this.remove(); };
+    document.body.appendChild(modal);
+}
+
+/* ── Progress Indicators & Draft Panel ── */
+
+function updateProgressIndicators(job) {
+    // Update draft panel if available
+    if (job.current_draft && currentPipelineState === 'developing') {
+        const draftPanel = document.getElementById('draftPanel');
+        if (draftPanel) renderDraftPanel(job.current_draft);
+    }
+    // Update article preview if writing done
+    if (job.final_article && currentPipelineState === 'reviewing') {
+        // Could show a "ready for review" indicator
+    }
+}
+
+function renderDraftPanel(draft) {
+    const panel = document.getElementById('draftPanel');
+    if (!panel) return;
+    const d = typeof draft === 'string' ? {note: draft} : draft;
+    const fields = Object.entries(d).filter(([k]) => k !== 'note' || d.note !== 'No key references to read');
+    panel.innerHTML = fields.length ? fields.map(([k,v]) =>
+        `<div style="margin-bottom:10px;padding:10px;background:var(--bg-elevated);border-radius:8px"><strong style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">${k}</strong><div style="margin-top:4px;font-size:13px;line-height:1.6">${typeof v === 'string' ? escapeHtml(v.substring(0,500)) + (v.length>500?'...':'') : '<pre style="font-size:11px">'+JSON.stringify(v,null,2).substring(0,300)+'</pre>'}</div></div>`
+    ).join('') : '<p style="color:var(--text-muted);font-size:13px">Черновик пуст</p>';
 }
 
 /** Show proposal detail in modal with tabs */
@@ -4167,6 +4464,8 @@ function showProposalDetailModal(propId) {
             `<button class="detail-tab-btn${i===0?' active':''}" role="tab" data-tab="${['thesis','sources','graph','develop'][i]}" onclick="switchDetailTab('${['thesis','sources','graph','develop'][i]}')">${t}</button>`
           ).join('')}
         </div>
+
+        <div id="pipelineStatusBar" style="padding:8px var(--space-5);display:flex;gap:4px;flex-wrap:wrap;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);min-height:36px;align-items:center"></div>
 
         <div id="detailTabContent" role="tabpanel" style="flex:1;overflow-y:auto;padding:var(--space-5) var(--space-6)"></div>
 
@@ -4321,29 +4620,52 @@ function toggleScoutCollapse() {
     if (arrow) arrow.classList.toggle('open', hidden);
 }
 
-/** Load editor jobs history into table */
+/** Load editor + pipeline jobs history into table */
 async function loadEditorHistory() {
     try {
-        const data = await api('/editor/jobs');
-        const jobs = data.jobs || [];
+        // Load both editor jobs and pipeline jobs in parallel
+        const [editorRes, pipelineRes] = await Promise.allSettled([
+            api('/editor/jobs'),
+            api('/pipeline/jobs')
+        ]);
+        
+        const editorJobs = editorRes.status === 'fulfilled' ? (editorRes.value.jobs || []) : [];
+        const pipelineJobs = pipelineRes.status === 'fulfilled' ? (pipelineRes.value.jobs || []) : [];
+        
+        // Merge: pipeline jobs first (newer), then editor jobs (legacy)
+        // Normalize to same format
+        const allJobs = [
+            ...pipelineJobs.map(j => ({
+                job_id: j.job_id,
+                topic: j.topic,
+                phase: j.state,
+                proposals_count: j.editor_result?.proposals?.length || j.proposals?.length || 0,
+                _isPipeline: true
+            })),
+            ...editorJobs.map(j => ({
+                ...j,
+                _isPipeline: false
+            }))
+        ];
+        
         const tbody = document.getElementById('editorHistoryBody');
-        if (!jobs.length) {
+        if (!allJobs.length) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">Запусков пока нет</td></tr>';
             return;
         }
-        tbody.innerHTML = jobs.map(j => {
-            // Resolve phase (fallback to status for completed jobs where phase was omitted)
+        tbody.innerHTML = allJobs.map(j => {
             const rp = j.phase || j.status || 'unknown';
-            const phaseClass = rp === 'done' ? 'phase-done' : rp === 'error' || rp === 'failed' ? 'phase-error' : 'phase-running';
+            const phaseClass = rp === 'done' ? 'phase-done' : rp === 'error' || rp === 'failed' || rp === 'cancelled' ? 'phase-error' : 'phase-running';
             const shortTopic = (j.topic || '').length > 35 ? (j.topic || '').slice(0, 32) + '...' : (j.topic || '');
+            const pipeBadge = j._isPipeline ? '<span style="font-size:9px;color:#4d9fff;margin-left:4px">⚡</span>' : '';
             return `<tr>
-                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.job_id || '')}</td>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.job_id || '')}${pipeBadge}</td>
                 <td>${escapeHtml(shortTopic)}</td>
                 <td><span class="phase-badge ${phaseClass}">${rp}</span></td>
                 <td>${j.proposals_count || 0}</td>
                 <td>
                     <button class="btn-sm btn-secondary" onclick="loadEditorJobDetail('${j.job_id}')">Открыть</button>
-                    ${j.phase !== 'running' ? `<button class="btn-sm btn-danger" onclick="deleteEditorJob('${j.job_id}')">🗑</button>` : ''}
+                    <button class="btn-sm btn-danger" onclick="deleteEditorJob('${j.job_id}')">🗑</button>
                 </td>
             </tr>`;
         }).join('');
@@ -4352,11 +4674,13 @@ async function loadEditorHistory() {
     }
 }
 
-/** Delete an editor job */
+/** Delete a job (pipeline or editor) */
 async function deleteEditorJob(jobId) {
     if (!confirm('Удалить job ' + jobId + '?')) return;
     try {
-        const result = await api(`/editor/jobs/${jobId}`, 'DELETE');
+        // Try pipeline first, fallback to editor
+        try { await api(`/pipeline/jobs/${jobId}`, 'DELETE'); } 
+        catch { await api(`/editor/jobs/${jobId}`, 'DELETE'); }
         toast('Job удалён: ' + jobId, 'success');
         loadEditorHistory();
         // Clear detail if it was the deleted job

@@ -33,6 +33,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+from engine.schemas import ReviewVerdict
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +57,14 @@ def now_iso() -> str:
 
 @dataclass
 class PipelineJob:
-    """Pipeline job — один полный цикл от темы до статьи."""
+    """Pipeline job — один полный цикл от темы до статьи.
+
+    V2 fields (Proactive Reviewer):
+      - review_history: list of all review rounds (for multi-pass revision)
+      - revision_instructions: current instructions from Reviewer → Writer
+      - total_review_rounds: how many review rounds were executed
+      - forced_accept: whether the article was auto-accepted after max rounds
+    """
     job_id: str
     topic: str
     domain: Optional[str] = None
@@ -73,6 +82,12 @@ class PipelineJob:
     # Final output
     final_article: Optional[dict] = None
     review_result: Optional[dict] = None
+
+    # V2: Multi-round review support
+    review_history: list = field(default_factory=list)
+    revision_instructions: str = ""
+    total_review_rounds: int = 0
+    forced_accept: bool = False
 
     # Metadata
     created_at: str = ""
@@ -252,30 +267,194 @@ class EditorOrchestrator:
         self._save_job(job)
         return job
 
+    # ── Constants for Review Loop ──────────────────────────────────
+
+    MAX_REVISION_ROUNDS = 3
+
     def review(self, job: PipelineJob) -> PipelineJob:
-        """Ревью финальной статьи через Reviewer."""
+        """Ревью финальной статьи через Reviewer (v2: multi-round revision loop).
+
+        V2 Logic:
+          1. Load reviewer LLM separately from writer LLM
+          2. Run up to MAX_REVISION_ROUNDS (3) review cycles
+          3. After each review:
+             - ACCEPT or ACCEPT_WITH_MINOR → DONE
+             - NEEDS_REVISION and round < MAX → send to Writer for rewrite
+             - Round == MAX → forced accept (with flag)
+          4. Each round's result is stored in job.review_history
+          5. Bug fix: verdict comparison uses ReviewVerdict enum values, not "approve"
+        """
+        from engine.agents.article_patterns import REVISION_CONFIG
+
         job.state = PipelineState.REVIEWING
 
         if not job.final_article:
-            raise ValueError("No article to review")
+            logger.warning(f"[orch] No article yet for review (job {job.job_id}, state={job.state})")
+            # Write phase may still be running — don't fail, just return
+            job.error = "Review called before article was written"
+            job.updated_at = now_iso()
+            self._save_job(job)
+            return job
+
+        max_rounds = REVISION_CONFIG.get("max_rounds", self.MAX_REVISION_ROUNDS)
+        previous_reviews = []
+        forced_accept = False
 
         try:
-            result = self.reviewer.run(
-                article=job.final_article,
-                references=self._get_selected_proposal(job).get("key_references", []) if self._get_selected_proposal(job) else [],
-            )
-            job.review_result = self._serialize_review(result)
+            for round_num in range(1, max_rounds + 1):
+                logger.info(f"[orch] Review round {round_num}/{max_rounds} for job {job.job_id}")
 
-            verdict = getattr(result, 'verdict', None) or (result or {}).get('verdict', '')
-            if verdict == "approve":
-                job.state = PipelineState.DONE
-            elif verdict in ("needs_revision", "reject"):
-                job.state = PipelineState.DEVELOPING  # Back to development!
-            else:
-                job.state = PipelineState.DONE  # Default: accept
+                # Run reviewer for this round
+                result = self.reviewer.run(
+                    article=job.final_article,
+                    references=self._get_selected_proposal(job).get("key_references", [])
+                              if self._get_selected_proposal(job) else [],
+                    round_number=round_num,
+                    previous_reviews=previous_reviews,
+                )
+
+                if not result.success:
+                    job.error = f"Reviewer error in round {round_num}: {result.error}"
+                    job.state = PipelineState.FAILED
+                    job.updated_at = now_iso()
+                    self._save_job(job)
+                    return job
+
+                reviewed = result.data  # ReviewedDraft
+
+                # Store in history
+                review_dict = reviewed.to_dict() if hasattr(reviewed, 'to_dict') else \
+                    self._serialize_review(reviewed)
+                job.review_history.append(review_dict)
+                job.review_result = review_dict
+                job.total_review_rounds = round_num
+                job.updated_at = now_iso()
+                self._save_job(job)
+
+                # Determine action based on verdict
+                verdict = reviewed.verdict if hasattr(reviewed, 'verdict') else None
+                verdict_value = verdict.value if verdict else ""
+
+                # BUG FIX: was comparing to "approve" string — now uses proper enum values
+                if verdict_value in (ReviewVerdict.ACCEPT.value, ReviewVerdict.ACCEPT_WITH_MINOR.value):
+                    # Article passed!
+                    job.state = PipelineState.DONE
+                    job.forced_accept = False
+                    logger.info(
+                        f"[orch] Job {job.job_id} ACCEPTED after round {round_num} "
+                        f"(verdict={verdict_value}, score={reviewed.overall_score:.2f})"
+                    )
+                    break
+
+                elif verdict_value == ReviewVerdict.NEEDS_REVISION.value:
+                    if round_num < max_rounds:
+                        # Send edits back to Writer for revision
+                        logger.info(
+                            f"[orch] Round {round_num}: NEEDS_REVISION "
+                            f"(score={reviewed.overall_score:.2f}) → sending to Writer"
+                        )
+
+                        # Build revision instructions using reviewer's helper
+                        if hasattr(self.reviewer, '_build_revision_instructions'):
+                            job.revision_instructions = \
+                                self.reviewer._build_revision_instructions(reviewed)
+                        elif hasattr(reviewed, 'revision_instructions'):
+                            job.revision_instructions = reviewed.revision_instructions
+                        else:
+                            job.revision_instructions = (
+                                f"Revise article based on review feedback.\n"
+                                f"Issues: {reviewed.issues}\n"
+                                f"Edits: {len(reviewed.edits)} changes required."
+                            )
+
+                        # Transition back to WRITING state for rewrite
+                        job.state = PipelineState.WRITING
+                        job.updated_at = now_iso()
+                        self._save_job(job)
+
+                        # Rewrite the article with revision instructions
+                        job = self._rewrite_article(job)
+
+                        # Update previous_reviews for next round context
+                        previous_reviews.append(reviewed)
+
+                    else:
+                        # Max rounds reached — forced accept
+                        forced_accept = True
+                        job.forced_accept = True
+                        job.state = PipelineState.DONE
+                        logger.info(
+                            f"[orch] Job {job.job_id}: FORCED ACCEPT after {max_rounds} rounds "
+                            f"(score={reviewed.overall_score:.2f})"
+                        )
+                        break
+
+                elif verdict_value == ReviewVerdict.REJECT.value:
+                    # Proactive critic: REJECT = needs major revision, not failure
+                    # Send back to Writer unless at max rounds
+                    if round_num < max_rounds:
+                        job.revision_instructions = self._format_revision_edits(reviewed)
+                        logger.info(
+                            f"[orch] Round {round_num}: REJECT "
+                            f"(score={reviewed.overall_score:.2f}) → sending to Writer for rewrite"
+                        )
+                        job = self._rewrite_article(job)
+                        # _rewrite_article sets state to REVIEWING
+                        # Loop continues to next round
+                    else:
+                        # Max rounds reached — forced accept with warning
+                        reviewed.forced_accept = True
+                        job.forced_accept = True
+                        job.review_result = self._serialize_review(reviewed)
+                        job.state = PipelineState.DONE
+                        logger.info(
+                            f"[orch] Job {job.job_id}: FORCED ACCEPT after REJECT "
+                            f"(score={reviewed.overall_score:.2f}, {max_rounds} rounds)"
+                        )
+
+                else:
+                    # Unknown verdict — treat as accept (conservative)
+                    job.state = PipelineState.DONE
+                    logger.info(
+                        f"[orch] Unknown verdict '{verdict_value}' → accepting "
+                        f"(round {round_num})"
+                    )
+                    break
+
         except Exception as e:
             job.error = f"Reviewer error: {e}"
             job.state = PipelineState.FAILED
+
+        job.updated_at = now_iso()
+        self._save_job(job)
+        return job
+
+    def _rewrite_article(self, job: PipelineJob) -> PipelineJob:
+        """Send article back to Writer with revision instructions.
+
+        Called during the review loop when verdict is NEEDS_REVISION.
+        Updates job.final_article with the rewritten version.
+        """
+        proposal = self._get_selected_proposal(job)
+        if not proposal:
+            logger.info("[orch] Cannot rewrite: no proposal selected, keeping original")
+            return job
+
+        try:
+            article = self.writer.run(
+                topic=proposal.get("title", job.topic),
+                thesis=proposal.get("thesis", ""),
+                draft_data=job.current_draft,
+                references=proposal.get("key_references", []),
+                revision_instructions=job.revision_instructions,  # Pass review feedback
+            )
+            job.final_article = self._serialize_article(article)
+            job.state = PipelineState.REVIEWING  # Back to reviewing after rewrite
+            logger.info(f"[orch] Article rewritten, returning to REVIEW state")
+        except Exception as e:
+            logger.info(f"[och] Rewrite failed: {e}, keeping current version")
+            # Don't fail the whole job — keep existing article
+            job.state = PipelineState.REVIEWING
 
         job.updated_at = now_iso()
         self._save_job(job)
@@ -416,6 +595,33 @@ class EditorOrchestrator:
         if isinstance(draft, dict):
             return draft
         return {"content": str(draft)}
+
+    def _format_revision_edits(self, reviewed) -> str:
+        """Convert review edits into writer-friendly revision instructions."""
+        parts = [f"## Ревизия (round {reviewed.round_number}, score={reviewed.overall_score:.2f})\n"]
+        
+        if reviewed.verdict:
+            parts.append(f"**Вердикт:** {reviewed.verdict.value}\n")
+        
+        # Critical issues first
+        for edit in (reviewed.edits or []):
+            sev = getattr(edit, 'severity', '?')
+            desc = getattr(edit, 'description', str(edit))
+            location = getattr(edit, 'location', '')
+            loc_str = f" [{location}]" if location else ""
+            parts.append(f"- **[{sev.upper()}]{loc_str}** {desc}")
+        
+        # Suggestions
+        for s in (reviewed.improvement_suggestions or []):
+            parts.append(f"- 💡 {s}")
+        
+        # Fact check failures
+        for fc in (reviewed.fact_checks or []):
+            if not getattr(fc, 'is_supported', True):
+                claim = getattr(fc, 'claim', str(fc))[:100]
+                parts.append(f"- ⚠️ Факт-чек: \"{claim}\" — не подтверждено источниками")
+        
+        return '\n'.join(parts)
 
     @staticmethod
     def _serialize_article(article) -> dict:

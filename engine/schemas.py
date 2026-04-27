@@ -240,14 +240,35 @@ class FactCheck:
                 "actual_text": self.actual_text, "verdict": self.verdict}
 
 class ReviewedDraft:
+    """Reviewed article draft — result of Reviewer Agent evaluation.
+
+    V2 extended fields (Proactive Reviewer):
+      - round_number: which revision round produced this review
+      - score_by_category: per-category rubric scores
+      - improvement_suggestions: actionable suggestions list
+      - revision_instructions: formatted instructions for Writer rewrite
+      - article_type: detected article type (original_research, review, etc.)
+      - forced_accept: whether this was auto-accepted after max rounds
+    """
     def __init__(self, original_text="", revised_text="", edits=None, issues=None,
                  fact_checks=None, severity_counts=None, verdict=ReviewVerdict.ACCEPT_WITH_MINOR,
-                 overall_score=0.0, reviewer_model="", summary=""):
+                 overall_score=0.0, reviewer_model="", summary="",
+                 # V2 fields:
+                 round_number=1, score_by_category=None,
+                 improvement_suggestions=None, revision_instructions="",
+                 article_type="", forced_accept=False):
         self.original_text = original_text; self.revised_text = revised_text
         self.edits = edits or []; self.issues = issues or []; self.fact_checks = fact_checks or []
         self.severity_counts = severity_counts or {}
         self.verdict = ReviewVerdict(verdict) if isinstance(verdict, str) else verdict
         self.overall_score = overall_score; self.reviewer_model = reviewer_model; self.summary = summary
+        # V2 extension fields:
+        self.round_number = round_number
+        self.score_by_category = score_by_category or {}
+        self.improvement_suggestions = improvement_suggestions or []
+        self.revision_instructions = revision_instructions
+        self.article_type = article_type
+        self.forced_accept = forced_accept
     @property
     def critical_issues(self): return self.severity_counts.get("critical", 0)
     @property
@@ -255,12 +276,21 @@ class ReviewedDraft:
     @property
     def minor_issues(self): return self.severity_counts.get("minor", 0)
     def to_dict(self):
-        return {"original_text": self.original_text[:500] + ("..." if len(self.original_text)>500 else ""),
-                "revised_text": self.revised_text[:500] + ("..." if len(self.revised_text)>500 else ""),
-                "edits": [e.to_dict() for e in self.edits], "issues": [i.to_dict() for i in self.issues],
-                "fact_checks": [f.to_dict() for f in self.fact_checks],
-                "severity_counts": self.severity_counts, "verdict": self.verdict.value,
-                "overall_score": self.overall_score, "reviewer_model": self.reviewer_model, "summary": self.summary}
+        d = {"original_text": self.original_text[:500] + ("..." if len(self.original_text)>500 else ""),
+             "revised_text": self.revised_text[:500] + ("..." if len(self.revised_text)>500 else ""),
+             "edits": [e.to_dict() for e in self.edits], "issues": [i.to_dict() for i in self.issues],
+             "fact_checks": [f.to_dict() for f in self.fact_checks],
+             "severity_counts": self.severity_counts, "verdict": self.verdict.value,
+             "overall_score": self.overall_score, "reviewer_model": self.reviewer_model,
+             "summary": self.summary}
+        # V2 fields in serialization
+        d["round_number"] = self.round_number
+        d["score_by_category"] = self.score_by_category
+        d["improvement_suggestions"] = self.improvement_suggestions
+        d["revision_instructions"] = self.revision_instructions[:500]
+        d["article_type"] = self.article_type
+        d["forced_accept"] = self.forced_accept
+        return d
 
 class AgentResult:
     def __init__(self, agent_name="", success=False, data=None, error="", duration_sec=0.0, tokens_used=0, metadata=None):
