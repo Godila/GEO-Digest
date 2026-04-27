@@ -3863,6 +3863,9 @@ function startEditorPolling(jobId) {
     editorPoller = setInterval(async () => {
         try {
             const job = await api(`/editor/jobs/${jobId}`);
+            // Resolve actual phase (fallback to status if phase missing/null)
+            const resolvedPhase = job.phase || job.status || 'unknown';
+
             const phaseMap = {
                 idle: 'Инициализация...',
                 analyzing: 'Анализ хранилища...',
@@ -3873,28 +3876,30 @@ function startEditorPolling(jobId) {
                 error: 'Ошибка',
                 unknown: 'Ожидание...'
             };
-            const phaseText = phaseMap[job.phase] || job.phase;
+            const phaseText = phaseMap[resolvedPhase] || resolvedPhase;
 
             // Update progress bar based on phase
             const pctMap = { idle: 5, analyzing: 25, proposing: 60, validating: 85, done: 100, failed: 0, error: 0, unknown: 50 };
-            const pct = pctMap[job.phase] || 50;
+            const pct = pctMap[resolvedPhase] || 50;
             document.getElementById('editorProgressBar').style.width = pct + '%';
             document.getElementById('editorPct').textContent = pct + '%';
             document.getElementById('editorPhase').textContent = phaseText;
 
-            // Terminal states: stop polling and show results
-            if (job.phase === 'done' || job.phase === 'failed' || job.phase === 'error') {
+            // Terminal states: stop polling and show results (check both phase AND status)
+            const isTerminal = resolvedPhase === 'done' || resolvedPhase === 'failed' || resolvedPhase === 'error'
+                || job.status === 'done' || job.status === 'failed';
+            if (isTerminal) {
                 clearInterval(editorPoller);
                 editorPoller = null;
                 document.getElementById('runEditorBtn').disabled = false;
                 document.getElementById('runEditorBtn').textContent = '🚀 Проанализировать и предложить';
 
-                if (job.phase === 'done') {
+                if (resolvedPhase === 'done' || job.status === 'done') {
                     await loadEditorJobDetail(jobId);
                 } else {
                     // Show error
                     document.getElementById('editorPhase').textContent =
-                        'Ошибка: ' + (job.error || job.phase);
+                        'Ошибка: ' + (job.error || resolvedPhase);
                 }
                 // Refresh history
                 loadEditorHistory();
@@ -4314,12 +4319,14 @@ async function loadEditorHistory() {
             return;
         }
         tbody.innerHTML = jobs.map(j => {
-            const phaseClass = j.phase === 'done' ? 'phase-done' : j.phase === 'error' ? 'phase-error' : 'phase-running';
+            // Resolve phase (fallback to status for completed jobs where phase was omitted)
+            const rp = j.phase || j.status || 'unknown';
+            const phaseClass = rp === 'done' ? 'phase-done' : rp === 'error' || rp === 'failed' ? 'phase-error' : 'phase-running';
             const shortTopic = (j.topic || '').length > 35 ? (j.topic || '').slice(0, 32) + '...' : (j.topic || '');
             return `<tr>
                 <td style="font-family:monospace;font-size:11px">${escapeHtml(j.job_id || '')}</td>
                 <td>${escapeHtml(shortTopic)}</td>
-                <td><span class="phase-badge ${phaseClass}">${j.phase || '—'}</span></td>
+                <td><span class="phase-badge ${phaseClass}">${rp}</span></td>
                 <td>${j.proposals_count || 0}</td>
                 <td>
                     <button class="btn-sm btn-secondary" onclick="loadEditorJobDetail('${j.job_id}')">Открыть</button>

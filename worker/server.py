@@ -1543,6 +1543,9 @@ async def editor_analyze(request: Request):
 
                 _editor_jobs[job_id] = result
 
+                # Preserve phase for UI polling (EditorResult.to_dict() omits it)
+                result["phase"] = "done"
+
                 # Save final enriched result to disk
                 with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)

@@ -220,6 +220,9 @@ class EditorAgent:
             updated_at=_now_iso(),
         )
 
+        # Save checkpoint IMMEDIATELY so UI shows "analyzing" (not "idle")
+        self._save_checkpoint(state)
+
         try:
             # ═══ Phase 1: Analysis ═══
             logger.info("[editor] %s Phase 1: Анализ хранилища...", state.job_id)
