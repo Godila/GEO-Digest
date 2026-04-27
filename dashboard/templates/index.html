@@ -1983,6 +1983,26 @@ const TYPE_COLORS_EXT = {
 document.addEventListener('DOMContentLoaded', async () => {
     // No initGraph() here — graph loads lazily when user clicks "🔀 Граф" tab
     await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources()]);
+
+    // Restore active pipeline job if page was refreshed mid-pipeline
+    try {
+        const jobsRes = await api('/pipeline/jobs');
+        const jobs = jobsRes.jobs || [];
+        const activeJob = jobs.find(j =>
+            !['done', 'failed', 'cancelled'].includes(j.state)
+        );
+        if (activeJob && (activeJob.job_id || activeJob.id)) {
+            currentEditorJobId = activeJob.job_id || activeJob.id;
+            currentPipelineState = activeJob.state || 'editing';
+            console.log('[init] Restored active job:', currentEditorJobId, 'state:', currentPipelineState);
+            // Load proposals if available
+            if (activeJob.state === 'selecting' || activeJob.editor_result?.proposals) {
+                await loadEditorJobDetail(currentEditorJobId);
+            }
+        }
+    } catch(e) {
+        console.warn('[init] Could not restore pipeline job:', e.message);
+    }
 });
 
 // ── Resizable Split Panel (NO-OP — removed in Variant D) ──

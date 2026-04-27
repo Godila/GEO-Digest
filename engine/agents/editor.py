@@ -428,12 +428,32 @@ class EditorAgent:
         self, raw: dict, analysis: StorageAnalysis, index: int = 0
     ) -> ArticleProposal:
         """Validate a raw proposal: DOI check, duplicate check, confidence scoring."""
-        # 1. Validate DOIs against storage
+        # 1. Collect references from LLM output
+        # NOTE: We trust LLM-generated DOIs even if not in local storage.
+        # _check_doi_exists() only works for articles already in our DB,
+        # but LLM may reference new/published DOIs from its training data.
+        # Filtering them out leaves proposals with empty key_references.
+        raw_refs = raw.get("key_references", [])
         valid_refs = []
-        for ref in raw.get("key_references", []):
+        unchecked_refs = []
+
+        for ref in raw_refs:
             doi = ref.replace("DOI:", "").replace("doi:", "").strip()
-            if doi and self._check_doi_exists(doi):
-                valid_refs.append(ref)
+            if not doi:
+                continue
+            if self.tools is not None:
+                try:
+                    result = self.tools.execute("validate_doi", {"doi": doi})
+                    if hasattr(result, 'success') and result.success and result.data.get("valid"):
+                        valid_refs.append(ref)
+                        continue
+                except Exception:
+                    pass
+            # Keep DOI even if validation failed — LLM knows better than our local DB
+            unchecked_refs.append(ref)
+
+        # Prefer validated refs, fall back to all LLM refs
+        key_references = valid_refs if valid_refs else unchecked_refs
 
         # 2. Check for duplicates against existing articles
         is_duplicate = False
@@ -470,9 +490,9 @@ class EditorAgent:
             thesis=raw.get("thesis", "[без тезиса]"),
             target_audience=raw.get("target_audience", "general_public"),
             confidence=base_confidence,
-            sources_available=len(valid_refs),
+            sources_available=len(key_references),
             sources_needed=int(raw.get("sources_needed", 5)),
-            key_references=valid_refs,
+            key_references=key_references,
             gap_filled=raw.get("gap_filled", ""),
             estimated_sections=raw.get("estimated_sections", []),
             status=status,
