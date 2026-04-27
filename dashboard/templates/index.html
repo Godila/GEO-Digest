@@ -6,8 +6,7 @@
     <title>ГЕО-Дайджест — Граф знаний</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..700;1,9..40,100..700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         /* ═══════════════════════════════════════════
            DESIGN TOKENS — единый источник истины
@@ -301,60 +300,75 @@
             border-radius: 2px 2px 0 0;
         }
 
-        /* ── Layout (resizable split) ────── */
-        .layout {
-            display: flex;
-            height: calc(100vh - var(--header-height));
-            overflow: hidden;
-        }
-        .side-panel {
-            flex: 0 0 var(--sidebar-width);
-            min-width: 320px;
-            max-width: 72%;
-            overflow-y: auto;
-            padding: var(--space-5);
-            border-right: 1px solid var(--border-subtle);
-            scroll-behavior: smooth;
-        }
-        /* Drag handle */
-        .resize-handle {
-            flex: 0 0 5px;
-            cursor: col-resize;
-            background: var(--border);
-            transition: background 0.15s;
-            position: relative;
-            z-index: 20;
-        }
-        .resize-handle:hover,
-        .resize-handle.dragging { background: var(--blue); }
-        .resize-handle::after {
-            content: '⋮';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: var(--text-muted);
-            font-size: 14px;
-            opacity: 0;
-            transition: opacity 0.15s;
-        }
-        .resize-handle:hover::after { opacity: 1; }
-
-        /* ── Graph Panel (right side) ── */
-        .graph-panel {
-            position: relative;
-            flex: 1;
-            min-width: 400px;
-            overflow: hidden;
-        }
-        #cy { width: 100%; height: 100%; background: var(--bg); }
-        .graph-overlay {
-            position: absolute;
-            top: 12px; left: 12px;
-            z-index: 10;
+        /* ── Layout (single-panel, no split) ───── */
+        .main-panel {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            height: calc(100vh - var(--header-height));
+            overflow-y: auto;
+            overflow-x: hidden;
+            width: 100%;
+        }
+
+        /* ── Graph Tab (fullscreen when active) ─── */
+        #tabGraph.tab-content.active {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - var(--header-height) - 48px); /* header + tabs */
+            padding: 0 !important;
+            background: var(--bg);
+        }
+
+        .graph-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            padding: var(--space-3) var(--space-5);
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            z-index: 10;
+        }
+        .graph-toolbar-left,
+        .graph-toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            flex-wrap: wrap;
+        }
+
+        .graph-canvas {
+            flex: 1;
+            position: relative;
+            min-height: 400px;
+            background: var(--bg);
+        }
+
+        .graph-loading-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-3);
+            background: var(--bg);
+            z-index: 5;
+            color: var(--text-muted);
+            font-size: var(--font-size-sm);
+        }
+        .graph-loading-overlay.hidden { display: none; }
+
+        /* ── Article List (grid layout — full width) ── */
+        .article-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: var(--space-3);
+            padding: var(--space-5);
+        }
+        @media (min-width: 1600px) {
+            .article-list { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
         }
         .graph-btn {
             background: rgba(22,27,34,.85);
@@ -380,14 +394,6 @@
         }
         .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-
-        /* ── Side Panel ─────────────── */
-        .side-panel {
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg-card);
-        }
 
         /* Tabs */
         .tabs { display: flex; border-bottom: 1px solid var(--border); }
@@ -426,9 +432,8 @@
         }
         .filter-select:focus { border-color: var(--accent); }
 
-        /* Article table */
-        .article-list { flex: 1; overflow-y: auto; padding: 8px; }
-        .article-card {
+         /* Article table */
+         .article-card {
             background: var(--bg);
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -1587,14 +1592,13 @@
     </div>
 </div>
 
-<div class="layout">
-    <!-- Side Panel -->
-    <div class="side-panel" id="main-content" role="main" aria-label="Основная панель контента">
+    <!-- Main Panel (full-width, no split) -->
+    <div class="main-panel" id="main-content" role="main" aria-label="Основная панель контента">
         <div class="tabs" role="tablist" aria-label="Навигация по разделам">
             <div class="tab active" role="tab" aria-selected="true" aria-controls="tabArticles" tabindex="0" onclick="switchTab('articles', this)">Статьи</div>
             <div class="tab" role="tab" aria-selected="false" aria-controls="tabResearch" tabindex="-1" onclick="switchTab('research', this)">Исследование</div>
             <div class="tab" role="tab" aria-selected="false" aria-controls="tabAgents" tabindex="-1" onclick="switchTab('agents', this)">🤖 Агенты</div>
-            <div class="tab" role="tab" aria-selected="false" aria-controls="tabGraph" tabindex="-1" onclick="switchTab('graph', this)">Граф</div>
+            <div class="tab" role="tab" aria-selected="false" aria-controls="tabGraph" tabindex="-1" onclick="switchTab('graph', this)">🔀 Граф</div>
             <div class="tab" role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1" onclick="switchTab('stats', this)">Статистика</div>
         </div>
 
@@ -1706,15 +1710,39 @@
 
         </div>
 
-        <!-- Graph Tab -->
+        <!-- Graph Tab (fullscreen — lazy loads Cytoscape) -->
         <div class="tab-content" id="tabGraph" role="tabpanel" aria-labelledby="tab-graph-label">
-            <!-- Graph Actions -->
-            <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-                <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
-                <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
+            <!-- Graph Toolbar -->
+            <div class="graph-toolbar">
+                <div class="graph-toolbar-left">
+                    <button class="rebuild-btn" onclick="rebuildGraphIncremental()" id="rebuildIncBtn">🔄 Обновить граф</button>
+                    <button class="rebuild-btn" onclick="rebuildGraph()" id="rebuildBtn">Перестроить граф</button>
+                </div>
+                <div class="graph-toolbar-right">
+                    <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
+                    <button class="graph-btn" onclick="layoutGraph('circle')">Круг</button>
+                    <button class="graph-btn" onclick="layoutGraph('cose')">Сила</button>
+                    <button class="graph-btn" onclick="layoutGraph('breadthfirst')">Дерево</button>
+                    <select class="filter-select graph-filter" id="graphFilter" onchange="filterGraph()">
+                        <option value="all">Все связи</option>
+                        <option value="llm">Только ИИ-семантика</option>
+                        <option value="metadata">Только метаданные</option>
+                    </select>
+                </div>
             </div>
 
-            <!-- Graph Build Status (always visible in tab) -->
+            <!-- Cytoscape Canvas (fullscreen within tab) -->
+            <div id="cy" class="graph-canvas">
+                <div class="graph-loading-overlay" id="graphLoadingOverlay">
+                    <div class="spinner-lg"></div>
+                    <p>Загрузка графа знаний...</p>
+                </div>
+            </div>
+
+            <!-- Graph Legend -->
+            <div class="graph-legend" id="graphLegend"></div>
+
+            <!-- Graph Build Status -->
             <div id="graphBuildStatus" class="graph-build-status">
                 <div class="gb-title">📊 Построение графа</div>
                 <div class="gb-progress-track">
@@ -1881,28 +1909,7 @@
             </div>
 
         </div>
-    </div>
-
-    <!-- Resize Handle -->
-    <div class="resize-handle" id="resizeHandle"></div>
-
-    <!-- Graph Panel (right side) -->
-    <div class="graph-panel" role="complementary" aria-label="Панель графа знаний">
-        <div id="cy"></div>
-        <div class="graph-overlay">
-            <button class="graph-btn" onclick="fitGraph()">Весь вид</button>
-            <button class="graph-btn" onclick="layoutGraph('circle')">Круг</button>
-            <button class="graph-btn" onclick="layoutGraph('cose')">Сила</button>
-            <button class="graph-btn" onclick="layoutGraph('breadthfirst')">Дерево</button>
-            <select class="filter-select" id="graphFilter" onchange="filterGraph()" style="width:auto;">
-                <option value="all">Все связи</option>
-                <option value="llm">Только ИИ-семантика</option>
-                <option value="metadata">Только метаданные</option>
-            </select>
-        </div>
-        <div class="graph-legend" id="graphLegend"></div>
-    </div>
-</div>
+    </div><!-- /main-panel -->
 
 <!-- Fullscreen Article Modal (replaces old detail-panel) -->
 <div class="modal-overlay" id="articleModal" onclick="if(event.target===this)closeArticleModal()">
@@ -1957,62 +1964,14 @@ const TYPE_COLORS_EXT = {
 
 // ── Init ──────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    initResizeHandle();
-    await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources(), initGraph()]);
+    // No initGraph() here — graph loads lazily when user clicks "🔀 Граф" tab
+    await Promise.all([loadStats(), loadArticles(), loadTopics(), loadSources()]);
 });
 
-// ── Resizable Split Panel ───────────────────
+// ── Resizable Split Panel (NO-OP — removed in Variant D) ──
 function initResizeHandle() {
-    const handle = document.getElementById('resizeHandle');
-    const layout = document.querySelector('.layout');
-    const sidePanel = document.querySelector('.side-panel');
-    if (!handle || !layout || !sidePanel) return;
-
-    // Restore saved position
-    const saved = localStorage.getItem('geo_split_pos');
-    if (saved) {
-        document.documentElement.style.setProperty('--split-pos', saved + '%');
-    }
-
-    let dragging = false;
-
-    handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        dragging = true;
-        handle.classList.add('dragging');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-    });
-
-    document.addEventListener('mousemove', (e) => {
-        if (!dragging) return;
-        const rect = layout.getBoundingClientRect();
-        let pct = ((e.clientX - rect.left) / rect.width) * 100;
-        // Clamp: side 30-70%, graph gets the rest
-        pct = Math.max(30, Math.min(70, pct));
-        document.documentElement.style.setProperty('--split-pos', pct + '%');
-        // Resize cytoscape
-        if (window.cy) cy.resize();
-    });
-
-    document.addEventListener('mouseup', () => {
-        if (!dragging) return;
-        dragging = false;
-        handle.classList.remove('dragging');
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        // Save position
-        const pos = getComputedStyle(document.documentElement).getPropertyValue('--split-pos');
-        localStorage.setItem('geo_split_pos', pos.replace('%', '').trim());
-        if (window.cy) cy.resize();
-    });
-
-    // Double-click to reset to 45/55
-    handle.addEventListener('dblclick', () => {
-        document.documentElement.style.setProperty('--split-pos', '45%');
-        localStorage.setItem('geo_split_pos', '45');
-        if (window.cy) cy.resize();
-    });
+    // Split panel removed — graph is now a fullscreen tab.
+    // Kept for API compatibility; does nothing.
 }
 
 // ── API helpers ────────────────────────────────
@@ -2244,10 +2203,42 @@ async function loadStats() {
 }
 
 // ── Graph (Cytoscape.js) ─────────────────────
+/** Lazy-initialize Cytoscape: load library + graph data on first access */
+let _cytoscapeLoading = false;
+let _cytoscapeLoaded = false;
+
+function loadCytoscape() {
+    if (_cytoscapeLoaded || window.cytoscape) return Promise.resolve();
+    if (_cytoscapeLoading) return new Promise(resolve => {
+        const iv = setInterval(() => { if (_cytoscapeLoaded) { clearInterval(iv); resolve(); } }, 50);
+    });
+    _cytoscapeLoading = true;
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js';
+        s.onload = () => { _cytoscapeLoaded = true; _cytoscapeLoading = false; resolve(); };
+        s.onerror = () => { _cytoscapeLoading = false; reject(new Error('Failed to load Cytoscape')); };
+        document.head.appendChild(s);
+    });
+}
+
 async function initGraph() {
+    // Show loading overlay
+    const overlay = document.getElementById('graphLoadingOverlay');
+    if (overlay) overlay.classList.remove('hidden');
+
     try {
+        // 1. Lazy-load Cytoscape library (500KB — only when needed!)
+        await loadCytoscape();
+
+        // 2. Fetch graph data
         graphData = await api('/graph');
-    } catch(e) { console.error('Graph load error:', e); return; }
+    } catch(e) {
+        console.error('Graph load error:', e);
+        const ov = document.getElementById('graphLoadingOverlay');
+        if (ov) { ov.classList.add('hidden'); ov.innerHTML = '<p style="color:var(--danger)">Ошибка загрузки графа</p>'; ov.classList.remove('hidden'); }
+        return;
+    }
 
     // Convert to Cytoscape format
     const eles = [];
@@ -2446,6 +2437,9 @@ async function initGraph() {
     // Build legend
     buildLegend();
 
+    // Hide loading overlay — graph is ready
+    if (overlay) overlay.classList.add('hidden');
+
     // Events
     cy.on('tap', 'node', function(evt) {
         const node = evt.target;
@@ -2487,7 +2481,7 @@ async function initGraph() {
     });
 
     // Resize on window resize
-    window.addEventListener('resize', () => { cy.resize(); });
+    window.addEventListener('resize', () => { if (window.cy) cy.resize(); });
 }
 
 function buildLegend() {
@@ -4260,9 +4254,23 @@ function _renderGraphTabContent(proposal) {
     return html;
 }
 
-/** Focus a node in Cytoscape graph by DOI */
+/** Focus a node in Cytoscape graph by DOI — auto-switches to Graph tab */
 function focusNodeInGraph(doi) {
-    if (!cy || !doi) return;
+    if (!doi) return;
+
+    // Auto-switch to Graph tab if not already there
+    const graphTab = document.querySelector('[aria-controls="tabGraph"]');
+    const graphPanel = document.getElementById('tabGraph');
+    if (graphTab && !graphPanel.classList.contains('active')) {
+        switchTab('graph', graphTab);
+    }
+
+    // Ensure graph is initialized (lazy-load)
+    if (!cy) {
+        initGraph().then(() => setTimeout(() => focusNodeInGraph(doi), 500));
+        return;
+    }
+
     // Find node by _graph_id or doi attribute
     const node = cy.nodes().filter(n => {
         const d = n.data();
