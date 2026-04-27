@@ -3953,6 +3953,7 @@ async function loadEditorJobDetail(jobId) {
         const proposals = data.proposals || data.editor_result?.proposals || [];
         currentEditorProposals = proposals;  // Store for detail modal
         currentPipelineState = data.state || null;  // Track pipeline state
+        window._currentReviews = data.review_history || [];  // Review data for tab
         renderProposals(proposals);
 
         // Show selected proposal if any
@@ -4062,6 +4063,7 @@ function showSelectedArticle(proposal) {
             <span class="detail-tab" id="dtab-sources" onclick="switchDetailTab('sources')">Источники (${(proposal.key_references || []).length})</span>
             <span class="detail-tab" id="dtab-graph" onclick="switchDetailTab('graph')">🕸️ Граф</span>
             <span class="detail-tab" id="dtab-develop" onclick="switchDetailTab('develop')">Доработка</span>
+            <span class="detail-tab" id="dtab-review" onclick="switchDetailTab('review')">👀 Ревью</span>
         </div>
         <div id="detailContent">
             <p style="line-height:1.7;color:var(--text-secondary);font-size:14px">${escapeHtml(proposal.thesis || '')}</p>
@@ -4080,9 +4082,10 @@ function showSelectedArticle(proposal) {
 
 /** Switch detail tabs */
 function switchDetailTab(tabName) {
-    // Update tab button styles
-    document.querySelectorAll('.detail-tab-btn').forEach(t => t.classList.remove('active'));
-    const activeBtn = document.querySelector(`.detail-tab-btn[data-tab="${tabName}"]`);
+    // Update tab button styles (support both .detail-tab and .detail-tab-btn)
+    document.querySelectorAll('.detail-tab, .detail-tab-btn').forEach(t => t.classList.remove('active'));
+    const activeBtn = document.querySelector(`.detail-tab#dtab-${tabName}`) || 
+                       document.querySelector(`.detail-tab-btn[data-tab="${tabName}"]`);
     if (activeBtn) activeBtn.classList.add('active');
 
     // Support both old (#selectedArticle) and new (proposalDetailOverlay) modal
@@ -4164,6 +4167,8 @@ function switchDetailTab(tabName) {
         `;
     } else if (tabName === 'graph') {
         content.innerHTML = _renderGraphTabContent(proposal);
+    } else if (tabName === 'review') {
+        content.innerHTML = renderReviewTab(proposal);
     }
 }
 
@@ -4201,6 +4206,124 @@ function renderPipelineStatusBar(state, containerId) {
         
         return `<span class="${cls}" title="${step.label}">${step.icon} ${step.label}</span>${arrow}`;
     }).join('');
+}
+
+/** Render Review tab — verdict, score trend, edits, fact-checks */
+function renderReviewTab(proposal) {
+    const jobId = currentEditorJobId;
+    
+    if (!jobId) {
+        return '<div style="padding:20px;text-align:center;color:var(--text-muted)">' +
+            '<p>👀 Ревью будет доступно после запуска ревьюера</p>' +
+            '<button class="btn-primary btn-sm" style="margin-top:10px" onclick="reviewArticle()">Запустить ревью</button>' +
+            '</div>';
+    }
+
+    const reviews = window._currentReviews || [];
+    const state = currentPipelineState || '';
+    
+    if (!reviews.length && state !== 'done' && state !== 'reviewing') {
+        return '<div style="padding:20px;text-align:center;color:var(--text-muted)">' +
+            '<p>Ревью ещё не запущено</p>' +
+            '<button class="btn-primary btn-sm" style="margin-top:10px" onclick="reviewArticle()">👀 Запустить ревью</button>' +
+            '</div>';
+    }
+    
+    if (!reviews.length && state === 'reviewing') {
+        return '<div style="padding:20px;text-align:center;color:var(--text-muted)">' +
+            '<div class="spinner" style="margin:0 auto 12px"></div>' +
+            '<p>Reviewer анализирует статью...</p>' +
+            '<p style="font-size:12px">Модель: Gemini Flash Lite via OpenRouter</p>' +
+            '</div>';
+    }
+
+    let html = '<div style="display:flex;flex-direction:column;gap:16px">';
+    
+    reviews.forEach((rv, idx) => {
+        const round = rv.round_number || (idx + 1);
+        const score = rv.overall_score || 0;
+        const verdict = rv.verdict || 'UNKNOWN';
+        
+        const vColors = {'ACCEPT':'#22c55e','ACCEPT_WITH_MINOR':'#84cc16','NEEDS_REVISION':'#f59e0b','REJECT':'#ef4444'};
+        const vColor = vColors[verdict] || '#6b7280';
+        const vLabels = {'ACCEPT':'✅ Принято','ACCEPT_WITH_MINOR':'✅ С замечаниями','NEEDS_REVISION':'🔄 Доработка','REJECT':'❌ Отклонено'};
+        
+        html += `<div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:16px;border-left:4px solid ${vColor}">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">`;
+        html += `<span style="font-weight:600;font-size:14px">Раунд ${round}</span>`;
+        html += `<span style="background:${vColor};color:#fff;padding:3px 12px;border-radius:12px;font-size:12px;font-weight:600">${vLabels[verdict]||verdict}</span>`;
+        html += `<span style="font-size:18px;font-weight:700;color:${score>=0.75?'#22c55e':score>=0.5?'#f59e0b':'#ef4444'}">${(score*100).toFixed(0)}%</span>`;
+        html += `</div>`;
+        
+        // Score by category
+        const sbc = rv.score_by_category || {};
+        if (Object.keys(sbc).length) {
+            html += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">По категориям:</div>`;
+            for (const [cat,val] of Object.entries(sbc)) {
+                const pct = Math.max(0,Math.min(1,val))*100;
+                const c = pct>=75?'#22c55e':pct>=50?'#f59e0b':'#ef4444';
+                html += `<div style="margin-bottom:4px;display:flex;align-items:center;gap:8px">`;
+                html += `<span style="font-size:11px;width:130px;flex-shrink:0;color:var(--text-secondary)">${cat.replace(/_/g,' ')}</span>`;
+                html += `<div style="flex:1;height:8px;background:var(--bg-elevated);border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${c};border-radius:4px"></div></div>`;
+                html += `<span style="font-size:11px;width:35px;text-align:right;color:var(--text-muted)">${pct.toFixed(0)}%</span></div>`;
+            }
+            html += `</div>`;
+        }
+        
+        // Edits table
+        if (rv.edits && rv.edits.length) {
+            html += `<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;margin-bottom:6px">📝 Правки (${rv.edits.length}):</div><table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:var(--bg-elevated)"><th style="padding:4px 8px;text-align:left">Серьёзность</th><th style="padding:4px 8px;text-align:left">Секция</th><th style="padding:4px 8px;text-align:left">Описание</th></tr>`;
+            rv.edits.forEach(e => {
+                const sev = e.severity?.value || e.severity || 'MINOR';
+                const sc = {'CRITICAL':'#ef4444','MAJOR':'#f59e0b','MINOR':'#84cc16','INFO':'#6b7280'}[sev]||'#6b7280';
+                html += `<tr style="border-bottom:1px solid var(--border-subtle)"><td style="padding:4px 8px"><span style="background:${sc};color:#fff;padding:2px 8px;border-radius:4px;font-size:10px">${sev}</span></td><td style="padding:4px 8px;color:var(--text-secondary)">${escapeHtml(e.location||e.category||'—')}</td><td style="padding:4px 8px">${escapeHtml((e.reason||e.description||'').substring(150))}</td></tr>`;
+            });
+            html += `</table></div>`;
+        }
+        
+        // Fact checks
+        if (rv.fact_checks && rv.fact_checks.length) {
+            html += `<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;margin-bottom:6px">🔍 Факт-чек:</div>`;
+            rv.fact_checks.forEach(fc => {
+                html += `<div style="padding:6px 8px;background:${fc.verified?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)'};border-radius:6px;margin-bottom:4px;font-size:12px">${fc.verified?'✅':'❌'} ${escapeHtml((fc.claim||'').substring(120))}</div>`;
+            });
+            html += `</div>`;
+        }
+        
+        // Suggestions
+        if (rv.improvement_suggestions?.length) {
+            html += `<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;margin-bottom:6px">💡 Рекомендации:</div><ul style="padding-left:18px;margin:0">`;
+            rv.improvement_suggestions.forEach(s => { html += `<li style="margin-bottom:4px;font-size:12px;line-height:1.5">${escapeHtml(s)}</li>`; });
+            html += `</ul></div>`;
+        }
+        
+        if (rv.summary) html += `<div style="margin-top:8px;padding:8px;background:var(--bg-elevated);border-radius:6px;font-size:12px;line-height:1.5"><strong>Комментарий:</strong> ${escapeHtml(rv.summary.substring(300))}</div>`;
+        
+        html += `</div>`;
+    });
+    
+    // Score trend chart
+    if (reviews.length > 1) {
+        html += `<div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:16px">`;
+        html += `<div style="font-size:12px;font-weight:600;margin-bottom:10px">📈 Динамика по раундам:</div>`;
+        html += `<div style="display:flex;align-items:flex-end;gap:8px;height:60px">`;
+        const mx = Math.max(...reviews.map(r=>r.overall_score||0),1);
+        reviews.forEach((rv,idx) => {
+            const h = Math.max(8,((rv.overall_score||0)/mx)*50);
+            const s = rv.overall_score||0;
+            html += `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">`;
+            html += `<span style="font-size:11px;font-weight:600;color:${s>=0.75?'#22c55e':s>=0.5?'#f59e0b':'#ef4444'}">${(s*100).toFixed(0)}%</span>`;
+            html += `<div style="width:100%;max-width:40px;height:${h}px;background:${s>=0.75?'#22c55e':s>=0.5?'#f59e0b':'#ef4444'};border-radius:4px 4px 0 0"></div>`;
+            html += `<span style="font-size:10px;color:var(--text-muted)">R${idx+1}</span></div>`;
+        });
+        html += `</div></div>`;
+    }
+    
+    if (reviews[reviews.length-1]?.forced_accept) {
+        html += `<div style="background:rgba(245,158,11,.1);border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-top:8px"><span style="color:#f59e0b;font-weight:600">⚠️ Принудительно принято</span> <span style="font-size:12px;color:var(--text-secondary)">— достигнут лимит раундов.</span></div>`;
+    }
+    
+    return html + '</div>';
 }
 
 /** Poll pipeline job until state changes */
