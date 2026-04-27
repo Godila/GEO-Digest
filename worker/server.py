@@ -1546,6 +1546,9 @@ async def editor_analyze(request: Request):
                 # Preserve phase for UI polling (EditorResult.to_dict() omits it)
                 result["phase"] = "done"
 
+                # Ensure job_id matches filename (to_dict may regenerate ID)
+                result["job_id"] = job_id
+
                 # Save final enriched result to disk
                 with open(jobs_dir / f"{job_id}.json", "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
@@ -1588,12 +1591,18 @@ async def editor_list_jobs():
                     data = json.load(fh)
                 # Фильтруем только editor jobs (имеют proposals или analysis поле)
                 if "proposals" in data or "analysis" in data:
+                    # Resolve phase: prefer phase field, fallback to status
+                    raw_phase = data.get("phase")
+                    raw_status = data.get("status")
+                    resolved = raw_phase or raw_status or "unknown"
+                    # Use FILENAME as canonical ID (matches GET/DELETE URL param)
+                    canonical_id = data.get("job_id") or f.stem
                     jobs.append({
-                        "job_id": data.get("job_id", f.stem),
+                        "job_id": canonical_id,
                         "topic": data.get("topic", ""),
-                        "phase": data.get("phase", "unknown"),
+                        "phase": resolved,
                         "proposals_count": len(data.get("proposals") or []),
-                        "status": data.get("phase", "unknown"),
+                        "status": raw_status or resolved,
                         "started_at": data.get("started_at", ""),
                         "updated_at": data.get("updated_at", ""),
                     })

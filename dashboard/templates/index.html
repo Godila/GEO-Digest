@@ -3914,12 +3914,14 @@ function startEditorPolling(jobId) {
 async function loadEditorJobDetail(jobId) {
     try {
         const job = await api(`/editor/jobs/${jobId}`);
-        const proposals = job.proposals || [];
+        // Handle wrapped response (some endpoints return {detail: ...})
+        const data = job.detail || job;
+        const proposals = data.proposals || [];
         currentEditorProposals = proposals;  // Store for detail modal
         renderProposals(proposals);
 
-        if (job.selected_proposal_id) {
-            const proposal = (job.proposals || []).find(p => p.id === job.selected_proposal_id);
+        if (data.selected_proposal_id) {
+            const proposal = (data.proposals || []).find(p => p.id === data.selected_proposal_id);
             if (proposal) showSelectedArticle(proposal);
         }
 
@@ -3927,6 +3929,7 @@ async function loadEditorJobDetail(jobId) {
         document.getElementById('proposalsSection').style.display = '';
     } catch(e) {
         console.error('Failed to load editor job:', e);
+        toast('Не удалось загрузить job: ' + (e.message || 'файл не найден'), 'error');
     }
 }
 
@@ -4343,7 +4346,8 @@ async function loadEditorHistory() {
 async function deleteEditorJob(jobId) {
     if (!confirm('Удалить job ' + jobId + '?')) return;
     try {
-        await api(`/editor/jobs/${jobId}`, 'DELETE');
+        const result = await api(`/editor/jobs/${jobId}`, 'DELETE');
+        toast('Job удалён: ' + jobId, 'success');
         loadEditorHistory();
         // Clear detail if it was the deleted job
         if (currentEditorJobId === jobId) {
