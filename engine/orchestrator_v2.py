@@ -252,14 +252,53 @@ class EditorOrchestrator:
             raise ValueError("Cannot write: no proposal selected")
 
         try:
+            # Build draft from proposal if no reader draft available
+            draft_data = job.current_draft
+            
+            # current_draft can be: None, dict (from JSON), or actual StructuredDraft
+            # We need a real StructuredDraft for the Writer
+            needs_synthetic = (
+                not draft_data
+                or isinstance(draft_data, (str, dict))
+                and (not draft_data or (isinstance(draft_data, dict) and 'group_type' not in draft_data))
+            )
+            
+            if needs_synthetic:
+                from engine.schemas import StructuredDraft, GroupType
+                refs = proposal.get("key_references", [])
+                # refs can be strings ("DOI:...") or dicts ({"doi": "..."})
+                dois = []
+                for r in refs:
+                    if isinstance(r, str):
+                        # Extract DOI from string like "DOI:10.1234/xxx"
+                        if r.lower().startswith('doi:'):
+                            dois.append(r[4:].strip())
+                        elif '/' in r:
+                            dois.append(r.strip())
+                    elif isinstance(r, dict) and r.get("doi"):
+                        dois.append(r["doi"])
+                
+                draft_data = StructuredDraft(
+                    group_type=GroupType.DATA_PAPER,
+                    source_articles=dois,
+                    title_suggestion=proposal.get("title", job.topic),
+                    abstract_suggestion=proposal.get("thesis", ""),
+                    proposed_contribution=proposal.get("contribution", ""),
+                )
+                logger.info(f"[orch] Created synthetic draft from proposal ({len(dois)} DOIs)")
+
             result = self.writer.run(
+                draft=draft_data,
                 topic=proposal.get("title", job.topic),
                 thesis=proposal.get("thesis", ""),
-                draft_data=job.current_draft,
-                references=proposal.get("key_references", []),
+                references=self._normalize_refs(proposal.get("key_references", [])),
             )
             # Extract actual article from AgentResult
+            if not getattr(result, 'success', True):
+                raise ValueError(f"Writer failed: {getattr(result, 'error', 'unknown error')}")
             article = result.data if hasattr(result, 'data') else result
+            if article is None:
+                raise ValueError("Writer returned None — no draft data available")
             job.final_article = self._serialize_article(article)
             job.state = PipelineState.REVIEWING
         except Exception as e:
@@ -328,10 +367,19 @@ class EditorOrchestrator:
                 # Defensive: handle cases where data might not be a ReviewedDraft
                 if isinstance(reviewed, str):
                     logger.warning(f"[orch] Reviewer returned string instead of ReviewedDraft: {reviewed[:200]}")
-                    # Try to parse as JSON
                     try:
                         import json as _json
-                        reviewed = _json.loads(reviewed)
+                        parsed = _json.loads(reviewed)
+                        if isinstance(parsed, dict):
+                            reviewed = parsed  # dict — use safe access below
+                        else:
+                            reviewed =ReviewedDraft(
+                                verdict=ReviewVerdict.NEEDS_REVISION,
+                                overall_score=0.3,
+                                issues=[Edit(section="system", description=f"Parser error: {reviewed[:200]}", seriousness="major")],
+                                fact_checks=[],
+                                improvement_suggestions=["Review failed — manual review required"],
+                            )
                     except Exception:
                         reviewed = ReviewedDraft(
                             verdict=ReviewVerdict.NEEDS_REVISION,
@@ -340,6 +388,14 @@ class EditorOrchestrator:
                             fact_checks=[],
                             improvement_suggestions=["Review failed — manual review required"],
                         )
+
+                # Safe attribute accessor for both objects and dicts
+                def _rv(attr, default=None):
+                    if hasattr(reviewed, attr):
+                        return getattr(reviewed, attr, default)
+                    elif isinstance(reviewed, dict):
+                        return reviewed.get(attr, default)
+                    return default
 
                 # Store in history
                 review_dict = reviewed.to_dict() if hasattr(reviewed, 'to_dict') else \
@@ -351,8 +407,8 @@ class EditorOrchestrator:
                 self._save_job(job)
 
                 # Determine action based on verdict
-                verdict = reviewed.verdict if hasattr(reviewed, 'verdict') else None
-                verdict_value = verdict.value if verdict else ""
+                verdict = _rv('verdict')
+                verdict_value = verdict.value if hasattr(verdict, 'value') else (verdict or "")
 
                 # BUG FIX: was comparing to "approve" string — now uses proper enum values
                 if verdict_value in (ReviewVerdict.ACCEPT.value, ReviewVerdict.ACCEPT_WITH_MINOR.value):
@@ -361,7 +417,7 @@ class EditorOrchestrator:
                     job.forced_accept = False
                     logger.info(
                         f"[orch] Job {job.job_id} ACCEPTED after round {round_num} "
-                        f"(verdict={verdict_value}, score={reviewed.overall_score:.2f})"
+                        f"(verdict={verdict_value}, score={_rv('overall_score', 0):.2f})"
                     )
                     break
 
@@ -370,20 +426,20 @@ class EditorOrchestrator:
                         # Send edits back to Writer for revision
                         logger.info(
                             f"[orch] Round {round_num}: NEEDS_REVISION "
-                            f"(score={reviewed.overall_score:.2f}) → sending to Writer"
+                            f"(score={_rv('overall_score', 0):.2f}) → sending to Writer"
                         )
 
                         # Build revision instructions using reviewer's helper
                         if hasattr(self.reviewer, '_build_revision_instructions'):
                             job.revision_instructions = \
                                 self.reviewer._build_revision_instructions(reviewed)
-                        elif hasattr(reviewed, 'revision_instructions'):
-                            job.revision_instructions = reviewed.revision_instructions
+                        elif isinstance(reviewed, dict):
+                            job.revision_instructions = reviewed.get('revision_instructions', '')
                         else:
                             job.revision_instructions = (
                                 f"Revise article based on review feedback.\n"
-                                f"Issues: {reviewed.issues}\n"
-                                f"Edits: {len(reviewed.edits)} changes required."
+                                f"Issues: {_rv('issues', [])}\n"
+                                f"Edits: {len(_rv('edits', []))} changes required."
                             )
 
                         # Transition back to WRITING state for rewrite
@@ -404,7 +460,7 @@ class EditorOrchestrator:
                         job.state = PipelineState.DONE
                         logger.info(
                             f"[orch] Job {job.job_id}: FORCED ACCEPT after {max_rounds} rounds "
-                            f"(score={reviewed.overall_score:.2f})"
+                            f"(score={_rv('overall_score', 0):.2f})"
                         )
                         break
 
@@ -415,14 +471,17 @@ class EditorOrchestrator:
                         job.revision_instructions = self._format_revision_edits(reviewed)
                         logger.info(
                             f"[orch] Round {round_num}: REJECT "
-                            f"(score={reviewed.overall_score:.2f}) → sending to Writer for rewrite"
+                            f"(score={_rv('overall_score', 0):.2f}) → sending to Writer for rewrite"
                         )
                         job = self._rewrite_article(job)
                         # _rewrite_article sets state to REVIEWING
                         # Loop continues to next round
                     else:
                         # Max rounds reached — forced accept with warning
-                        reviewed.forced_accept = True
+                        if isinstance(reviewed, dict):
+                            reviewed['forced_accept'] = True
+                        elif hasattr(reviewed, 'forced_accept'):
+                            reviewed.forced_accept = True
                         job.forced_accept = True
                         job.review_result = self._serialize_review(reviewed)
                         job.state = PipelineState.DONE
@@ -460,18 +519,41 @@ class EditorOrchestrator:
             return job
 
         try:
-            article = self.writer.run(
+            # Build draft from current article (for rewrite context)
+            draft = job.current_draft
+            if not draft and job.final_article:
+                # Use existing article as "draft" for rewriting
+                fa = job.final_article
+                if isinstance(fa, dict):
+                    text = fa.get('text', '')
+                elif hasattr(fa, 'text'):
+                    text = fa.text
+                else:
+                    text = str(fa)
+                if text and len(text) > 10:
+                    from engine.schemas import StructuredDraft, GroupType
+                    draft = StructuredDraft(
+                        group_type=GroupType.DATA_PAPER,
+                        content=text,
+                        source_articles=[],
+                        title_suggestion=fa.get('title', '') if isinstance(fa, dict) else getattr(fa, 'title', ''),
+                        keywords=[],
+                    )
+
+            result = self.writer.run(
+                draft=draft,
                 topic=proposal.get("title", job.topic),
                 thesis=proposal.get("thesis", ""),
-                draft_data=job.current_draft,
-                references=proposal.get("key_references", []),
-                revision_instructions=job.revision_instructions,  # Pass review feedback
+                references=self._normalize_refs(proposal.get("key_references", [])),
+                revision_instructions=job.revision_instructions or "",
             )
+            # Unwrap AgentResult
+            article = result.data if hasattr(result, 'data') else result
             job.final_article = self._serialize_article(article)
             job.state = PipelineState.REVIEWING  # Back to reviewing after rewrite
-            logger.info(f"[orch] Article rewritten, returning to REVIEW state")
+            logger.info("[orch] Article rewritten, returning to REVIEW state")
         except Exception as e:
-            logger.info(f"[och] Rewrite failed: {e}, keeping current version")
+            logger.warning(f"[orch] Rewrite failed: {e}, keeping current version")
             # Don't fail the whole job — keep existing article
             job.state = PipelineState.REVIEWING
 
@@ -581,6 +663,19 @@ class EditorOrchestrator:
         except Exception as e:
             logger.warning(f"[orch] Graph enrichment skipped: {e}")
 
+    @staticmethod
+    def _normalize_refs(refs):
+        """Normalize references — handle both string DOIs and dict formats."""
+        normalized = []
+        for r in (refs or []):
+            if isinstance(r, str):
+                normalized.append({"doi": r, "title": ""})
+            elif isinstance(r, dict):
+                normalized.append(r)
+            else:
+                normalized.append({"doi": str(r), "title": ""})
+        return normalized
+
     def _get_selected_proposal(self, job: PipelineJob) -> Optional[dict]:
         if not job.editor_result or not job.selected_proposal_id:
             return None
@@ -614,28 +709,37 @@ class EditorOrchestrator:
         if isinstance(draft, dict):
             return draft
         return {"content": str(draft)}
-
-    def _format_revision_edits(self, reviewed) -> str:
+    @staticmethod
+    def _format_revision_edits(reviewed) -> str:
         """Convert review edits into writer-friendly revision instructions."""
-        parts = [f"## Ревизия (round {reviewed.round_number}, score={reviewed.overall_score:.2f})\n"]
-        
-        if reviewed.verdict:
-            parts.append(f"**Вердикт:** {reviewed.verdict.value}\n")
-        
+        # Safe access for both objects and dicts
+        _rn = getattr(reviewed, 'round_number', None) or (reviewed.get('round_number') if isinstance(reviewed, dict) else 1)
+        _sc = getattr(reviewed, 'overall_score', None) or (reviewed.get('overall_score') if isinstance(reviewed, dict) else 0)
+        _vd = getattr(reviewed, 'verdict', None) or (reviewed.get('verdict') if isinstance(reviewed, dict) else None)
+        _ed = getattr(reviewed, 'edits', None) or (reviewed.get('edits') if isinstance(reviewed, dict) else [])
+        _sg = getattr(reviewed, 'improvement_suggestions', None) or (reviewed.get('improvement_suggestions') if isinstance(reviewed, dict) else [])
+        _fc = getattr(reviewed, 'fact_checks', None) or (reviewed.get('fact_checks') if isinstance(reviewed, dict) else [])
+
+        parts = [f"## Ревизия (round {_rn}, score={_sc:.2f})\n"]
+
+        if _vd:
+            vd_val = _vd.value if hasattr(_vd, 'value') else str(_vd)
+            parts.append(f"**Вердикт:** {vd_val}\n")
+
         # Critical issues first
-        for edit in (reviewed.edits or []):
+        for edit in (_ed or []):
             sev = getattr(edit, 'severity', '?')
-            desc = getattr(edit, 'description', str(edit))
+            desc = getattr(edit, 'description', getattr(edit, 'reason', str(edit)))
             location = getattr(edit, 'location', '')
             loc_str = f" [{location}]" if location else ""
             parts.append(f"- **[{sev.upper()}]{loc_str}** {desc}")
-        
+
         # Suggestions
-        for s in (reviewed.improvement_suggestions or []):
+        for s in (_sg or []):
             parts.append(f"- 💡 {s}")
-        
+
         # Fact check failures
-        for fc in (reviewed.fact_checks or []):
+        for fc in (_fc or []):
             if not getattr(fc, 'is_supported', True):
                 claim = getattr(fc, 'claim', str(fc))[:100]
                 parts.append(f"- ⚠️ Факт-чек: \"{claim}\" — не подтверждено источниками")
@@ -644,11 +748,17 @@ class EditorOrchestrator:
 
     @staticmethod
     def _serialize_article(article) -> dict:
+        if hasattr(article, 'to_dict') and callable(article.to_dict):
+            return article.to_dict()
         if hasattr(article, '__dataclass_fields__'):
+            from dataclasses import asdict
             return asdict(article)
         if isinstance(article, dict):
             return article
-        return {"text": str(article)}
+        # Last resort: try to extract text
+        text = getattr(article, 'text', None) or str(article)
+        title = getattr(article, 'title', None) or ''
+        return {"text": text, "title": title}
 
     @staticmethod
     def _serialize_review(review) -> dict:

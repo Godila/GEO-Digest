@@ -381,10 +381,37 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
                     verdict=fc.get("verdict", ""),
                 ))
 
-        # Issues
-        issues = raw.get("issues", [])
-        if isinstance(issues, list):
-            issues = [str(i) for i in issues]
+        # Issues — convert to Edit objects (not plain strings!)
+        issues = []
+        for i in raw.get("issues", []):
+            if isinstance(i, dict):
+                sev_str = i.get("seriousness", i.get("severity", "minor")).upper()
+                try:
+                    severity = Severity[sev_str]
+                except KeyError:
+                    severity = Severity.MINOR
+                issues.append(Edit(
+                    location=i.get("section", i.get("location", "")),
+                    severity=severity,
+                    original="",
+                    suggested="",
+                    reason=str(i.get("description", i.get("desc", "")))[:300],
+                    category=i.get("category", "content"),
+                ))
+            elif isinstance(i, str):
+                # Plain string issue — wrap as minor edit
+                issues.append(Edit(
+                    location="general",
+                    severity=Severity.MINOR,
+                    original="", suggested="", reason=i[:300],
+                    category="general",
+                ))
+            else:
+                issues.append(Edit(
+                    location="general", severity=Severity.MINOR,
+                    original="", suggested="", reason=str(i)[:300],
+                    category="general",
+                ))
 
         # Severity counts
         severity_counts = raw.get("severity_counts", {})
