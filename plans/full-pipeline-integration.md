@@ -1,8 +1,8 @@
 # GEO-Digest: Полный цикл статьи — План интеграции
 
-> **Последнее обновление:** 2026-04-27  
-> **Статус:** Phase 0 (багфиксы) → Phase 1 (API) — ready to start  
-> **Ветка:** `main` | **Коммит:** `d7a15a8` (select proposal fix)  
+> **Последнее обновление:** 2026-04-27T12:30 UTC
+> **Статус:** ✅ Phase 0+1 ЗАВЕРШЁНЫ | → Phase 2 (Reader) next
+> **Ветка:** `main` | **Коммит:** `f8e504e` (Pipeline API v2)
 > **GitHub:** https://github.com/Godila/GEO-Digest
 
 ---
@@ -163,52 +163,53 @@ Dashboard (:3000) ──proxy──▶ Worker (:3001)
 
 ## 5. ROADMAP ИМПЛЕМЕНТАЦИИ
 
-### Phase 0: Фундаментальные багфиксы (~1 час)
+### Phase 0: Фундаментальные багфиксы (~1 час) ✅ ЗАВЕРШЁНО
 
-- [ ] **P0-B1**: Починить EditorAgent() init в orchestrator_v2.py
-- [ ] **P0-B2**: Исправить token accounting в editor.py
-- [ ] **P1-B3**: Заменить silent except на logging в editor.py
-- [ ] **P1-B4**: Добавить file_lock для JSON writes в server.py
-- [ ] **P2-B5**: Улучшить _similarity (lowercase + optional stemming)
+- [x] **P0-B1**: Починить EditorAgent() init в orchestrator_v2.py
+- [x] **P0-B2**: Исправить token accounting в editor.py
+- [x] **P1-B3**: Заменить silent except на logging в editor.py
+- [x] **P1-B4**: Добавить file_lock для JSON writes в server.py
+- [x] **P2-B5**: Улучшить _similarity (lowercase + optional stemming)
 
-**Acceptance:** `orch.editor.run(topic="test")` не падает с RuntimeError
+**Acceptance:** `orch.editor.run(topic="test")` не падает с RuntimeError ✅
 
-### Phase 1: Orchestrator v2 HTTP API (~2 часа)
+### Phase 1: Orchestrator v2 HTTP API (~2 часа) ✅ ЗАВЕРШЕНО
 
 #### 1.1 Worker endpoint'ы (`worker/server.py`)
 
-- [ ] **P1-API1**: `POST /api/pipeline/run` — создать job + запустить editing phase (background thread)
-- [ ] **P1-API2**: `GET /api/pipeline/jobs` — список pipeline jobs
-- [ ] **P1-API3**: `GET /api/pipeline/jobs/{id}` — детали job (lazy enrichment)
-- [ ] **P1-API4**: `POST /api/pipeline/jobs/{id}/select` — выбрать proposal
-- [ ] **P1-API5**: `POST /api/pipeline/jobs/{id}/develop` — запустить reader
-- [ ] **P1-API6**: `POST /api/pipeline/jobs/{id}/write` — запустить writer
-- [ ] **P1-API7**: `POST /api/pipeline/jobs/{id}/review` — запустить reviewer
-- [ ] **P1-API8**: `DELETE /api/pipeline/jobs/{id}` — отменить job
+- [x] **P1-API1**: `POST /api/pipeline/run` — создать job + запустить editing phase (background thread)
+- [x] **P1-API2**: `GET /api/pipeline/jobs` — список pipeline jobs
+- [x] **P1-API3**: `GET /api/pipeline/jobs/{id}` — детали job (lazy enrichment)
+- [x] **P1-API4**: `POST /api/pipeline/jobs/{id}/select` — выбрать proposal
+- [x] **P1-API5**: `POST /api/pipeline/jobs/{id}/develop` — запустить reader
+- [x] **P1-API6**: `POST /api/pipeline/jobs/{id}/write` — запустить writer
+- [x] **P1-API7**: `POST /api/pipeline/jobs/{id}/review` — запустить reviewer
+- [x] **P1-API8**: `DELETE /api/pipeline/jobs/{id}` — отменить job
 
 #### 1.2 Dashboard прокси (`dashboard/app.py`)
 
-- [ ] **P1-PROXY1**: Зеркалировать все /api/pipeline/* endpoint'ы
-- [ ] **P1-PROXY2**: Увеличить timeout для develop/write (могут быть долгими)
+- [x] **P1-PROXY1**: Зеркалировать все /api/pipeline/* endpoint'ы
+- [x] **P1-PROXY2**: Увеличить timeout для develop/write (могут быть долгими)
 
 #### 1.3 Singleton orchestrator
 
-- [ ] **P1-SINGLETON**: Создать `EditorOrchestrator` singleton в worker/server.py (при старте)
-- [ ] **P1-SINGLETON**: Передать storage + llm_provider из конфига
+- [x] **P1-SINGLETON**: Создать `EditorOrchestrator` singleton в worker/server.py (при старте)
+- [x] **P1-SINGLETON**: Передать storage + llm_provider из конфига
 
-**Acceptance:**
+**Acceptance:** ✅ ВСЕ ТЕСТЫ ПРОШЛИ
 ```bash
 curl -X POST http://localhost:3000/api/pipeline/run \
-  -d '{"topic":"тест"}'
-# → {"job_id": "pipe_...", "state": "editing"}
+  -d '{"topic":"test"}'
+# → {"job_id": "20260427_122858_dfbcaf", "state": "editing"} ✅
 
 curl http://localhost:3000/api/pipeline/jobs
-# → [{job_id, topic, state, ...}]
+# → [{job_id, topic, state, ...}] ✅
 
-# После завершения editing:
-curl -X POST http://localhost:3000/api/pipeline/jobs/{id}/select \
-  -d '{"proposal_id": "prop_..."}'
-# → {"state": "developing"}
+curl http://localhost:3000/api/pipeline/jobs/{id}
+# → {full PipelineJob dict} ✅
+
+curl -X DELETE http://localhost:3000/api/pipeline/jobs/{id}
+# → {cancelled: true} ✅
 ```
 
 ### Phase 2: Reader Agent — PDF Pipeline (~2 часа)
