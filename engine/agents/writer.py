@@ -100,15 +100,15 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             try:
                 _ = outline  # check if outline exists from Pass 1
                 self._log("Fallback: использую outline как черновик статьи")
-                from engine.schemas import ArticleResult
+                from engine.schemas import WrittenArticle
                 outline_text = str(outline) if not isinstance(outline, str) else outline
                 return AgentResult(
                     agent_name=self.name,
                     success=True,
-                    data=ArticleResult(
-                        title=draft.title_suggestion or job_topic,
-                        content=outline_text,
-                        format=format_,
+                    data=WrittenArticle(
+                        title=draft.title_suggestion or "",
+                        text=outline_text,
+                        format_=format_,
                         word_count=len(outline_text.split()),
                     ),
                 )
