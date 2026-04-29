@@ -118,7 +118,9 @@ class WriterAgent(BaseAgent, LLMCallMixin):
 
             # ─── PASS 2: SECTION-BY-SECTION EXPAND ──────────
             self._log("Pass 2: Расширение по секциям...")
-            expanded = self._pass_expand_sections(outline, full_context, group_type, language, format_)
+            ev_blocks = getattr(draft, 'evidence_blocks', [])
+            expanded = self._pass_expand_sections(outline, full_context, group_type, language, format_,
+                                                   evidence_blocks=ev_blocks)
 
             # ─── PASS 3: POLISH ──────────────────────────────
             self._log("Pass 3: Шлифовка статьи...")
@@ -207,6 +209,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
     def _pass_expand_sections(
         self, outline: str, full_context: str, group_type: GroupType,
         language: str, format_: str = "markdown",
+        evidence_blocks: list[dict] | None = None,
     ) -> str:
         """Expand outline section-by-section: one LLM call per section.
         
@@ -230,6 +233,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         expanded_sections = []
         prev_summary = ""
         rich_context = full_context  # Full context — no truncation here
+        ev_blocks = evidence_blocks or []
 
         for i, sec in enumerate(sections):
             heading = sec.get("heading", sec.get("section", f"Секция {i+1}"))
@@ -239,13 +243,24 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             
             # Extract section-specific context (Step 3: full context by section)
             section_ctx = extract_section_context(heading, rich_context)
+
+            # Evidence-grounded: add structured evidence quotes for this section
+            if ev_blocks:
+                section_evidence = self._gather_section_evidence(heading, ev_blocks)
+                if section_evidence:
+                    section_ctx = section_evidence + "\n\n" + section_ctx
+
+            # Perspective questions for evidence-grounded structure
+            perspective_q = self._generate_perspective_questions(heading, ev_blocks)
             
             target = get_section_target(heading)
             
-            self._log(f"  Секция {i+1}/{len(sections)}: '{heading}' → {target['tokens']} tokens")
+            self._log(f"  Секция {i+1}/{len(sections)}: '{heading}' → {target['tokens']} tokens"
+                      + (f", {sum(len(e.get('quotes',[])) for e in ev_blocks)} evidence" if ev_blocks else ""))
 
             system = build_section_expand_system_prompt(group_type, language, heading, format_)
-            user = build_section_expand_user_prompt(heading, sec_outline, section_ctx, prev_summary)
+            user = build_section_expand_user_prompt(heading, sec_outline, section_ctx, prev_summary,
+                                                     perspective_questions=perspective_q)
 
             try:
                 result = self.call_llm(
@@ -406,6 +421,161 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             return AgentResult(agent_name=self.name, success=True, data=article)
         except Exception as e:
             return AgentResult(agent_name=self.name, success=False, error=str(e))
+
+    # ─────────────────────────────────────────────────────────
+    #  EVIDENCE-GROUNDED WRITING HELPERS
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _gather_section_evidence(
+        heading: str, evidence_blocks: list[dict], max_quotes: int = 12
+    ) -> str:
+        """Select evidence quotes relevant to a specific article section.
+
+        Uses keyword matching between section heading/keywords and
+        evidence quote keywords. Returns formatted evidence string.
+        """
+        # Section heading → keywords for matching
+        heading_lower = heading.lower()
+        section_keywords = set(heading_lower.split())
+        # Map common section names to search terms
+        section_kw_map = {
+            "introduction": {"introduction", "background", "context", "motivation", "significance", "relevance", "overview", "territory", "niche"},
+            "литературный обзор": {"literature", "review", "previous", "related", "comparison", "synthesis", "trend", "approach"},
+            "обзор литературы": {"literature", "review", "previous", "related", "comparison", "synthesis", "trend", "approach"},
+            "literature review": {"literature", "review", "previous", "related", "comparison", "synthesis", "trend", "approach"},
+            "methodology": {"method", "approach", "data", "model", "algorithm", "tool", "software", "dataset", "parameter"},
+            "методология": {"method", "approach", "data", "model", "algorithm", "tool", "software", "dataset", "parameter"},
+            "results": {"result", "accuracy", "performance", "score", "metric", "finding", "value", "correlation"},
+            "результаты": {"result", "accuracy", "performance", "score", "metric", "finding", "value", "correlation"},
+            "discussion": {"discussion", "implication", "limitation", "compare", "disagree", "contrast", "future"},
+            "обсуждение": {"discussion", "implication", "limitation", "compare", "disagree", "contrast", "future"},
+            "conclusion": {"conclusion", "summary", "contribution", "impact", "recommendation", "future", "direction"},
+            "заключение": {"conclusion", "summary", "contribution", "impact", "recommendation", "future", "direction"},
+        }
+        for kw_key, kw_set in section_kw_map.items():
+            if kw_key in heading_lower:
+                section_keywords.update(kw_set)
+                break
+
+        # Gather and rank relevant quotes
+        scored_quotes = []
+        for block in evidence_blocks:
+            source = block.get("source", "Unknown")
+            doi = block.get("doi", "")
+            for q in block.get("quotes", []):
+                quote_text = q.get("text", "")
+                if not quote_text:
+                    continue
+                # Score by keyword overlap
+                quote_kw = set(k.lower() for k in q.get("keywords", []))
+                overlap = len(section_keywords & quote_kw)
+                # Boost claim_types relevant to section
+                claim_type = q.get("claim_type", "")
+                type_boost = 0
+                if "introduction" in heading_lower and claim_type in ("finding", "gap", "comparison"):
+                    type_boost = 2
+                elif "methodology" in heading_lower and claim_type == "method_result":
+                    type_boost = 3
+                elif "result" in heading_lower and claim_type in ("method_result", "finding"):
+                    type_boost = 3
+                elif "discussion" in heading_lower and claim_type in ("limitation", "comparison", "gap", "recommendation"):
+                    type_boost = 3
+                elif "conclusion" in heading_lower and claim_type in ("recommendation", "finding"):
+                    type_boost = 2
+                elif "literature" in heading_lower or "обзор" in heading_lower:
+                    type_boost = 1
+
+                score = overlap + type_boost
+                if score > 0:
+                    cite = f"[{source}]"
+                    if doi:
+                        cite += f" (doi:{doi})"
+                    scored_quotes.append((score, quote_text, cite, q.get("claim_type", "")))
+
+        # Sort by score descending, take top N
+        scored_quotes.sort(key=lambda x: x[0], reverse=True)
+        top = scored_quotes[:max_quotes]
+
+        if not top:
+            return ""
+
+        parts = ["=== СТРУКТУРИРОВАННЫЕ EVIDENCE ДЛЯ ЭТОЙ СЕКЦИИ ===",
+                 "Используй эти цитаты verbatim из источников. Каждая цитата подкрепляет конкретный тезис.\n"]
+        for i, (score, quote, cite, ctype) in enumerate(top, 1):
+            parts.append(f"[E{i}] ({ctype}) {cite}")
+            parts.append(f"  «{quote}»")
+            parts.append("")
+
+        return "\n".join(parts)
+
+    def _generate_perspective_questions(
+        self, heading: str, evidence_blocks: list[dict], language: str = "ru"
+    ) -> str:
+        """Generate 3-5 key questions for a section based on available evidence.
+
+        ONE call per article (not per section) — questions are pre-generated
+        and answers are extracted from evidence without additional LLM calls.
+        """
+        # Collect unique key_numbers across all blocks for this section
+        all_numbers = []
+        for block in evidence_blocks:
+            all_numbers.extend(block.get("key_numbers", []))
+
+        # Collect claim types present
+        claim_types = set()
+        for block in evidence_blocks:
+            for q in block.get("quotes", []):
+                claim_types.add(q.get("claim_type", ""))
+
+        # Generate questions based on section + available evidence
+        heading_lower = heading.lower()
+        questions = []
+
+        if "introduction" in heading_lower:
+            questions = [
+                "Почему эта тема важна для геоэкологии? (territory claim)",
+                "Какие подходы применялись ранее и в чём их ограничения? (gap identification)",
+                "Каков вклад данного исследования по сравнению с существующими работами? (contribution)",
+            ]
+        elif "literature" in heading_lower or "обзор" in heading_lower:
+            questions = [
+                "Какие методологии применяются в данной области? (comparison)",
+                "Где авторы расходятся в выводах? (contradiction)",
+                "Какие пробелы в знаниях выявлены? (gap)",
+                "Какие тенденции наблюдаются за последние 5 лет? (trend)",
+            ]
+        elif "method" in heading_lower:
+            questions = [
+                "Какие данные и инструменты использованы? (data & tools)",
+                "Какие параметры моделей оптимальны? (parameters)",
+                "Как обеспечивает воспроизводимость? (reproducibility)",
+            ]
+        elif "result" in heading_lower:
+            questions = [
+                "Какие ключевые количественные результаты получены? (numbers)",
+                "Как результаты соотносятся с предыдущими работами? (comparison)",
+                "Какие закономерности выявлены? (patterns)",
+            ]
+        elif "discussion" in heading_lower:
+            questions = [
+                "Какие ограничения у подхода? (limitations)",
+                "Где результаты противоречат литературе? (contradictions)",
+                "Какие рекомендации для будущих исследований? (future work)",
+            ]
+        elif "conclusion" in heading_lower:
+            questions = [
+                "Каков главный вклад исследования? (contribution)",
+                "Какие практические рекомендации? (practical implications)",
+                "Какие направления дальнейших исследований? (future directions)",
+            ]
+        else:
+            questions = [
+                "Какие ключевые факты из источников релевантны этой секции?",
+                "Какие противоречия между источниками стоит обсудить?",
+            ]
+
+        return "\n".join(f"  Q{i+1}: {q}" for i, q in enumerate(questions))
 
     # ─────────────────────────────────────────────────────────
     #  HELPERS

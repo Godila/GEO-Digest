@@ -490,3 +490,138 @@ def format_rubric_prompt() -> str:
 ОБЯЗАТЕЛЬНО:
 {tone_required}
 """
+
+# ═══════════════════════════════════════════════════════════════
+#  CARS MODEL (Create-A-Research-Space) — Swales 1990
+#  Rhetorical structure for Introduction sections
+# ═══════════════════════════════════════════════════════════════
+
+CARS_MOVES = {
+    "move_1_territory": {
+        "label": "Move 1: Establish Territory",
+        "steps": [
+            "Step 1 — Claim centrality: why this research area matters globally/regionally",
+            "Step 2 — Make topic generalizations: broad statements supported by evidence [Author, Year]",
+            "Step 3 — Review previous research: who did what, key findings, methods used [Author, Year]",
+        ],
+    },
+    "move_2_niche": {
+        "label": "Move 2: Establish Niche",
+        "steps": [
+            "Step 1A — Counter-claim: however, existing approaches have limitations...",
+            "Step 1B — Indicate a gap: little attention has been paid to... / it remains unclear whether...",
+            "Step 1C — Question-raising: how does X affect Y under conditions Z?",
+            "Step 1D — Continue tradition: building on [Author]'s approach, this study extends...",
+        ],
+    },
+    "move_3_occupy": {
+        "label": "Move 3: Occupy Niche",
+        "steps": [
+            "Step 1 — Outline purpose: the aim of this study is to...",
+            "Step 2 — Announce present research: we analyze N studies covering...",
+            "Step 3 — Announce principal findings: our analysis reveals...",
+            "Step 4 — Indicate paper structure: the paper is organized as follows...",
+        ],
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  EVIDENCE CHAINING PATTERN
+#  Structure for grounding claims in source evidence
+# ═══════════════════════════════════════════════════════════════
+
+EVIDENCE_CHAINING_EXAMPLE = (
+    "ПРИМЕР правильного evidence chaining:\n"
+    "«Метод Random Forest показал точность 96.2% при классификации типов землепользования "
+    "в условиях горной тайги [Zhang et al., 2021], что значительно превышает результаты "
+    "логистической регрессии (78.4%) на том же датасете. Это подтверждается работой "
+    "[Yang et al., 2024], где аналогичный подход на данных Sentinel-2 достиг AUC 0.962. "
+    "Вместе с тем, [Wang, 2023] отмечает, что при малых обучающих выборках (<50 точек) "
+    "преимущество исчезает, что требует дополнительных исследований в условиях недостатка разметки.»\n\n"
+    "Структура: Claim → Primary evidence [Author, Year] → Supporting evidence [Author, Year] "
+    "→ Counter-evidence [Author, Year] → Implication"
+)
+
+# ═══════════════════════════════════════════════════════════════
+#  SECTION-SPECIFIC RHETORICAL RULES
+#  Each section type has its own discourse pattern
+# ═══════════════════════════════════════════════════════════════
+
+SECTION_RHETORICAL_RULES = {
+    "introduction": {
+        "pattern": "CARS Model (3 moves)",
+        "rules": [
+            "Move 1: Establish Territory — claim centrality, review previous research",
+            "Move 2: Establish Niche — counter-claim, indicate gap, raise question",
+            "Move 3: Occupy Niche — state purpose, announce findings, outline structure",
+            "Каждый тезис подкреплён ссылкой [Author, Year]",
+            "Финальный абзац — аннотация структуры статьи",
+        ],
+    },
+    "literature_review": {
+        "pattern": "Synthesis Matrix",
+        "rules": [
+            "Группируй по ТЕМАМ, не по статьям ( тематический обзор, не хронологический)",
+            "Для каждой темы: сравни подходы по ключевым параметрам (данные, метод, точность, регион)",
+            "Используй таблицу сравнения если параметров > 3",
+            "Завершай каждый тематический блок выводом: что известно, что нет",
+            "Минимум 2 цитаты на абзац",
+        ],
+    },
+    "methodology": {
+        "pattern": "Reproducibility Protocol",
+        "rules": [
+            "Пошаговое описание: Data → Preprocessing → Model → Evaluation",
+            "Для каждого шага: какие инструменты, параметры, версии ПО",
+            "Укажи источники данных (DOI, URL) и период покрытия",
+            "Формулы в LaTeX для ключевых метрик",
+            "Воспроизводимость: чтобы читатель мог повторить",
+        ],
+    },
+    "results": {
+        "pattern": "Claim → Evidence → Interpretation → Bridge",
+        "rules": [
+            "Каждый абзац: один ключевой результат → evidence → что это значит",
+            "Количественные данные: точные числа, таблицы, графики",
+            "Сравнение с ожиданиями: совпадает / превосходит / уступает",
+            "Bridge к следующему результату: «В дополнение к... мы также обнаружили...»",
+            "Evidence chaining: Claim → [Author] → Supporting [Author] → Counter [Author]",
+        ],
+    },
+    "discussion": {
+        "pattern": "Start Strong → Compare → Limitations → Future",
+        "rules": [
+            "Начинай с самого важного finding",
+            "Сравнивай с литературой: совпадения и расхождения с [Author, Year]",
+            "Обязательно обсуди limitations — честно и конкретно",
+            "Предложи directions для будущих исследований",
+            "Не повторяй Results — интерпретируй и контекстуализируй",
+        ],
+    },
+    "conclusion": {
+        "pattern": "Summary → Contribution → Impact",
+        "rules": [
+            "Краткое резюме главного вклада (1-2 абзаца)",
+            "Практические рекомендации для исследователей/практиков",
+            "Broader impact: значение для области в целом",
+            "Направления дальнейших исследований (конкретные, не абстрактные)",
+        ],
+    },
+}
+
+def get_rhetorical_rules(section_heading: str) -> dict:
+    """Get rhetorical rules for a specific section by heading match."""
+    heading_lower = section_heading.lower().replace(" ", "_")
+    for key, rules in SECTION_RHETORICAL_RULES.items():
+        if key.replace("_", " ") in heading_lower.replace("_", " ") or key in heading_lower:
+            return {"section_key": key, **rules}
+    # Default: generic rules
+    return {
+        "section_key": "generic",
+        "pattern": "Standard academic",
+        "rules": [
+            "Каждый абзац содержит чёткий тезис",
+            "Тезис подкреплён evidence [Author, Year]",
+            "Логичный переход к следующему абзацу",
+        ],
+    }

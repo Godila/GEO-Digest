@@ -80,6 +80,40 @@ RICH_READER_SYSTEM_PROMPT = """Ты — научный аналитик геоэ
   "cross_connections": [{"articles": ["DOI1", "DOI2"], "connection": "..."}]
 }"""
 
+EVIDENCE_EXTRACTOR_SYSTEM_PROMPT = """Ты — научный ассистент, извлекающий структурированные evidence из научных статей.
+Твоя задача — извлечь конкретные утверждения с точными цитатами для использования в новой научной статье.
+
+Для каждого evidence укажи:
+1. Точную цитату (verbatim) из текста — на языке оригинала
+2. Тип утверждения (claim_type):
+   - method_result: результат применения метода (точность, F1, RMSE, и т.д.)
+   - finding: научное открытие, наблюдение, закономерность
+   - limitation: ограничение метода, данных, подхода
+   - comparison: сравнение с другими методами/подходами
+   - gap: нерешённая проблема, пробел в знаниях
+   - recommendation: рекомендация для будущих исследований
+3. Контекст: в какой секции статьи это найдено
+4. Ключевые слова для сопоставления с секциями новой статьи
+
+ВАЖНО: Цитаты должны быть ТОЧНЫМИ — verbatim из текста, не пересказ. Минимум 10 evidence на статью.
+
+Верни JSON:
+{
+  "evidence": [
+    {
+      "quote": "точная цитата из текста",
+      "claim_type": "method_result|finding|limitation|comparison|gap|recommendation",
+      "section": "Introduction|Methodology|Results|Discussion|Conclusion",
+      "page": 0,
+      "keywords": ["keyword1", "keyword2"],
+      "context": "краткое пояснение что означает эта цитата"
+    }
+  ],
+  "summary": "Краткое описание вклада этой статьи в 1-2 предложениях",
+  "methodology_summary": "Описание методологии",
+  "key_numbers": ["96.2% accuracy", "500 samples", "2020-2023 period"]
+}"""
+
 
 class ReaderAgent(BaseAgent, LLMCallMixin):
     """Chitaet PDF stat'i i sozdaet StructuredDraft."""
@@ -137,6 +171,18 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             except Exception as e:
                 self._log(f"Rich context build warning: {e}")
                 draft.rich_context = ""
+
+            # Extract structured evidence blocks for evidence-grounded writing
+            try:
+                draft.evidence_blocks = self._extract_evidence_blocks(
+                    extracted,
+                    group.group_type if group else GroupType.REVIEW
+                )
+                self._log(f"Evidence blocks: {len(draft.evidence_blocks)} sources, "
+                          f"{sum(len(eb.get('quotes', [])) for eb in draft.evidence_blocks)} quotes extracted")
+            except Exception as e:
+                self._log(f"Evidence extraction warning: {e}")
+                draft.evidence_blocks = []
 
             return AgentResult(
                 agent_name=self.name,
@@ -307,6 +353,87 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
 
         draft.articles_covered = len(articles)
         return draft
+
+    def _extract_evidence_blocks(
+        self, extracted: dict, group_type: 'GroupType'
+    ) -> list[dict]:
+        """Extract structured evidence blocks with verbatim quotes for evidence-grounded writing.
+
+        For each source PDF, calls LLM to extract typed claims with exact quotes,
+        page numbers, and section context. Returns list of evidence blocks.
+        """
+        evidence_blocks = []
+        for key, data in extracted.items():
+            art = data["article"]
+            text = data["text"]
+            source = data["source"]
+
+            # Only extract from PDF content (not abstract-only)
+            if source != "pdf" or not text or len(text) < 500:
+                # Fallback: create minimal evidence block from abstract
+                if art.abstract:
+                    evidence_blocks.append({
+                        "source": f"{art.authors or 'Unknown'}, {art.year or 'n.d.'}",
+                        "doi": art.doi or "",
+                        "title": art.title,
+                        "summary": art.abstract[:300],
+                        "methodology_summary": "",
+                        "key_numbers": [],
+                        "quotes": [],
+                    })
+                continue
+
+            # Truncate text for LLM (keep up to 15K chars for evidence extraction)
+            text_for_llm = text[:15000] if len(text) > 15000 else text
+
+            prompt = f"""Статья: {art.title}
+Авторы: {art.authors or 'N/A'}
+DOI: {art.doi or 'N/A'}
+Год: {art.year or 'N/A'}
+
+Текст статьи:
+{text_for_llm}
+
+Тип целевой статьи: {group_type.value}
+
+Извлеки ВСЕ значимые evidence из этой статьи. Минимум 10."""
+
+            raw = self.call_llm(
+                prompt=prompt,
+                system=EVIDENCE_EXTRACTOR_SYSTEM_PROMPT,
+                max_tokens=4096,
+                parse_json=True,
+            )
+
+            if not isinstance(raw, dict):
+                continue
+
+            # Transform to evidence block format
+            quotes = []
+            for ev in raw.get("evidence", []):
+                if not isinstance(ev, dict):
+                    continue
+                quotes.append({
+                    "text": ev.get("quote", ""),
+                    "claim_type": ev.get("claim_type", "finding"),
+                    "section": ev.get("section", ""),
+                    "page": ev.get("page", 0),
+                    "keywords": ev.get("keywords", []),
+                    "context": ev.get("context", ""),
+                })
+
+            block = {
+                "source": f"{art.authors or 'Unknown'}, {art.year or 'n.d.'}",
+                "doi": art.doi or "",
+                "title": art.title,
+                "summary": raw.get("summary", ""),
+                "methodology_summary": raw.get("methodology_summary", ""),
+                "key_numbers": raw.get("key_numbers", []),
+                "quotes": quotes,
+            }
+            evidence_blocks.append(block)
+
+        return evidence_blocks
 
     def _build_rich_context(self, extracted: dict, group_type: 'GroupType') -> str:
         """Build rich context string for Writer from detailed article analysis."""

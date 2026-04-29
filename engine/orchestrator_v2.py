@@ -409,7 +409,7 @@ class EditorOrchestrator:
                             # Ensure group_type is set correctly
                             if not draft_data.group_type or draft_data.group_type == GroupType.REVIEW:
                                 draft_data.group_type = self._resolve_group_type(proposal, job)
-                            logger.info(f"[orch] Auto-invoked Reader: rich_context={len(draft_data.rich_context)} chars, {len(dois)} DOIs")
+                            logger.info(f"[orch] Auto-invoked Reader: rich_context={len(draft_data.rich_context)} chars, evidence_blocks={len(getattr(draft_data, 'evidence_blocks', []) or [])}, {len(dois)} DOIs")
                         else:
                             logger.warning("[orch] Reader returned empty rich_context, falling back to synthetic draft")
                             draft_data = None  # will create synthetic below
@@ -447,11 +447,12 @@ class EditorOrchestrator:
                     "dataset_description", "access_method", "format_",
                     "size_gb", "coverage", "usage_examples",
                     "created_at", "rich_context", "raw_llm_output",
+                    "evidence_blocks",
                 }
                 _filtered = {k: v for k, v in draft_data.items() if k in _valid_keys}
                 _filtered["group_type"] = gt
                 draft_data = StructuredDraft(**_filtered)
-                logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context or '')} chars)")
+                logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context or '')} chars, evidence_blocks={len(draft_data.evidence_blocks or [])})")
 
             result = self.writer.run(
                 draft=draft_data,

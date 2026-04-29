@@ -204,6 +204,11 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             refs_text = self._format_references(source_articles or [])
             prev_context = self._format_previous_reviews(previous_reviews or [])
 
+            # 2.5 Paragraph-level evidence analysis (new in Evidence-Grounded upgrade)
+            paragraph_analysis = self._analyze_paragraphs(article.text or "")
+            if paragraph_analysis:
+                prev_context += f"\n\n=== АНАЛИЗ АБЗАЦЕВ (автоматический) ===\n{paragraph_analysis}"
+
             max_rounds = REVISION_CONFIG.get("max_rounds", 3)
             prompt = REVIEWER_PROMPT_V2.format(
                 round_number=round_number,
@@ -456,6 +461,107 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             improvement_suggestions=improvement_suggestions,
             revision_instructions=revision_instructions,
             article_type=article_type,
+        )
+
+    # ── Paragraph-Level Evidence Analysis ──────────────────────────
+
+    @staticmethod
+    def _analyze_paragraphs(article_text: str) -> str:
+        """Analyze each paragraph for claim_strength, evidence_support, coherence, academic_tone.
+
+        Returns a structured analysis string injected into the review prompt.
+        Pure heuristic — no LLM call, runs in milliseconds.
+        """
+        import re
+
+        # Split into paragraphs (double newline or heading + text)
+        blocks = re.split(r'\n{2,}', article_text)
+        paragraphs = [b.strip() for b in blocks if b.strip() and len(b.strip()) > 50]
+
+        if not paragraphs:
+            return ""
+
+        # Citation pattern: [Author et al., Year] or (Author, Year) or [1] etc.
+        cite_pat = re.compile(
+            r'\[[\w\s&]+,?\s*\d{4}\]'       # [Author et al., 2021]
+            r'|\([\w\s&]+,?\s*\d{4}\)'       # (Author, 2021)
+            r'|\[\d+\]'                       # [1]
+            r'|et\s+al\.,\s*\d{4}',           # et al., 2021
+            re.IGNORECASE
+        )
+        # Number pattern: digits with optional decimal, ±, units
+        num_pat = re.compile(r'\d+\.?\d*\s*(?:%|мг|г|кг|мм|см|м|км|ppm|ppb|±|м\.н|га|т|°|мкг|нг|дБ|pH|моль|ммоль)')
+
+        lines = []
+        for i, para in enumerate(paragraphs):
+            sentences = [s.strip() for s in re.split(r'[.!?]\s+', para) if s.strip()]
+            n_sent = len(sentences)
+            n_words = len(para.split())
+
+            # Detect heading
+            is_heading = para.startswith('#') or (n_sent <= 2 and n_words < 20)
+            if is_heading:
+                lines.append(f"  §{i+1} [HEADING] {para[:60]}")
+                continue
+
+            # Metrics
+            cites = cite_pat.findall(para)
+            nums = num_pat.findall(para)
+            n_cites = len(cites)
+            n_nums = len(nums)
+            has_claim = any(
+                kw in para.lower()
+                for kw in ['показал', 'обнаружил', 'выявил', 'составил', 'равен',
+                           'превышает', 'ниже', 'выше', 'увеличился', 'снизился',
+                           'found', 'showed', 'demonstrated', 'revealed', 'increased']
+            )
+            has_transition = any(
+                kw in para.lower()
+                for kw in ['однако', 'таким образом', 'в отличие', 'в дополнение',
+                           'кроме того', 'вместе с тем', 'следовательно', 'это может',
+                           'however', 'moreover', 'furthermore', 'in contrast',
+                           'consistent with', 'in addition']
+            )
+
+            # Scores (0-1 scale)
+            claim_score = 1.0 if has_claim else 0.3
+            evidence_score = min(1.0, n_cites / 3)  # 3+ cites = full score
+            number_score = min(1.0, n_nums / 2)      # 2+ numbers = full score
+            length_score = 1.0 if 30 <= n_words <= 200 else (0.5 if n_words < 30 else 0.7)
+            coherence_score = 1.0 if has_transition else 0.6
+
+            # Flag weak paragraphs
+            flags = []
+            if n_cites == 0:
+                flags.append("❌ NO CITATIONS")
+            if n_nums == 0 and has_claim:
+                flags.append("⚠️ CLAIM WITHOUT NUMBERS")
+            if n_words < 30:
+                flags.append("⚠️ TOO SHORT")
+            if n_words > 250:
+                flags.append("⚠️ TOO LONG")
+            if not has_claim and n_cites == 0:
+                flags.append("❌ NO CLAIM + NO EVIDENCE")
+
+            score_avg = (claim_score + evidence_score + number_score + length_score + coherence_score) / 5
+            status = "✅" if score_avg >= 0.6 else "⚠️" if score_avg >= 0.3 else "❌"
+
+            cite_list = ", ".join(cites[:3]) if cites else "none"
+            lines.append(
+                f"  §{i+1} {status} [{score_avg:.2f}] "
+                f"words={n_words} cites={n_cites}({cite_list}) nums={n_nums} "
+                f"{' '.join(flags)}"
+            )
+
+        total = len(paragraphs)
+        weak = sum(1 for l in lines if '❌' in l)
+        medium = sum(1 for l in lines if '⚠️' in l and '❌' not in l)
+        good = total - weak - medium
+
+        return (
+            f"Проанализировано {total} абзацев: ✅{good} хороших, "
+            f"⚠️{medium} средних, ❌{weak} слабых\n"
+            + "\n".join(lines)
         )
 
     # ── Revision Instructions Builder ───────────────────────────────

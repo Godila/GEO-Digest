@@ -15,6 +15,18 @@ from engine.agents.article_patterns import (
 from engine.schemas import GroupType
 
 
+# ── Helper functions for prompt formatting ──────────────────────
+
+def _format_rules_list(rules: list[str]) -> str:
+    """Format a list of rhetorical rules as bullet points."""
+    return "\n".join(f"  • {r}" for r in rules)
+
+
+def _chr10join(items: list[str]) -> str:
+    """Join items with newline + indent for nested display."""
+    return "\n  ".join(items)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  PASS 1: OUTLINE — детальный план статьи
 # ═══════════════════════════════════════════════════════════════
@@ -312,6 +324,8 @@ def get_section_target(section_heading: str) -> dict:
 def build_section_expand_system_prompt(group_type: GroupType, language: str, 
                                         section_heading: str, format_: str = "markdown") -> str:
     """System prompt for expanding a single section."""
+    from engine.agents.article_patterns import get_rhetorical_rules, CARS_MOVES, EVIDENCE_CHAINING_EXAMPLE
+
     type_key = _group_type_to_article_type(group_type)
     type_info = ARTICLE_TYPES.get(type_key, ARTICLE_TYPES["original_research"])
     lang_label = "русском" if language == "ru" else "English"
@@ -329,6 +343,39 @@ def build_section_expand_system_prompt(group_type: GroupType, language: str,
 - Графики/диаграммы: {fmt['matplotlib']}
 - Цитирование: {fmt['citations']}
 """
+
+    # Rhetorical rules specific to this section type
+    rhetoric = get_rhetorical_rules(section_heading)
+    rhetoric_block = f"""
+== РИТОРИЧЕСКАЯ СТРУКТУРА ЭТОЙ СЕКЦИИ ({section_heading}) ==
+Паттерн: {rhetoric['pattern']}
+Правила:
+{_format_rules_list(rhetoric['rules'])}
+"""
+
+    # CARS model for Introduction
+    cars_block = ""
+    if "introduction" in section_heading.lower():
+        cars_block = f"""
+== CARS МОДЕЛЬ (обязательно для Introduction) ==
+{CARS_MOVES['move_1_territory']['label']}:
+  {_chr10join(CARS_MOVES['move_1_territory']['steps'])}
+{CARS_MOVES['move_2_niche']['label']}:
+  {_chr10join(CARS_MOVES['move_2_niche']['steps'])}
+{CARS_MOVES['move_3_occupy']['label']}:
+  {_chr10join(CARS_MOVES['move_3_occupy']['steps'])}
+"""
+
+    # Evidence chaining for Results/Discussion
+    evidence_block = ""
+    if any(kw in section_heading.lower() for kw in ("result", "discussion", "обсужден", "результат")):
+        evidence_block = f"""
+== EVIDENCE CHAINING (обязательно) ==
+{EVIDENCE_CHAINING_EXAMPLE}
+
+КАЖДЫЙ абзац должен содержать минимум 2 ссылки на источники.
+Используй схему: Claim → [Author, Year] → Supporting [Author, Year] → Counter [Author, Year] → Implication
+"""
     
     return f"""Ты — опытный научный писатель в области геоэкологии и геонаук.
 Пишешь ОДНУ секцию '{section_heading}' научной статьи на {lang_label} языке.
@@ -340,6 +387,7 @@ def build_section_expand_system_prompt(group_type: GroupType, language: str,
 {target['words'][0]}-{target['words'][1]} слов, примерно {target['words'][0]//5}-{target['words'][1]//5} абзацев.
 КАЖДЫЙ абзац — 4-8 предложений. Не 1-2, не 15.
 
+{rhetoric_block}{cars_block}{evidence_block}
 == СТИЛИСТИЧЕСКИЕ ПРАВИЛА ==
 {tone}
 {format_rules}
@@ -348,6 +396,7 @@ def build_section_expand_system_prompt(group_type: GroupType, language: str,
 2. КАЖДОЕ утверждение подкреплено ссылкой: [Автор и др., год] или (Author et al., Year)
 3. Никаких общих фраз: 'значения увеличились' → 'значения увеличились на 23% (с 1.2±0.1 до 1.5±0.2 мг/кг)'
 4. Пиши ПОЛНЫЙ текст, НЕ набросок, НЕ план, НЕ тезисы
+5. Используй цитаты из EVIDENCE — вплетай их в текст: «Как показал [Author], "quote..." »
 
 == ФОРМАТ ВЫВОДА ==
 Верни JSON (без markdown-обёрток):
@@ -359,6 +408,7 @@ def build_section_expand_user_prompt(
     section_outline: str,
     section_context: str,
     previous_section_summary: str = "",
+    perspective_questions: str = "",
 ) -> str:
     """User prompt for expanding one section."""
     transition_hint = ""
@@ -380,12 +430,20 @@ def build_section_expand_user_prompt(
 
 ВАЖНО: Извлекай из контекста конкретные числа, названия методов, имена авторов, годы.
 Каждое число из контекста — кандидат для включения в секцию."""
+
+    questions_block = ""
+    if perspective_questions:
+        questions_block = f"""
+== КЛЮЧЕВЫЕ ВОПРОСЫ ДЛЯ ЭТОЙ СЕКЦИИ ==
+Ответь на эти вопросы в тексте секции, используя evidence из источников:
+{perspective_questions}
+"""
     
     return f"""Напиши ПОЛНЫЙ текст секции '{section_heading}'.
 
 == ПЛАН ЭТОЙ СЕКЦИИ ==
 {section_outline}
-{transition_hint}{context_block}
+{transition_hint}{context_block}{questions_block}
 
 ПИШИ ПОЛНЫЙ ТЕКСТ. Каждый абзац 4-8 предложений с конкретными данными."""
 
