@@ -104,7 +104,8 @@ class BaseAgent(ABC):
             raise e
 
     def _log(self, msg: str):
-        print(f"  [{self.name}] {msg}", file=__import__("sys").stderr)
+        import logging
+        logging.getLogger(f"agent.{self.name}").info(msg)
 
 
 # ── Convenience Mixins ─────────────────────────────────────────

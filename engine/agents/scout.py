@@ -111,12 +111,31 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
 
             self._log(f"After scoring filter: {len(articles)} (scored: {scored_count})")
 
-            # Phase 2: LLM Classification
-            groups = self._classify_articles(topic, articles)
-
-            high_conf = [g for g in groups if g.confidence >= min_confidence]
-            high_conf.sort(key=lambda g: g.confidence, reverse=True)
-            self._log(f"Groups after confidence filter: {len(high_conf)}")
+            # Phase 2: LLM Classification (with timeout fallback)
+            groups = []
+            try:
+                # Limit articles for LLM to prevent timeout (top-15 by score)
+                articles_for_llm = articles[:15]
+                groups = self._run_with_timeout(
+                    self._classify_articles, 60, topic, articles_for_llm,
+                )
+                high_conf = [g for g in groups if g.confidence >= min_confidence]
+                high_conf.sort(key=lambda g: g.confidence, reverse=True)
+                self._log(f"Groups after confidence filter: {len(high_conf)}")
+            except Exception as e:
+                self._log(f"LLM classification failed: {e}, using scoring-only groups")
+                # Fallback: create groups from scored articles without LLM
+                for i, art in enumerate(articles[:10]):
+                    art_data = art.to_dict() if hasattr(art, 'to_dict') else (art.data if hasattr(art, 'data') else {})
+                    groups.append(ArticleGroup(
+                        group_id=f"scored_{i}",
+                        group_type=GroupType.REVIEW,
+                        articles=[art],
+                        confidence=float(art_data.get("scores", {}).get("total_5", 3.0)) / 5.0,
+                        rationale=art_data.get("scores", {}).get("top_criterion", "Scored by engine"),
+                        keywords=[],
+                    ))
+                high_conf = groups  # accept all scoring-based groups
 
             result = ScoutResult(
                 topic=topic,
@@ -210,6 +229,27 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         "this that is are was were be been being have has had do does did will would "
         "could should may might shall can".split()
     )
+
+    def _run_with_timeout(self, fn, timeout_sec: int, *args, **kwargs):
+        """Run fn in a thread with timeout. Raises TimeoutError on expiry."""
+        import threading
+        result_box = [None]
+        error_box = [None]
+
+        def _target():
+            try:
+                result_box[0] = fn(*args, **kwargs)
+            except Exception as exc:
+                error_box[0] = exc
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        t.join(timeout=timeout_sec)
+        if t.is_alive():
+            raise TimeoutError(f"{fn.__name__} timed out after {timeout_sec}s")
+        if error_box[0] is not None:
+            raise error_box[0]
+        return result_box[0]
 
     def _extract_keywords(self, topic: str) -> list[str]:
         """Split a long topic into searchable 1-3 word keywords.
