@@ -428,6 +428,25 @@ class EditorOrchestrator:
                     )
                     logger.info(f"[orch] Created synthetic draft from proposal ({len(dois)} DOIs, no rich_context)")
 
+            # If draft_data is a dict (from JSON serialization), reconstruct StructuredDraft
+            if isinstance(draft_data, dict):
+                from engine.schemas import StructuredDraft, GroupType
+                gt = draft_data.get("group_type", "review")
+                if isinstance(gt, str):
+                    gt = GroupType(gt)
+                draft_data = StructuredDraft(
+                    group_type=gt,
+                    source_articles=draft_data.get("source_articles", []),
+                    title_suggestion=draft_data.get("title_suggestion", ""),
+                    abstract_suggestion=draft_data.get("abstract_suggestion", ""),
+                    proposed_contribution=draft_data.get("proposed_contribution", ""),
+                    rich_context=draft_data.get("rich_context", ""),
+                    key_findings=draft_data.get("key_findings", []),
+                    methodology_notes=draft_data.get("methodology_notes", ""),
+                    data_extracts=draft_data.get("data_extracts", {}),
+                )
+                logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context)} chars)")
+
             result = self.writer.run(
                 draft=draft_data,
                 topic=proposal.get("title", job.topic),
