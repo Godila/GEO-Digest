@@ -939,6 +939,9 @@ class EditorOrchestrator:
 
     @staticmethod
     def _serialize_draft(draft) -> dict:
+        # Plain classes with to_dict() (StructuredDraft, WrittenArticle, etc.)
+        if hasattr(draft, 'to_dict') and callable(draft.to_dict):
+            return draft.to_dict()
         if hasattr(draft, '__dataclass_fields__'):
             return asdict(draft)
         if isinstance(draft, dict):

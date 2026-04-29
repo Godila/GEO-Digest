@@ -45,6 +45,7 @@ services:
       - /root/.hermes/geo_digest/.env:/app/.env:ro
     environment:
       - WORKER_PORT=3001
+      - GEO_DATA_DIR=/app/data
     deploy:
       resources:
         limits:

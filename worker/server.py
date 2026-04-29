@@ -96,6 +96,12 @@ def _ensure_engine_imports():
                 if _k.strip() not in os.environ:
                     os.environ[_k.strip()] = _v.strip()
 
+    # Ensure GEO_DATA_DIR points to writable volume in Docker
+    if "GEO_DATA_DIR" not in os.environ:
+        _data_vol = WORKER_DIR / "data"
+        if _data_vol.is_dir():
+            os.environ["GEO_DATA_DIR"] = str(_data_vol)
+
     # Now import
     global get_config, ScoutAgent, JsonlStorage
     from engine.config import get_config as _gc
@@ -117,6 +123,13 @@ RUNS_DIR = WORKER_DIR / "runs"
 CONFIG_PATH = WORKER_DIR / "config.yaml"
 
 RUNS_DIR.mkdir(exist_ok=True)
+
+# ── Logging ──────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 app = FastAPI(
     title="GEO-Digest Worker",

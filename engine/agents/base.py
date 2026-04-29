@@ -47,18 +47,26 @@ class BaseAgent(ABC):
         self._storage = storage
 
     @property
+    def storage(self) -> StorageBackend:
+        if self._storage is None:
+            from engine.storage import get_storage
+            self._storage = get_storage()
+        return self._storage
+
+    @storage.setter
+    def storage(self, value):
+        self._storage = value
+
+    @property
     def llm(self) -> LLMProvider:
         if self._llm is None:
             from engine.llm import get_llm
             self._llm = get_llm()
         return self._llm
 
-    @property
-    def storage(self) -> StorageBackend:
-        if self._storage is None:
-            from engine.storage import get_storage
-            self._storage = get_storage()
-        return self._storage
+    @llm.setter
+    def llm(self, value):
+        self._llm = value
 
     @property
     @abstractmethod
