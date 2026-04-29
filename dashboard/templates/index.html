@@ -1651,7 +1651,7 @@
     body.log-drawer-collapsed { padding-bottom: 36px; }
 </style>
 </head>
-<body>
+<body class="log-drawer-collapsed">
 
 <!-- Skip to content (accessibility) -->
 <a href="#main-content" class="skip-nav">Перейти к содержимому</a>
@@ -3694,6 +3694,7 @@ async function loadEditorJobDetail(jobId) {
     try {
         // Set job ID FIRST — renderProposals() uses it in onclick handlers
         currentEditorJobId = jobId;
+        window._currentJobId = jobId;  // for export buttons
 
         // Try pipeline endpoint first (handles both pipeline + editor jobs)
         let data;
@@ -3892,10 +3893,14 @@ function showFinalArticle(fa) {
     panel.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
             <h3 style="margin:0;font-size:17px">📄 ${escapeHtml(title)}</h3>
-            <span style="display:flex;gap:12px;font-size:13px;color:var(--text-secondary)">
-                <span>✍️ <strong>${wc}</strong> слов</span>
-                <span>📚 <strong>${refs.length}</strong> источников</span>
-                <span class="article-badge article-written">Написана</span>
+            <span style="display:flex;gap:8px;align-items:center">
+                <span style="display:flex;gap:12px;font-size:13px;color:var(--text-secondary)">
+                    <span>✍️ <strong>${wc}</strong> слов</span>
+                    <span>📚 <strong>${refs.length}</strong> источников</span>
+                    <span class="article-badge article-written">Написана</span>
+                </span>
+                <button onclick="downloadArticle(window._currentJobId,'docx')" class="btn-primary btn-sm" style="margin-left:8px">⬇ DOCX</button>
+                <button onclick="downloadArticle(window._currentJobId,'md')" class="btn-primary btn-sm" style="background:rgba(107,114,128,.15);color:var(--text-secondary)">⬇ .md</button>
             </span>
         </div>
         <div class="detail-tabs">
@@ -4965,7 +4970,7 @@ function filterLogLines() { LogDrawer.applyFilter(); }
 </script>
 
 <!-- ═══ Bottom Log Drawer ═══ -->
-<div id="logDrawer" class="log-drawer log-drawer--open">
+<div id="logDrawer" class="log-drawer collapsed">
     <!-- Header (click to collapse/expand) -->
     <div class="log-drawer__header" onclick="toggleLogDrawer()" id="logDrawerHeader">
         <span class="log-drawer__status-dot log-drawer__status-dot--idle" id="logDrawerDot"></span>
