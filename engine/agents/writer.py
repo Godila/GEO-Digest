@@ -91,9 +91,30 @@ class WriterAgent(BaseAgent, LLMCallMixin):
 
         except Exception as e:
             self._log(f"Ошибка multi-pass: {e}")
-            # Fallback: single-pass (старый подход)
+            # Fallback 1: single-pass (старый подход)
             self._log("Fallback: переключаюсь на single-pass...")
-            return self._run_single_pass(draft, style, language, format_, user_comment)
+            single = self._run_single_pass(draft, style, language, format_, user_comment)
+            if single.success:
+                return single
+            # Fallback 2: return outline as minimal article
+            try:
+                _ = outline  # check if outline exists from Pass 1
+                self._log("Fallback: использую outline как черновик статьи")
+                from engine.schemas import ArticleResult
+                outline_text = str(outline) if not isinstance(outline, str) else outline
+                return AgentResult(
+                    agent_name=self.name,
+                    success=True,
+                    data=ArticleResult(
+                        title=draft.title_suggestion or job_topic,
+                        content=outline_text,
+                        format=format_,
+                        word_count=len(outline_text.split()),
+                    ),
+                )
+            except NameError:
+                pass
+            return AgentResult(agent_name=self.name, success=False, error=str(e))
 
     # ─────────────────────────────────────────────────────────
     #  PASS 1: OUTLINE

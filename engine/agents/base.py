@@ -115,7 +115,7 @@ class LLMCallMixin:
     """Mixin for agents that primarily call LLM with structured prompts."""
 
     # ── LLM timeout ───────────────────────────────────────────
-    _LLM_TIMEOUT_SECONDS = 120  # default timeout for all LLM calls
+    _LLM_TIMEOUT_SECONDS = 300  # default timeout for all LLM calls (article generation is slow)
 
     def _run_with_timeout(self, fn, timeout_sec: int, *args, **kwargs):
         """Run fn in a thread with timeout. Raises TimeoutError on expiry."""
