@@ -91,7 +91,7 @@ class StructuredDraft:
                  methodology="", trends_identified=None,
                  dataset_description="", access_method="", format_="",
                  size_gb=0.0, coverage="", usage_examples=None,
-                 created_at="", raw_llm_output=""):
+                 created_at="", rich_context="", raw_llm_output=""):
         self.draft_id = draft_id
         self.group_type = GroupType(group_type) if isinstance(group_type, str) else group_type
         self.source_articles = source_articles or []
@@ -109,6 +109,7 @@ class StructuredDraft:
         self.format_ = format_; self.size_gb = size_gb; self.coverage = coverage
         self.usage_examples = usage_examples or []
         self.created_at = created_at or datetime.utcnow().isoformat()
+        self.rich_context = rich_context
         self.raw_llm_output = raw_llm_output
     @property
     def is_replication(self): return self.group_type == GroupType.REPLICATION
@@ -127,7 +128,8 @@ class StructuredDraft:
              "methodology": self.methodology, "trends_identified": self.trends_identified,
              "dataset_description": self.dataset_description, "access_method": self.access_method,
              "format": self.format_, "size_gb": self.size_gb, "coverage": self.coverage,
-             "usage_examples": self.usage_examples, "created_at": self.created_at}
+             "usage_examples": self.usage_examples, "created_at": self.created_at,
+             "rich_context": self.rich_context}
         if self.data_requirements: d["data_requirements"] = self.data_requirements.to_dict()
         if self.infrastructure_needs: d["infrastructure_needs"] = self.infrastructure_needs.to_dict()
         return d
@@ -150,7 +152,8 @@ class StructuredDraft:
             dataset_description=data.get("dataset_description",""), access_method=data.get("access_method",""),
             format_=data.get("format",""), size_gb=data.get("size_gb",0.0),
             coverage=data.get("coverage",""), usage_examples=data.get("usage_examples",[]),
-            created_at=data.get("created_at",""), raw_llm_output=data.get("raw_llm_output",""))
+            created_at=data.get("created_at",""), raw_llm_output=data.get("raw_llm_output",""),
+            rich_context=data.get("rich_context",""))
 
 class GroupDraft:
     def __init__(self, group_id="", group_type=GroupType.REVIEW, title_suggestion="",

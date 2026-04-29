@@ -125,9 +125,11 @@ class TestParseProposalsInvalidInput(unittest.TestCase):
         self.assertEqual(props, [])
 
     def test_non_list_json(self):
-        """JSON object instead of array → empty."""
+        """JSON object instead of array → single proposal fallback (graceful)."""
         props = parse_proposals_from_text('{"title":"A"}')
-        self.assertEqual(props, [])
+        # V2: parser now creates a fallback proposal from single JSON objects
+        self.assertEqual(len(props), 1)
+        self.assertEqual(props[0]["title"], "A")
 
     def test_empty_array(self):
         props = parse_proposals_from_text("[]")

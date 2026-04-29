@@ -258,61 +258,37 @@ def passes_relevance_gate(article: dict) -> bool:
 
 
 # ── Scoring Engine ─────────────────────────────────────────────
-ANALOGOUS_REGIONS_KEYWORDS = [
-    "caucasus", "alpine", "swiss alps", "italian alps", "french alps",
-    "iranian plateau", "central asia", "kazakhstan", "kyrgyzstan", "uzbekistan",
-    "andes", "chilean", "argentinian", "peruvian",
-    "mediterranean", "turkey", "greek", "balkan",
-    "carpathian", "romanian", "ukrainian mountain",
-    "tianshan", "pamir", "hindu kush", "zagros",
-    "mountainous region", "fold-thrust belt", "active orogeny",
-]
-
-# [FIX E] Расширенные индикаторы новизны: ML + гео-научные
-NOVELTY_KEYWORDS_ML = [
-    "transformer", "large language model", "foundation model",
-    "diffusion", "graph neural", "reinforcement learning",
-]
-NOVELTY_KEYWORDS_GEO = [
-    "novel dataset", "new dataset", "first-of-its-kind", "first ever",
-    "pioneering", "breakthrough", "state-of-the-art", "sota",
-    "multimodal fusion", "hybrid approach", "cross-domain",
-    "nanosatellite", "cubesat", "drone-based", "uav-based",
-    "fiber optic", "das", "distributed acoustic sensing",
-    "real-time monitoring", "near-real-time", "operational system",
-    "open data", "open access dataset", "publicly available data",
-]
-
-REPRODUCIBLE_METHODS = [
-    "field measurement", "field survey", "monitoring network",
-    "soil sampling", "water sampling", "geochemical analysis",
-    "seismic station", "accelerometer array", "gnss", "insar",
-    "remote sensing", "satellite", "sentinel", "landsat",
-    "machine learning", "deep learning", "neural network",
-    "random forest", "gradient boosting", "transformer",
-    "statistical model", "bayesian", "monte carlo",
-    "numerical modeling", "finite element", "finite difference",
-    "gis mapping", "spatial analysis",
-]
-
-# [FIX F] Уточнённые практические артефакты (без слишком общих слов)
-PRACTICAL_OUTPUTS_STRONG = [
-    "code available", "open source", "github", "gitlab",
-    "software available", "toolkit", "web application",
-    "api available", "rest api", "interactive map",
-    "benchmark dataset", "validation dataset", "ground truth",
-]
-PRACTICAL_OUTPUTS_MODERATE = [
-    "dataset", "database", "catalog", "framework",
-    "algorithm", "methodology", "model output",
-]
+# Import scoring from engine module (canonical source)
+try:
+    from engine.scoring import (
+        score_article as _engine_score_article,
+        extract_topic_query_text,
+        DEFAULT_SCORING_WEIGHTS,
+    )
+except ImportError:
+    # Fallback: standalone mode (scripts/ without engine/)
+    _engine_score_article = None
+    extract_topic_query_text = None
+    DEFAULT_SCORING_WEIGHTS = None
 
 
 def score_article(article: dict, config: dict) -> dict:
     """
     Score an article on 6 criteria.
     Returns scores dict + total + explanations (for UI transparency).
+    
+    Delegates to engine.scoring.score_article when available,
+    otherwise uses inline fallback for standalone mode.
     """
+    # Delegate to engine module if available
+    if _engine_score_article is not None:
+        weights = config.get("scoring_weights", {})
+        topic_text = ""
+        if extract_topic_query_text is not None:
+            topic_text = extract_topic_query_text(config)
+        return _engine_score_article(article, weights=weights, topic_query_text=topic_text)
+    
+    # Fallback: inline scoring for standalone mode
     weights = config.get("scoring_weights", {})
     text_parts = [
         article.get("title", ""),

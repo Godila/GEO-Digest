@@ -1022,84 +1022,18 @@
         .pipe-action-btn.success { background:rgba(22,163,74,.15);color:#16a34a }
         .pipe-action-btn.warn { background:rgba(234,179,8,.15);color:#ca8a04 }
 
-        /* ── Agent Tab Styles ─────────────────── */
-        .agent-group-card {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-            transition: border-color .15s;
-        }
-        .agent-group-card:hover { border-color: var(--accent); }
-
-        .group-header {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 12px 16px; cursor: pointer;
-            background: rgba(22,27,34,0.5); border-bottom: 1px solid var(--border);
-        }
-        .group-header-left { display: flex; align-items: center; gap: 10px; }
-
-        .group-type-badge {
-            font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px;
-            text-transform: uppercase; letter-spacing: 0.5px;
-        }
-        .type-REVIEW {
-            background: rgba(210,153,34,.15); color: #d29922; border: 1px solid rgba(210,153,34,.3);
-        }
-        .type-REPLICATION {
-            background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.3);
-        }
-        .type-DATA_PAPER {
-            background: rgba(88,166,255,.15); color: #58a6ff; border: 1px solid rgba(88,166,255,.3);
-        }
-        .type-METHODS_TRANSFER {
-            background: rgba(188,140,255,.15); color: #bc8cff; border: 1px solid rgba(188,140,255,.3);
-        }
-        .type-UNKNOWN {
-            background: rgba(139,148,158,.15); color: #8b949e; border: 1px solid rgba(139,148,158,.3);
-        }
-
-        .conf-badge {
-            font-size: 14px; font-weight: 800;
-            padding: 2px 10px; border-radius: 8px;
-            min-width: 52px; text-align: center;
-        }
-        .conf-high { background: rgba(63,185,80,.2); color: #3fb950; }
-        .conf-mid { background: rgba(210,153,34,.2); color: #d29922; }
-        .conf-low { background: rgba(139,148,158,.2); color: #8b949e; }
-
-        .group-body { padding: 10px 16px 14px; display: none; }
-        .group-body.open { display: block; }
-
-        .group-article-item {
-            padding: 8px 10px; margin-bottom: 6px;
-            background: rgba(13,17,23,0.4); border-radius: 6px;
-            border: 1px solid transparent; transition: all .15s;
-            cursor: pointer; font-size: 12.5px; line-height: 1.5;
-        }
-        .group-article-item:hover {
-            border-color: var(--border); background: rgba(22,27,34,0.6);
-        }
-        .group-art-title { font-weight: 600; color: var(--text); margin-bottom: 3px; }
-        .group-art-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; }
-        .group-art-meta span b { color: var(--accent); }
-
-        .group-keywords { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
-        .kw-tag {
-            font-size: 10.5px; padding: 2px 8px; border-radius: 10px;
-            background: rgba(56,139,253,.08); color: var(--accent);
-            border: 1px solid rgba(56,139,253,.15);
-        }
-
-        .scout-summary-row { display: flex; gap: 20px; flex-wrap: wrap; }
-        .scout-sum-item { display: flex; align-items: center; gap: 6px; }
-        .scout-sum-val { font-weight: 700; color: var(--accent); font-size: 15px; }
-        .scout-sum-label { color: var(--text-muted); font-size: 12px; }
-    /* ── Editor Agent UI ── */
+        /* ── Editor Agent UI ── */
 .editor-form { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px }
 .editor-form .ef-topic { flex:2; min-width:220px }
 .editor-form .ef-instr { flex:1; min-width:180px }
-.editor-form .ef-count { width:100px }
+.editor-form .ef-type { flex:1; min-width:180px }
+.editor-form .ef-comment { flex:100%; min-width:100% }
+.editor-form .ef-comment textarea {
+    width:100%; resize:vertical; min-height:44px;
+    background:var(--bg-secondary); color:var(--text-primary);
+    border:1px solid var(--border); border-radius:8px; padding:8px 12px;
+    font-size:13px; font-family:inherit;
+}
 
 .proposal-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(380px, 1fr)); gap:16px; margin-top:14px }
 .proposal-card {
@@ -1134,6 +1068,12 @@
 .graph-metric {
   font-size:11px; color:var(--text-muted); font-family:var(--mono, monospace);
 }
+.article-badge {
+  display:inline-flex; align-items:center; gap:3px; font-size:11px;
+  padding:3px 10px; border-radius:12px; font-weight:600;
+}
+.article-written { background:rgba(34,197,94,0.15); color:#22c55e }
+.article-reviewing { background:rgba(251,191,36,0.15); color:#d97706 }
 .graph-tab-content { line-height:2; font-size:13px }
 .graph-ref-row { display:flex; align-items:center; gap:8px; padding:4px 0 }
 .btn-graph-focus {
@@ -1591,6 +1531,124 @@
             border-radius: 2px;
             transition: width var(--duration-slow) var(--ease-out);
         }
+
+    /* ── Bottom Log Drawer ─────────────────── */
+    .log-drawer {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        z-index: 800;
+        display: flex; flex-direction: column;
+        background: var(--bg-secondary, #161b22);
+        border-top: 1px solid var(--border, #30363d);
+        box-shadow: 0 -4px 24px rgba(0,0,0,.4);
+        font-family: var(--mono, 'SF Mono', Consolas, monospace);
+        font-size: 12.5px;
+        line-height: 1.55;
+        transition: height .3s cubic-bezier(.4,0,.2,1);
+    }
+    .log-drawer.collapsed { height: 36px !important; }
+    .log-drawer--open { height: 320px; }
+    .log-drawer--maximized { height: 60vh; }
+
+    /* Header bar (always visible) */
+    .log-drawer__header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 6px 14px;
+        background: rgba(22,27,34,.95);
+        border-bottom: 1px solid var(--border, #30363d);
+        cursor: pointer; user-select: none;
+        flex-shrink: 0;
+        min-height: 36px;
+    }
+    .log-drawer__header:hover { background: rgba(33,38,45,.98); }
+    .log-drawer__title {
+        font-size: 11px; font-weight: 700; letter-spacing: .08em;
+        text-transform: uppercase; color: var(--text-muted, #8b949e);
+    }
+    .log-drawer__status-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        flex-shrink: 0;
+        transition: background-color .3s;
+    }
+    .log-drawer__status-dot--idle   { background: #8b949e; }
+    .log-drawer__status-dot--running { background: #3fb950; animation: ld-pulse 1.5s infinite; }
+    .log-drawer__status-dot--done    { background: #58a6ff; }
+    .log-drawer__status-dot--error   { background: #f85149; }
+    @keyframes ld-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .log-drawer__status-text {
+        font-size: 11px; color: var(--text-muted, #8b949e);
+        min-width: 60px;
+    }
+    .log-drawer__counter {
+        margin-left: auto;
+        font-size: 11px; color: var(--text-muted, #8b949e);
+        font-family: var(--mono, monospace);
+    }
+    .log-drawer__ctrl-btn {
+        background: none; border: none; color: var(--text-muted, #8b949e);
+        cursor: pointer; padding: 2px 6px; font-size: 14px; line-height: 1;
+        border-radius: 4px; transition: all .15s;
+    }
+    .log-drawer__ctrl-btn:hover { background: rgba(139,148,158,.15); color: var(--text); }
+
+    /* Toolbar */
+    .log-drawer__toolbar {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 14px;
+        background: rgba(13,17,23,.6);
+        border-bottom: 1px solid var(--border, #30363d);
+        flex-shrink: 0;
+    }
+    .log-drawer__filter {
+        font-size: 11.5px; padding: 3px 8px;
+        background: var(--bg, #0d1117); color: var(--text, #c9d1d9);
+        border: 1px solid var(--border, #30363d); border-radius: 6px;
+        cursor: pointer; outline: none; font-family: inherit;
+    }
+    .log-drawer__filter:focus { border-color: var(--accent, #58a6ff); }
+    .log-drawer__search {
+        flex: 1; font-size: 11.5px; padding: 3px 10px;
+        background: var(--bg, #0d1117); color: var(--text, #c9d1d9);
+        border: 1px solid var(--border, #30363d); border-radius: 6px;
+        outline: none; font-family: inherit;
+    }
+    .log-drawer__search:focus { border-color: var(--accent, #58a6ff); }
+    .log-drawer__search::placeholder { color: var(--text-muted, #8b949e); font-style: italic; }
+    .log-drawer__clear-btn {
+        font-size: 11px; padding: 3px 10px;
+        background: none; color: var(--accent, #58a6ff);
+        border: 1px solid transparent; border-radius: 6px;
+        cursor: pointer; font-family: inherit; white-space: nowrap;
+    }
+    .log-drawer__clear-btn:hover { border-color: var(--accent, #58a6ff); background: rgba(88,166,255,.08); }
+
+    /* Content area */
+    .log-drawer__body {
+        flex: 1; overflow-y: auto; overflow-x: hidden;
+        padding: 8px 14px;
+        scroll-behavior: smooth;
+    }
+    .log-drawer__body::-webkit-scrollbar { width: 6px; }
+    .log-drawer__body::-webkit-scrollbar-track { background: transparent; }
+    .log-drawer__body::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+    /* Log lines inside drawer */
+    .ld-line { padding: 1px 0; white-space: pre-wrap; word-break: break-all; border-left: 2px solid transparent; padding-left: 8px; transition: background .1s; }
+    .ld-line:hover { background: rgba(139,148,158,.06); }
+    .ld-line--phase     { border-left-color: #58a6ff; color: #79c0ff; font-weight: 600; }
+    .ld-line--step      { border-left-color: #58a6ff; color: #79c0ff; }
+    .ld-line--info      { border-left-color: #8b949e; color: #8b949e; }
+    .ld-line--success   { border-left-color: #3fb950; color: #7ee787; }
+    .ld-line--warn      { border-left-color: #d29922; color: #e3b341; }
+    .ld-line--error     { border-left-color: #f85149; color: #ffa198; background: rgba(248,81,73,.04); }
+    .ld-line--data      { border-left-color: #bc8cff; color: #d2a8ff; font-size: 11.5px; }
+    .ld-line--time      { color: #484f58; font-size: 10.5px; margin-right: 6px; user-select: none; }
+
+    /* Empty state */
+    .ld-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #484f58; font-style: italic; font-size: 12px; }
+
+    /* Push main content up when drawer is open */
+    body.log-drawer-open { padding-bottom: 320px; }
+    body.log-drawer-collapsed { padding-bottom: 36px; }
 </style>
 </head>
 <body>
@@ -1798,9 +1856,18 @@
                         <label class="config-label">Инструкция (опц.)</label>
                         <input type="text" id="editorInstruction" placeholder="Дополнительные указания для редактора" style="width:100%">
                     </div>
-                    <div class="config-field ef-count">
-                        <label class="config-label">Предлож.</label>
-                        <input type="number" id="editorMaxProposals" min="1" max="10" value="5" style="width:100%">
+                    <div class="config-field ef-type">
+                        <label class="config-label">Тип статьи</label>
+                        <select id="pipeline-group-type" style="width:100%;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px">
+                            <option value="">Авто (по количеству источников)</option>
+                            <option value="review">Обзорная статья (15-25 стр.)</option>
+                            <option value="replication">Оригинальное исследование (8-12 стр.)</option>
+                            <option value="data_paper">Статья-данные (5-8 стр.)</option>
+                        </select>
+                    </div>
+                    <div class="config-field ef-comment">
+                        <label class="config-label">Комментарий (опц.)</label>
+                        <textarea id="pipeline-user-comment" rows="2" placeholder="Дополнительные указания: фокус, аудитория, акценты..."></textarea>
                     </div>
                     <div class="config-field" style="display:flex;align-items:flex-end">
                         <button id="runEditorBtn" class="btn-primary" onclick="runEditor()" style="padding:8px 20px">
@@ -1836,78 +1903,6 @@
                 <div id="selectedArticle" class="selected-article" style="display:none"></div>
             </div>
 
-            <!-- ═══ Быстрый Scout (сворачиваемый) ═══ -->
-            <div id="scoutCollapsible" class="research-section" style="margin-top:12px">
-                <div class="collapsible-header" onclick="toggleScoutCollapse()">
-                    <span style="font-weight:600;font-size:13px">▸ 🔍 Быстрый Scout Agent</span>
-                    <span class="collap-arrow" id="scoutArrow">▾</span>
-                </div>
-                <div id="scoutInner" style="display:none">
-
-                <!-- Scout Config -->
-                <div class="research-section" style="margin-top:10px">
-                    <div class="research-section-title" style="font-size:13px">🔍 Scout — Поиск и классификация</div>
-
-                    <div class="config-row">
-                        <div class="config-field" style="flex:2">
-                            <label class="config-label">Тема поиска</label>
-                            <input type="text" id="agentTopic" class="cfg-input"
-                                   placeholder="например: Arctic permafrost methane emissions"
-                                   value="Arctic permafrost methane emissions tundra">
-                        </div>
-                        <div class="config-field">
-                            <label class="config-label">Режим</label>
-                            <select id="agentMode" class="cfg-input">
-                                <option value="fresh" selected>Свежий поиск (sources/)</option>
-                                <option value="storage">Из хранилища</option>
-                                <option value="mixed">Смешанный</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="config-row">
-                        <div class="config-field">
-                            <label class="config-label">Макс. статей</label>
-                            <input type="number" id="agentMaxArticles" min="1" max="50" value="10" class="cfg-input">
-                        </div>
-                        <div class="config-field" style="display:flex;align-items:flex-end">
-                            <button id="runScoutBtn" class="btn-primary" onclick="runScoutAgent()" style="width:auto;padding:8px 24px">
-                                ▶ Запустить Scout
-                            </button>
-                            <button id="stopScoutBtn" class="btn-danger" onclick="stopCurrentJob()" style="width:auto;padding:8px 16px;display:none">
-                                ⛹ Остановить
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Engine Status -->
-                    <div id="engineStatus" class="dedup-info" style="display:none;margin-top:10px"></div>
-                </div>
-
-                <!-- Scout Progress -->
-                <div id="scoutProgress" class="research-section" style="display:none;margin-top:10px">
-                    <div class="research-section-title" style="font-size:13px">⚡ Выполнение...</div>
-                    <div class="progress-container">
-                        <div class="progress-bar-track">
-                            <div class="progress-bar-fill" id="scoutProgressBar" style="width:0%"></div>
-                        </div>
-                        <div class="progress-text"><span id="scoutPct">0%</span> · <span id="scoutStep">Инициализация...</span></div>
-                    </div>
-                    <div class="log-container" id="scoutLog">
-                        <div class="log-line log-info">Ожидание запуска...</div>
-                    </div>
-                </div>
-
-                <!-- Scout Results -->
-                <div id="scoutResults" class="research-section" style="display:none;margin-top:10px">
-                    <div class="research-section-title" style="font-size:13px">📊 Результаты Scout</div>
-                    <div id="scoutSummary" style="margin-bottom:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-                    <div id="scoutGroups" style="display:flex;flex-direction:column;gap:10px"></div>
-                </div>
-
-                </div><!-- /scoutInner -->
-            </div><!-- /scoutCollapsible -->
-
             <!-- ═══ История Редактора ═══ -->
             <div id="editorHistorySection" class="research-section" style="margin-top:12px">
                 <div class="research-section-title" style="font-size:13px">📋 История редактора</div>
@@ -1915,14 +1910,6 @@
                     <thead><tr><th>Job ID</th><th>Тема</th><th>Фаза</th><th>Предлож.</th><th>Действия</th></tr></thead>
                     <tbody id="editorHistoryBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">Запусков пока нет</td></tr></tbody>
                 </table>
-            </div>
-
-            <!-- Jobs History -->
-            <div id="agentJobsSection" class="research-section">
-                <div class="research-section-title">📋 История запусков агентов</div>
-                <div id="agentJobsList" class="run-list">
-                    <div class="empty-state-sm">Запусков пока нет</div>
-                </div>
             </div>
 
         </div>
@@ -3356,399 +3343,13 @@ switchTab = function(tabName, el) {
         loadResearchConfig();
     }
     if (tabName === 'agents') {
-        loadEngineStatus();
-        loadAgentJobs();
-        loadOrchJobs();
+        // Each loader is independent — one failure must not block others
+        try { loadEngineStatus(); } catch(e) { console.warn('[tab] loadEngineStatus missing:', e.message); }
+        try { loadAgentJobs(); } catch(e) { console.warn('[tab] loadAgentJobs missing:', e.message); }
+        try { loadOrchJobs(); } catch(e) { console.warn('[tab] loadOrchJobs error:', e.message); }
         loadEditorHistory();
     }
 };
-
-// ════════════════════════════════════════════════
-//  AGENT ENGINE UI — ScoutAgent
-// ════════════════════════════════════════════════
-
-let scoutPoller = null;
-let currentScoutJobId = null;
-
-const GROUP_TYPE_NAMES = {
-    REVIEW: 'Обзор',
-    REPLICATION: 'Воспроизведение',
-    DATA_PAPER: 'Данные',
-    METHODS_TRANSFER: 'Трансфер методов',
-    UNKNOWN: 'Неизвестно',
-};
-
-/** Run Scout Agent */
-async function runScoutAgent() {
-    const topic = document.getElementById('agentTopic').value.trim();
-    if (!topic) { toast('Введите тему поиска', 'error'); return; }
-
-    const mode = document.getElementById('agentMode').value;
-    const maxArticles = parseInt(document.getElementById('agentMaxArticles').value) || 10;
-
-    const btn = document.getElementById('runScoutBtn');
-    btn.disabled = true; btn.textContent = '⏳ Запуск...';
-
-    // Show progress, hide results
-    document.getElementById('scoutProgress').style.display = '';
-    document.getElementById('scoutResults').style.display = 'none';
-    document.getElementById('scoutLog').innerHTML = '<div class="log-line log-step">▶ Запуск Scout Agent...</div>';
-    document.getElementById('scoutProgressBar').style.width = '5%';
-    document.getElementById('scoutPct').textContent = '5%';
-    document.getElementById('scoutStep').textContent = 'Отправка запроса...';
-
-    // Show stop button
-    const stopBtn = document.getElementById('stopScoutBtn');
-    if (stopBtn) stopBtn.style.display = '';
-
-    try {
-        const result = await api('/engine/scout', 'POST', { topic, mode, max_articles: maxArticles });
-        currentScoutJobId = result.job_id;
-        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-ok">Job создан: ${result.job_id}</div>`;
-        startSSEStreaming(result.job_id);
-    } catch(e) {
-        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка: ${e.message}</div>`;
-        btn.disabled = false; btn.textContent = '▶ Запустить Scout';
-    }
-}
-
-/** SSE-based real-time log streaming */
-function startSSEStreaming(jobId) {
-    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
-    if (window.scoutEventSource) window.scoutEventSource.close();
-
-    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
-    const stepPcts = [10, 25, 40, 65, 85, 100];
-    let steps = 0;
-    let logEl = document.getElementById('scoutLog');
-
-    try {
-        const es = new EventSource(`/api/engine/jobs/${jobId}/logs`);
-        window.scoutEventSource = es;
-
-        es.onmessage = (evt) => {
-            const data = JSON.parse(evt.data);
-
-            // Log line
-            if (data.line) {
-                const cls = data.line.includes('ERROR') || data.line.includes('Traceback') ? 'log-err'
-                            : data.line.includes('[*]') || data.line.includes('Complete') ? 'log-ok'
-                            : data.line.includes('Warning') ? 'log-warn'
-                            : 'log-info';
-                logEl.innerHTML += `<div class="log-line ${cls}">${esc(data.line)}</div>`;
-                logEl.scrollTop = logEl.scrollHeight;
-
-                // Update progress bar based on keywords
-                const lineLower = data.line.toLowerCase();
-                if (lineLower.includes('source')) { steps = Math.max(steps, 1); }
-                else if (lineLower.includes('collect') || lineLower.includes('article')) { steps = Math.max(steps, 2); }
-                else if (lineLower.includes('dedup')) { steps = Math.max(steps, 3); }
-                else if (lineLower.includes('llm') || lineLower.includes('classif')) { steps = Math.max(steps, 4); }
-                else if (lineLower.includes('group')) { steps = Math.max(steps, 5); }
-
-                steps = Math.min(steps, stepNames.length - 1);
-                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
-                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
-                document.getElementById('scoutStep').textContent = stepNames[steps];
-            }
-
-            // Done
-            if (data.done) {
-                es.close();
-                window.scoutEventSource = null;
-                onScoutFinished(jobId, data.status);
-            }
-        };
-
-        es.onerror = () => {
-            console.warn('SSE error, falling back to polling');
-            es.close();
-            startScoutPollingFallback(jobId);
-        };
-    } catch(e) {
-        console.warn('SSE not supported, using polling:', e);
-        startScoutPollingFallback(jobId);
-    }
-}
-
-/** Fallback: poll-based status check */
-function startScoutPollingFallback(jobId) {
-    const stepNames = ['Поиск источников...', 'Сбор статей...', 'Дедупликация...', 'LLM классификация...', 'Группировка...', 'Готово!'];
-    const stepPcts = [10, 25, 40, 65, 85, 100];
-    let steps = 0;
-
-    scoutPoller = setInterval(async () => {
-        try {
-            const job = await api(`/engine/jobs/${jobId}`);
-            if (job.status === 'running') {
-                steps = Math.min(steps + 1, stepNames.length - 2);
-                document.getElementById('scoutProgressBar').style.width = stepPcts[steps] + '%';
-                document.getElementById('scoutPct').textContent = stepPcts[steps] + '%';
-                document.getElementById('scoutStep').textContent = stepNames[steps];
-
-                if (job.log_lines && job.log_lines.length > 0) {
-                    const logEl = document.getElementById('scoutLog');
-                    const currentLines = logEl.querySelectorAll('.log-line').length;
-                    if (job.log_lines.length > currentLines) {
-                        job.log_lines.slice(currentLines).forEach(line => {
-                            const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
-                            logEl.innerHTML += `<div class="log-line ${cls}">${esc(line)}</div>`;
-                        });
-                        logEl.scrollTop = logEl.scrollHeight;
-                    }
-                }
-            }
-
-            if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
-                clearInterval(scoutPoller);
-                scoutPoller = null;
-                onScoutFinished(jobId, job.status);
-            }
-        } catch(e) { console.error('Poll error:', e); }
-    }, 2000);
-}
-
-/** Called when scout job finishes (from both SSE and polling) */
-async function onScoutFinished(jobId, status) {
-    document.getElementById('scoutProgressBar').style.width = '100%';
-    document.getElementById('scoutPct').textContent = '100%';
-
-    const btn = document.getElementById('runScoutBtn');
-    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
-    const stopBtn = document.getElementById('stopScoutBtn');
-    if (stopBtn) stopBtn.style.display = 'none';
-
-    if (status === 'done') {
-        document.getElementById('scoutStep').textContent = 'Завершено!';
-        try {
-            const job = await api(`/engine/jobs/${jobId}`);
-            if (job.result) renderScoutResults(job.result);
-        } catch(e) { console.error('Load result error:', e); }
-    } else if (status === 'cancelled') {
-        document.getElementById('scoutStep').textContent = 'Остановлено';
-        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Задача остановлена пользователем</div>';
-    } else {
-        document.getElementById('scoutStep').textContent = 'Ошибка';
-        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">❌ Завершено с ошибкой</div>`;
-    }
-
-    loadAgentJobs(); loadEngineStatus();
-}
-
-/** Stop running scout job */
-async function stopCurrentJob() {
-    if (!currentScoutJobId) return;
-    if (!confirm('Остановить текущую задачу?')) return;
-
-    // Close SSE
-    if (window.scoutEventSource) { window.scoutEventSource.close(); window.scoutEventSource = null; }
-    if (scoutPoller) { clearInterval(scoutPoller); scoutPoller = null; }
-
-    try {
-        await api(`/engine/jobs/${currentScoutJobId}`, 'DELETE');
-        document.getElementById('scoutLog').innerHTML += '<div class="log-line log-warn">⛔ Отправлен запрос на остановку...</div>';
-    } catch(e) {
-        document.getElementById('scoutLog').innerHTML += `<div class="log-line log-err">Ошибка остановки: ${e.message}</div>`;
-    }
-
-    const btn = document.getElementById('runScoutBtn');
-    btn.disabled = false; btn.textContent = '▶ Запустить Scout';
-    const stopBtn = document.getElementById('stopScoutBtn');
-    if (stopBtn) stopBtn.style.display = 'none';
-
-    loadAgentJobs(); loadEngineStatus();
-}
-
-/** Render scout results */
-function renderScoutResults(result) {
-    document.getElementById('scoutProgress').style.display = 'none';
-    document.getElementById('scoutResults').style.display = '';
-
-    // Summary
-    const sr = result.scout_result || {};
-    const groups = sr.groups || [];
-    const summaryEl = document.getElementById('scoutSummary');
-
-    let reviewCount = 0, replCount = 0;
-    groups.forEach(g => { if (g.group_type === 'REVIEW') reviewCount++; else replCount++; });
-
-    summaryEl.innerHTML = `
-        <div class="scout-summary-row">
-            <span class="scout-sum-item"><span class="scout-sum-val">${sr.total_found || 0}</span> <span class="scout-sum-label">найдено</span></span>
-            <span class="scout-sum-item"><span class="scout-sum-val">${sr.after_dedup || groups.length}</span> <span class="scout-sum-label">после дедупа</span></span>
-            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#d29922">${reviewCount}</span> <span class="scout-sum-label">обзоров</span></span>
-            <span class="scout-sum-item"><span class="scout-sum-val" style="color:#3fb950">${replCount}</span> <span class="scout-sum-label">репликаций</span></span>
-            <span class="scout-sum-item"><span class="scout-sum-val">${groups.length}</span> <span class="scout-sum-label">групп</span></span>
-        </div>
-    `;
-
-    // Groups
-    const groupsEl = document.getElementById('scoutGroups');
-    if (!groups.length) {
-        groupsEl.innerHTML = '<div class="empty-state-sm">Нет результатов</div>';
-        return;
-    }
-
-    groupsEl.innerHTML = groups.map((g, i) => {
-        const gt = g.group_type || 'UNKNOWN';
-        const conf = g.confidence || 0;
-        const confClass = conf >= 80 ? 'conf-high' : conf >= 50 ? 'conf-mid' : 'conf-low';
-        const articles = g.articles || [];
-        const keywords = g.keywords || [];
-
-        return `
-        <div class="agent-group-card">
-            <div class="group-header" onclick="toggleGroupBody(this)">
-                <div class="group-header-left">
-                    <span class="group-type-badge type-${gt}">${GROUP_TYPE_NAMES[gt] || gt}</span>
-                    <span style="font-size:13px;font-weight:600;color:var(--text)">Группа ${i+1}${g.group_id ? ': ' + g.group_id : ''}</span>
-                    <span style="font-size:11px;color:var(--text-muted)">${articles.length} статей</span>
-                </div>
-                <span class="conf-badge ${confClass}">${conf}%</span>
-            </div>
-            <div class="group-body">
-                ${keywords.length ? `<div class="group-keywords">${keywords.map(k => `<span class="kw-tag">${esc(k)}</span>`).join('')}</div>` : ''}
-                ${articles.map(a => `
-                <div class="group-article-item" onclick="openArticleFromGroup(this)">
-                    <div class="group-art-title">${esc(a.display_title || a.title || '(без названия)')}</div>
-                    <div class="group-art-meta">
-                        <span><b>DOI:</b> ${esc(a.doi || '—')}</span>
-                        <span><b>Год:</b> ${a.year || '?'}</span>
-                        <span><b>Цит.:</b> ${a.citations || a.citation_count || 0}</span>
-                        ${a.source ? `<span><b>Источник:</b> ${esc(a.source)}</span>` : ''}
-                        ${a.journal ? `<span><b>Журнал:</b> ${esc(a.journal)}</span>` : ''}
-                    </div>
-                </div>
-                `).join('')}
-            </div>
-        </div>
-        `;
-    }).join('');
-}
-
-/** Toggle group body expand/collapse */
-function toggleGroupBody(header) {
-    const card = header.closest('.agent-group-card');
-    const body = card.querySelector('.group-body');
-    body.classList.toggle('open');
-}
-
-/** Load engine health status */
-async function loadEngineStatus() {
-    try {
-        const st = await api('/engine/status');
-        const el = document.getElementById('engineStatus');
-        const eng = st.engine || {};
-        const stor = st.storage || {};
-        const jobs = st.jobs || {};
-        el.style.display = '';
-        el.innerHTML = `
-            Engine: <b>${eng.ok ? '✓ Ready' : (eng.error || 'ошибка')}</b> ·
-            Статей в хранилище: <b>${stor.article_count || 0}</b> ·
-            Активных задач: <b>${jobs.active || 0}/${jobs.total || 0}</b>
-        `;
-    } catch(e) {
-        console.error('Engine status error:', e);
-    }
-}
-
-/** Load agent jobs history */
-async function loadAgentJobs() {
-    try {
-        const data = await api('/engine/jobs');
-        const jobs = data.jobs || [];
-        const el = document.getElementById('agentJobsList');
-
-        if (!jobs.length) {
-            el.innerHTML = '<div class="empty-state-sm">Запусков пока нет</div>';
-            return;
-        }
-
-        // Sort by started_at desc
-        jobs.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
-
-        el.innerHTML = jobs.map(j => {
-            const cls = j.status === 'done' ? 'status-complete'
-                       : j.status === 'error' ? 'status-error'
-                       : j.status === 'running' ? 'status-running' : 'status-stopped';
-            const label = j.status === 'done' ? 'Готово'
-                         : j.status === 'error' ? 'Ошибка'
-                         : j.status === 'running' ? 'Выполняется...' : j.status;
-            const time = j.started_at ? j.started_at.replace('T', ' ').substring(0, 16) : '?';
-            const dur = j.finished_at && j.started_at
-                ? Math.round((new Date(j.finished_at) - new Date(j.started_at)) / 1000) + 'с'
-                : '';
-
-            return `<div class="run-card" onclick="showAgentJobDetail('${j.job_id}')">
-                <div class="run-card-header">
-                    <span class="run-id">${j.job_id}</span>
-                    <span class="status-status-badge ${cls}">${label}</span>
-                </div>
-                <div class="run-stats">
-                    <span>топик: <span class="run-stat-val">${(j.params && j.params.topic || '').substring(0, 40)}</span></span>
-                    <span>${time}</span>
-                    <span>${dur}</span>
-                </div>
-            </div>`;
-        }).join('');
-    } catch(e) {
-        console.error('Agent jobs error:', e);
-    }
-}
-
-/** Show agent job detail in results area */
-async function showAgentJobDetail(jobId) {
-    try {
-        const job = await api(`/engine/jobs/${jobId}`);
-
-        // Switch to agent tab if not already there
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
-        // Find and activate agents tab (3rd tab, index 2)
-        const tabs = document.querySelectorAll('.tab');
-        if (tabs[2]) { tabs[2].classList.add('active'); }
-        const contents = document.querySelectorAll('.tab-content');
-        if (contents[2]) { contents[2].style.display = ''; }
-
-        // Show progress area with logs
-        document.getElementById('scoutProgress').style.display = '';
-        document.getElementById('scoutResults').style.display = 'none';
-
-        let logHtml = '';
-        if (job.log_lines && job.log_lines.length > 0) {
-            logHtml = job.log_lines.map(line => {
-                const cls = line.includes('ERROR') ? 'log-err' : line.includes('[OK]') ? 'log-ok' : 'log-info';
-                return `<div class="log-line ${cls}">${esc(line)}</div>`;
-            }).join('');
-        } else {
-            logHtml = '<div class="log-line log-info">Нет логов</div>';
-        }
-        if (job.error) logHtml += `<div class="log-line log-err">Ошибка: ${esc(job.error)}</div>`;
-
-        document.getElementById('scoutLog').innerHTML = logHtml;
-
-        // Update progress bar
-        const isDone = job.status === 'done';
-        const isError = job.status === 'error';
-        document.getElementById('scoutProgressBar').style.width = isDone || isError ? '100%' : '50%';
-        document.getElementById('scoutPct').textContent = isDone || isError ? '100%' : '50%';
-        document.getElementById('scoutStep').textContent =
-            isDone ? 'Завершено' : isError ? 'Ошибка' : job.status;
-
-        // Render results if done
-        if (isDone && job.result) {
-            renderScoutResults(job.result);
-        }
-
-        // Update stop button visibility
-        const stopBtn = document.getElementById('stopScoutBtn');
-        if (stopBtn) stopBtn.style.display = job.status === 'running' ? '' : 'none';
-        currentScoutJobId = jobId;
-
-    } catch(e) {
-        toast('Ошибка загрузки: ' + e.message, 'error');
-    }
-}
 
 // ═══════════════════════════════════════════════════
 // PIPELINE (ORCHESTRATOR) FUNCTIONS
@@ -3859,7 +3460,8 @@ async function runEditor() {
     if (!topic) { toast('Введите тему или домен', 'error'); return; }
 
     const instruction = document.getElementById('editorInstruction').value.trim();
-    const maxProps = parseInt(document.getElementById('editorMaxProposals').value) || 5;
+    const groupType = document.getElementById('pipeline-group-type').value;
+    const userComment = document.getElementById('pipeline-user-comment').value.trim();
 
     const btn = document.getElementById('runEditorBtn');
     btn.disabled = true; btn.textContent = '⏳ Анализ...';
@@ -3873,12 +3475,21 @@ async function runEditor() {
     document.getElementById('editorPhase').textContent = 'Запуск анализа...';
     document.getElementById('editorToolLog').style.display = 'none';
 
+    // ── Log Drawer: reset & open ──
+    LogDrawer.clear();
+    LogDrawer.open();
+    LogDrawer.setStatus('running');
+    LogDrawer.phase('═══ Pipeline запущен ═══');
+    LogDrawer.info(`Топик: ${topic}`);
+    if (instruction) LogDrawer.info(`Инструкция: ${instruction}`);
+
     try {
         // Use pipeline endpoint (orchestrator manages full cycle)
         const result = await api('/pipeline/run', 'POST', {
             topic,
             domain: undefined,  // TODO: add domain selector to UI
-            user_comment: instruction || undefined
+            ...(groupType ? {group_type: groupType} : {}),
+            user_comment: userComment || instruction || undefined
         });
 
         currentEditorJobId = result.job_id;
@@ -3886,18 +3497,27 @@ async function runEditor() {
         document.getElementById('editorPhase').textContent =
             `${result.message || 'Pipeline запущен...'} (job: ${result.job_id.slice(0,12)}...)`;
 
+        LogDrawer.step(`Job создан: ${result.job_id}`);
+        LogDrawer.info(`Состояние: ${result.state || 'editing'}`);
+
         // Start real-time polling (pipeline endpoint)
         startEditorPolling(result.job_id);
 
     } catch(e) {
         document.getElementById('editorPhase').textContent = 'Ошибка: ' + e.message;
         btn.disabled = false; btn.textContent = '🚀 Проанализировать и предложить';
+        LogDrawer.setStatus('error');
+        LogDrawer.error(`Ошибка запуска: ${e.message}`);
     }
 }
 
 /** Poll pipeline job until editing phase completes */
 function startEditorPolling(jobId) {
     if (editorPoller) clearInterval(editorPoller);
+
+    let _lastState = null;  // track state transitions for logging
+    let _lastLogCount = 0;  // avoid duplicate logs
+
     editorPoller = setInterval(async () => {
         try {
             // Poll from pipeline endpoint (works for both pipeline + legacy editor jobs)
@@ -3912,6 +3532,7 @@ function startEditorPolling(jobId) {
                 selecting: 'Выбор предложения...',
                 developing: 'Reader Agent работает...',
                 writing: 'Написание статьи...',
+                written: 'Статья готова — awaiting ревю',
                 reviewing: 'Ревью...',
                 done: 'Завершено',
                 cancelled: 'Отменено',
@@ -3921,11 +3542,118 @@ function startEditorPolling(jobId) {
             const phaseText = stateMap[state] || state;
 
             // Progress bar based on pipeline phase
-            const pctMap = { idle:5, editing:25, selecting:45, developing:60, writing:80, reviewing:90, done:100, cancelled:0, error:0, failed:0 };
+            const pctMap = { idle:5, editing:25, selecting:45, developing:60, writing:80, written:85, reviewing:90, done:100, cancelled:0, error:0, failed:0 };
             const pct = pctMap[state] || 50;
             document.getElementById('editorProgressBar').style.width = pct + '%';
             document.getElementById('editorPct').textContent = pct + '%';
             document.getElementById('editorPhase').textContent = phaseText;
+
+            // ── Log Drawer: push state transition & data ──
+            if (state !== _lastState) {
+                _lastState = state;
+                if (state === 'editing') {
+                    LogDrawer.phase('═══ Фаза 1: Editing (B+ Editor) ═══');
+                } else if (state === 'selecting') {
+                    LogDrawer.phase('═══ Фаза 2: Selecting ═══');
+                    // ⭐ KEY FIX: render proposals when entering selecting state
+                    const proposals = data.proposals || data.editor_result?.proposals || [];
+                    if (proposals.length > 0) {
+                        LogDrawer.success(`Proposals: ${proposals.length} вариантов — выберите статью`);
+                        proposals.forEach((p, i) => {
+                            LogDrawer.info(`  [${i+1}] ${(p.title || '').substring(0, 80)} — conf=${(p.confidence || 0).toFixed(2)}`);
+                        });
+                        // Render proposal cards for user interaction
+                        currentEditorJobId = jobId;
+                        currentEditorProposals = proposals;
+                        renderProposals(proposals);
+                        document.getElementById('proposalsSection').style.display = '';
+                        document.getElementById('runEditorBtn').disabled = false;
+                        document.getElementById('runEditorBtn').textContent = '✨ Анализировать ещё...';
+                    }
+                } else if (state === 'developing') {
+                    LogDrawer.phase('═══ Фаза 3: Developing ═══');
+                    // Hide proposals grid when moving past selection
+                    const ps = document.getElementById('proposalsSection');
+                    if (ps) ps.style.display = 'none';
+                    document.getElementById('runEditorBtn').disabled = true;
+                } else if (state === 'writing') {
+                    LogDrawer.phase('═══ Фаза 4: Writing (Writer Agent) ═══');
+                    LogDrawer.step('Writer генерирует финальную статью...');
+                    document.getElementById('runEditorBtn').disabled = true;
+                    // Hide proposals when writing
+                    const ps = document.getElementById('proposalsSection');
+                    if (ps) ps.style.display = 'none';
+                } else if (state === 'written') {
+                    LogDrawer.phase('═══ ✍️ Статья написана ═══');
+                    LogDrawer.setStatus('done');
+                    document.getElementById('runEditorBtn').disabled = false;
+                    document.getElementById('runEditorBtn').textContent = '🚀 Проанализировать ещё...';
+                    // Show article stats
+                    if (data.final_article) {
+                        const fa = data.final_article;
+                        const title = fa.title || fa.headline || 'Без заголовка';
+                        const wc = fa.word_count || '?';
+                        const refs = (fa.references || []).length;
+                        LogDrawer.success(`📄 Статья готова: "${(title || '').substring(0, 70)}" (${wc} слов, ${refs} refs)`);
+                        LogDrawer.data(`   формат: ${fa.format || '?'}, секций: ${(fa.sections || []).length}`);
+                    }
+                    toast('✅ Статья написана! Нажмите 👀 Ревю для проверки.', 'success', 5000);
+                } else if (state === 'reviewing') {
+                    LogDrawer.phase('═══ Фаза 5: Reviewing (Reviewer Agent) ═══');
+                    LogDrawer.step('Reviewer проводит факт-чекинг...');
+                    // Show article stats if available
+                    if (data.final_article) {
+                        const fa = data.final_article;
+                        const title = fa.title || fa.headline || 'Без заголовка';
+                        const wc = fa.word_count || '?';
+                        const refs = (fa.references || []).length;
+                        LogDrawer.success(`Статья написана: "${(title || '').substring(0, 70)}" (${wc} слов, ${refs} refs)`);
+                    }
+                } else if (state === 'done') {
+                    LogDrawer.phase('═══ ✅ Pipeline завершён ═══');
+                    LogDrawer.setStatus('done');
+                    // Show final result
+                    if (data.final_article) {
+                        const fa = data.final_article;
+                        LogDrawer.success(`📄 Готовая статья: "${(fa.title || '').substring(0, 80)}"`);
+                        LogDrawer.data(`   ${(fa.word_count || '?')}, формат: ${fa.format || '?'}, секций: ${(fa.sections || []).length}`);
+                    }
+                    if (data.review_result) {
+                        const rr = data.review_result;
+                        LogDrawer.success(`👀 Ревью: score=${(rr.overall_score || 0).toFixed(2)}, verdict=${rr.verdict || '?'}`);
+                    }
+                    toast('✅ Pipeline завершён! Статья готова.', 'success', 5000);
+                } else if (state === 'error' || state === 'failed') {
+                    LogDrawer.phase('═══ ОШИБКА ═══');
+                    LogDrawer.setStatus('error');
+                    if (data.error) LogDrawer.error(data.error);
+                } else if (state === 'cancelled') {
+                    LogDrawer.phase('═══ Отменено ═══');
+                    LogDrawer.setStatus('idle');
+                }
+            }
+
+            // Push editor_result data when available (once per new data)
+            if (data.editor_result && LogDrawer.count() > _lastLogCount + 2) {
+                const er = data.editor_result;
+                if (er.evidence_total != null && _lastLogCount < 5) {
+                    LogDrawer.data(`Evidence pack: ${er.evidence_total} статей, graph: ${er.graph_nodes || '?'} узлов`);
+                }
+                if (er.discovery_report) {
+                    const dr = er.discovery_report;
+                    if (dr.key_findings && _lastLogCount < 10) {
+                        LogDrawer.data(`Discovery: "${(dr.key_findings || '').substring(0, 120)}..."`);
+                        LogDrawer.data(`  sufficiency=${dr.material_sufficiency}, selected=${(dr.selected_dois || []).length} DOIs, explored=${(dr.explored_dois || []).length}`);
+                    }
+                }
+                if (er.proposals && er.proposals.length > 0 && _lastLogCount < 15) {
+                    LogDrawer.success(`Proposals: ${er.proposals.length} вариантов сгенерировано`);
+                    er.proposals.forEach((p, i) => {
+                        LogDrawer.info(`  [${i+1}] ${(p.title || '').substring(0, 80)} — conf=${(p.confidence || 0).toFixed(2)}`);
+                    });
+                }
+                _lastLogCount = LogDrawer.count();
+            }
 
             // Update status bar if modal is open
             if (state !== 'idle') renderPipelineStatusBar(state);
@@ -3939,10 +3667,19 @@ function startEditorPolling(jobId) {
                 document.getElementById('runEditorBtn').textContent = '🚀 Проанализировать и предложить';
 
                 if (state === 'done') {
+                    // Show final summary in drawer
+                    const er = data.editor_result;
+                    if (er && er.proposals) {
+                        LogDrawer.success(`Готово! ${er.proposals.length} proposals`);
+                    }
                     await loadEditorJobDetail(jobId);
                 } else {
+                    const errMsg = data.error || state;
                     document.getElementById('editorPhase').textContent =
-                        state === 'cancelled' ? 'Отменено' : ('Ошибка: ' + (data.error || state));
+                        state === 'cancelled' ? 'Отменено' : ('❌ Ошибка: ' + errMsg);
+                    // Show toast so user notices the error
+                    toast('Ошибка pipeline: ' + errMsg, 'error');
+                    LogDrawer.error('Pipeline остановлен: ' + errMsg);
                 }
                 loadEditorHistory();
             }
@@ -3981,6 +3718,16 @@ async function loadEditorJobDetail(jobId) {
         if (selId) {
             const proposal = proposals.find(p => p.id === selId);
             if (proposal) showSelectedArticle(proposal);
+        }
+
+        // ── Show final article for written/done states ──
+        const fa = data.final_article;
+        const isWritten = ['written', 'done', 'reviewed'].includes(data.state);
+        if (isWritten && fa) {
+            showFinalArticle(fa);
+        } else if (!isWritten && !selId && proposals.length > 0) {
+            // Auto-show first proposal when no selection and no article yet
+            showSelectedArticle(proposals[0]);
         }
 
         // Render pipeline status bar if available
@@ -4098,6 +3845,99 @@ function showSelectedArticle(proposal) {
     panel._proposal = proposal;
 
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Show final written article (dict format: {title, sections[], word_count, references[]}) */
+function showFinalArticle(fa) {
+    const panel = document.getElementById('selectedArticle');
+    if (!panel) return;
+    panel.style.display = '';
+
+    // Support both dict and string formats
+    const article = (typeof fa === 'string') ? tryParseJSON(fa) : fa;
+    const title = article.title || fa.title || 'Статья без заголовка';
+    const wc = article.word_count || fa.word_count || '?';
+    const refs = article.references || fa.references || [];
+    const sections = article.sections || fa.sections || [];
+    const text = article.text || fa.text || '';
+
+    // If we have structured sections, render rich; otherwise render plain text
+    let bodyHtml = '';
+    if (sections.length > 0) {
+        bodyHtml = sections.map(s => `
+            <div style="margin-bottom:20px">
+                <h4 style="margin:0 0 8px;font-size:15px;color:var(--text);border-bottom:1px solid var(--border-subtle);padding-bottom:4px">
+                    ${escapeHtml(s.heading || '')}
+                </h4>
+                <div style="line-height:1.75;color:var(--text-secondary);font-size:14px;white-space:pre-wrap">${formatArticleContent(s.content || '')}</div>
+            </div>
+        `).join('');
+    } else if (text) {
+        // text may be double-JSON-encoded string
+        const parsed = typeof text === 'string' ? tryParseJSON(text) : text;
+        if (parsed && parsed.sections) {
+            bodyHtml = parsed.sections.map(s => `
+                <div style="margin-bottom:20px">
+                    <h4 style="margin:0 0 8px;font-size:15px;color:var(--text);border-bottom:1px solid var(--border-subtle);padding-bottom:4px">
+                        ${escapeHtml(s.heading || '')}
+                    </h4>
+                    <div style="line-height:1.75;color:var(--text-secondary);font-size:14px;white-space:pre-wrap">${formatArticleContent(s.content || '')}</div>
+                </div>
+            `).join('');
+        } else {
+            bodyHtml = `<div style="line-height:1.75;color:var(--text-secondary);font-size:14px;white-space:pre-wrap">${formatArticleContent(typeof parsed === 'string' ? parsed : text)}</div>`;
+        }
+    }
+
+    panel.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+            <h3 style="margin:0;font-size:17px">📄 ${escapeHtml(title)}</h3>
+            <span style="display:flex;gap:12px;font-size:13px;color:var(--text-secondary)">
+                <span>✍️ <strong>${wc}</strong> слов</span>
+                <span>📚 <strong>${refs.length}</strong> источников</span>
+                <span class="article-badge article-written">Написана</span>
+            </span>
+        </div>
+        <div class="detail-tabs">
+            <span class="detail-tab active" onclick="switchFinalTab('article', this)">📖 Статья</span>
+            <span class="detail-tab" onclick="switchFinalTab('sources', this)">Источники (${refs.length})</span>
+        </div>
+        <div id="finalArticleBody">
+            ${bodyHtml || '<p style="color:var(--text-muted)">Пустая статья</p>'}
+        </div>
+        <div id="finalArticleRefs" style="display:none">
+            ${refs.length ? refs.map((r, i) => `<div style="padding:6px 0;font-size:13px;border-bottom:1px solid var(--border-subtle)"><strong>${i+1}.</strong> ${escapeHtml(typeof r === 'string' ? r : (r.title || r.doi || JSON.stringify(r)))}</div>`).join('') : '<p style="color:var(--text-muted)">Нет источников</p>'}
+        </div>
+    `;
+
+    // Store for tab switching
+    panel._finalArticle = article;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Switch tabs in final article view */
+function switchFinalTab(tabName, btnEl) {
+    document.querySelectorAll('#selectedArticle .detail-tab').forEach(t => t.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    document.getElementById('finalArticleBody').style.display = tabName === 'article' ? '' : 'none';
+    document.getElementById('finalArticleRefs').style.display = tabName === 'sources' ? '' : 'none';
+}
+
+/** Safely parse JSON, return null on failure */
+function tryParseJSON(str) {
+    try { return JSON.parse(str); } catch { return null; }
+}
+
+/** Format article content: basic markdown → HTML */
+function formatArticleContent(text) {
+    if (!text) return '';
+    return escapeHtml(text)
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>')
+        .replace(/^### (.+)$/gm, '<h5 style="margin:12px 0 4px;font-size:14px">$1</h5>')
+        .replace(/^## (.+)$/gm, '<h4 style="margin:12px 0 4px;font-size:15px">$1</h4>')
+        .replace(/\n/g, '<br>');
 }
 
 /** Switch detail tabs */
@@ -4355,7 +4195,7 @@ async function pollPipelineJob(jobId, targetState, maxWaitSec=120) {
             const data = job.detail || job;
             const state = data.state;
             
-            if (state !== 'editing' && state !== 'developing' && state !== 'writing' && state !== 'reviewing') {
+            if (state !== 'editing' && state !== 'developing' && state !== 'writing' && state !== 'reviewing' && state !== 'written') {
                 currentPipelineState = state;
                 renderPipelineStatusBar(state);
                 
@@ -4379,40 +4219,87 @@ async function pollPipelineJob(jobId, targetState, maxWaitSec=120) {
 async function sendForDevelopment(propId) {
     const comment = document.getElementById('developComment')?.value.trim();
     if (!currentEditorJobId || !propId) { toast('Ошибка: отсутствует job или proposal', 'error'); return; }
+
+    // ── Immediate UI feedback ──
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Читает...'; }
+    document.getElementById('editorProgressBar').style.width = '60%';
+    document.getElementById('editorPct').textContent = '60%';
+    document.getElementById('editorPhase').textContent = 'Reader Agent работает...';
+
+    LogDrawer.phase('═══ Фаза 3: Developing (Reader Agent) ═══');
+    LogDrawer.step('Запуск Reader Agent → чтение источников...');
+    LogDrawer.setStatus('running');
+
     try {
-        toast('Отправка на доработку Reader Agent...', 'info', 5000);
-        const result = await api(`/pipeline/${currentEditorJobId}/develop`, 'POST', { user_feedback: comment || '' });
+        toast('📖 Отправка на доработку Reader Agent...', 'info', 5000);
+        const result = await api(`/pipeline/jobs/${currentEditorJobId}/develop`, 'POST', { user_feedback: comment || '' });
         if (result.error) throw new Error(result.error);
         currentPipelineState = result.state || 'developing';
-        toast('✅ Доработка запущена! Reader Agent анализирует источники...', 'success', 4000);
-        pollPipelineJob(currentEditorJobId);
-    } catch(e) { toast('❌ Ошибка доработки: ' + e.message, 'error'); }
+        toast(`📚 Доработка запущена (state: ${result.state})...`, 'success', 4000);
+    } catch(e) {
+        toast('❌ Ошибка доработки: ' + e.message, 'error');
+        LogDrawer.error('Develop failed: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '📤 Отправить на доработку'; }
+    }
 }
 
 /** Finalize / write article */
 async function finalizeArticle(propId) {
     if (!currentEditorJobId) { toast('Ошибка: отсутствует job ID', 'error'); return; }
+
+    // ── Immediate UI feedback ──
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Пишет...'; }
+    document.getElementById('editorProgressBar').style.width = '80%';
+    document.getElementById('editorPct').textContent = '80%';
+    document.getElementById('editorPhase').textContent = 'Написание статьи...';
+
+    LogDrawer.phase('═══ Фаза 4: Writing (Writer Agent) ═══');
+    LogDrawer.step('Запуск Writer Agent → генерация финальной статьи...');
+    LogDrawer.setStatus('running');
+
     try {
-        toast('Запуск Writer Agent...', 'info', 5000);
-        const result = await api(`/pipeline/${currentEditorJobId}/write`, 'POST');
+        toast('✍️ Writer Agent пишет статью...', 'info', 5000);
+        const result = await api(`/pipeline/jobs/${currentEditorJobId}/write`, 'POST');
         if (result.error) throw new Error(result.error);
         currentPipelineState = result.state || 'writing';
-        toast('✅ Writer Agent пишет статью...', 'success', 4000);
-        pollPipelineJob(currentEditorJobId);
-    } catch(e) { toast('❌ Ошибка написания: ' + e.message, 'error'); }
+        toast(`📝 Статья пишется (state: ${result.state})...`, 'success', 4000);
+        // Don't start a new poller — startEditorPolling (setInterval) is already running
+        // It will detect state transition and update UI + LogDrawer
+    } catch(e) {
+        toast('❌ Ошибка написания: ' + e.message, 'error');
+        LogDrawer.error('Write failed: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '✍️ Написать статью'; }
+    }
 }
 
 /** Send for review */
 async function reviewArticle(propId) {
     if (!currentEditorJobId) { toast('Ошибка: отсутствует job ID', 'error'); return; }
+
+    // ── Immediate UI feedback ──
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Ревью...'; }
+    document.getElementById('editorProgressBar').style.width = '90%';
+    document.getElementById('editorPct').textContent = '90%';
+    document.getElementById('editorPhase').textContent = 'Ревью статьи...';
+
+    LogDrawer.phase('═══ Фаза 5: Reviewing (Reviewer Agent) ═══');
+    LogDrawer.step('Запуск Reviewer Agent → факт-чекинг статьи...');
+    LogDrawer.setStatus('running');
+
     try {
-        toast('Запуск Reviewer Agent...', 'info', 5000);
-        const result = await api(`/pipeline/${currentEditorJobId}/review`, 'POST');
+        toast('👀 Reviewer Agent проверяет статью...', 'info', 5000);
+        const result = await api(`/pipeline/jobs/${currentEditorJobId}/review`, 'POST');
         if (result.error) throw new Error(result.error);
         currentPipelineState = result.state || 'reviewing';
-        toast('✅ Ревью запущено...', 'success', 4000);
-        pollPipelineJob(currentEditorJobId);
-    } catch(e) { toast('❌ Ошибка ревью: ' + e.message, 'error'); }
+        toast(`🔍 Ревью запущено (state: ${result.state})...`, 'success', 4000);
+    } catch(e) {
+        toast('❌ Ошибка ревью: ' + e.message, 'error');
+        LogDrawer.error('Review failed: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '👀 Отправить на ревью'; }
+    }
 }
 
 /* ── Pipeline Polling & Status Bar ── */
@@ -4446,9 +4333,9 @@ function pollPipelineJob(jobId, maxPolls = 60) {
 function updatePipelineStatusBar(state) {
     const bar = document.getElementById('pipelineStatusBar');
     if (!bar) return;
-    const steps = ['editing','selecting','developing','writing','reviewing','done'];
+    const steps = ['editing','selecting','developing','writing','written','reviewing','done'];
     const idx = steps.indexOf(state);
-    const labels = {editing:'🔍 Анализ',selecting:'📋 Выбор',developing:'📖 Чтение',writing:'✍️ Написание',reviewing:'👀 Ревью',done:'✅ Готово'};
+    const labels = {editing:'🔍 Анализ',selecting:'📋 Выбор',developing:'📖 Чтение',writing:'✍️ Написание',written:'📄 Готово',reviewing:'👀 Ревью',done:'✅ Готово'};
     bar.innerHTML = steps.map((s,i) =>
         `<span style="padding:4px 10px;border-radius:12px;font-size:11px;font-weight:${i<=idx?'600':'400'};background:${i<idx?'var(--success)':i===idx?'var(--accent)':'var(--bg-elevated)'};color:${i<=idx?'#fff':'var(--text-muted)'};margin-right:4px;transition:all .3s">${labels[s]||s}</span>`
     ).join('');
@@ -4753,16 +4640,6 @@ function focusNodeInGraph(doi) {
     }
 }
 
-/** Toggle Scout collapsible section */
-function toggleScoutCollapse() {
-    const inner = document.getElementById('scoutInner');
-    const arrow = document.getElementById('scoutArrow');
-    if (!inner) return;
-    const hidden = inner.style.display === 'none';
-    inner.style.display = hidden ? '' : 'none';
-    if (arrow) arrow.classList.toggle('open', hidden);
-}
-
 /** Load editor + pipeline jobs history into table */
 async function loadEditorHistory() {
     try {
@@ -4853,6 +4730,247 @@ function escapeHtml(s) {
     div.appendChild(document.createTextNode(s), 'error');
     return div.innerHTML;
 }
+
+// ════════════════════════════════════════════════
+//  BOTTOM LOG DRAWER
+// ════════════════════════════════════════════════
+
+const LogDrawer = (function() {
+    const drawer = () => document.getElementById('logDrawer');
+    const body = () => document.getElementById('logDrawerBody');
+    const dot = () => document.getElementById('logDrawerDot');
+    const statusText = () => document.getElementById('logDrawerStatus');
+    const counter = () => document.getElementById('logDrawerCounter');
+    const filter = () => document.getElementById('logDrawerFilter');
+    const search = () => document.getElementById('logDrawerSearch');
+
+    let logs = [];           // all log entries {type, text, timestamp}
+    let isCollapsed = false;
+    let isMaximized = false;
+    let autoScroll = true;
+
+    function _ts() {
+        const d = new Date();
+        return d.toTimeString().substring(0, 12);
+    }
+
+    function _esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function _updateCounter(visible) {
+        counter().textContent = (visible !== undefined ? visible : logs.length) + ' lines';
+    }
+
+    /** Add a log entry */
+    function add(type, text) {
+        logs.push({ type, text, ts: _ts() });
+        _renderNew();
+    }
+
+    /** Convenience methods */
+    function phase(text)   { add('phase',   text); }
+    function step(text)    { add('step',    text); }
+    function info(text)    { add('info',    text); }
+    function success(text) { add('success', text); }
+    function warn(text)    { add('warn',    text); }
+    function error(text)   { add('error',   text); }
+    function data(text)    { add('data',    text); }
+
+    /** Set status indicator */
+    function setStatus(status) {
+        const d = dot();
+        d.className = 'log-drawer__status-dot log-drawer__status-dot--' + status;
+        statusText().textContent = status;
+    }
+
+    /** Render only the latest entry (fast append) */
+    function _renderNew() {
+        if (isCollapsed) { _updateCounter(); return; }
+        const entry = logs[logs.length - 1];
+        const bodyEl = body();
+
+        // Remove empty state on first entry
+        if (logs.length === 1) {
+            bodyEl.innerHTML = '';
+        }
+
+        const line = document.createElement('div');
+        line.className = 'ld-line ld-line--' + entry.type;
+        line.dataset.type = entry.type;
+        line.innerHTML = `<span class="ld-line--time">${_esc(entry.ts)}</span>${_esc(entry.text)}`;
+        line.dataset.fullText = entry.text.toLowerCase();
+
+        // Apply current filter
+        const f = filter().value;
+        const q = search().value.toLowerCase();
+        const show = (f === 'all' || entry.type === f || (f === 'phase' && entry.type === 'step')) &&
+                     (!q || entry.text.toLowerCase().includes(q));
+        line.style.display = show ? '' : 'none';
+
+        bodyEl.appendChild(line);
+        _updateCounter();
+
+        if (autoScroll && show) {
+            bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+    }
+
+    /** Re-render all lines (for filter/search changes) */
+    function _rerenderAll() {
+        const bodyEl = body();
+        const f = filter().value;
+        const q = search().value.toLowerCase();
+
+        let visibleCount = 0;
+        const lines = bodyEl.querySelectorAll('.ld-line');
+        lines.forEach(line => {
+            const type = line.dataset.type;
+            const fullText = line.dataset.fullText || '';
+            const show = (f === 'all' || type === f || (f === 'phase' && type === 'step')) &&
+                         (!q || fullText.includes(q));
+            line.style.display = show ? '' : 'none';
+            if (show) visibleCount++;
+        });
+
+        _updateCounter(visibleCount);
+
+        // Show "no matches" message
+        const noMatch = bodyEl.querySelector('.ld-no-match');
+        if (visibleCount === 0 && logs.length > 0) {
+            if (!noMatch) {
+                const el = document.createElement('div');
+                el.className = 'ld-empty ld-no-match';
+                el.textContent = 'Нет совпадений';
+                bodyEl.appendChild(el);
+            }
+        } else if (noMatch) {
+            noMatch.remove();
+        }
+    }
+
+    /** Filter by type / search */
+    function applyFilter() {
+        _rerenderAll();
+    }
+
+    /** Clear all logs */
+    function clear() {
+        logs = [];
+        body().innerHTML = '<div class="ld-empty">Ожидание запуска pipeline...</div>';
+        _updateCounter(0);
+        setStatus('idle');
+    }
+
+    /** Toggle collapse/expand */
+    function toggle() {
+        const el = drawer();
+        isMaximized = false;
+
+        if (isCollapsed) {
+            el.classList.remove('collapsed', 'log-drawer--maximized');
+            el.classList.add('log-drawer--open');
+            document.body.classList.remove('log-drawer-collapsed');
+            document.body.classList.add('log-drawer-open');
+            isCollapsed = false;
+        } else {
+            el.classList.remove('log-drawer--open', 'log-drawer--maximized');
+            el.classList.add('collapsed');
+            document.body.classList.remove('log-drawer-open');
+            document.body.classList.add('log-drawer-collapsed');
+            isCollapsed = true;
+        }
+    }
+
+    /** Maximize to 60vh */
+    function maximize() {
+        const el = drawer();
+        isCollapsed = false;
+        isMaximized = !isMaximized;
+
+        if (isMaximized) {
+            el.classList.remove('collapsed', 'log-drawer--open');
+            el.classList.add('log-drawer--maximized');
+            document.body.classList.remove('log-drawer-collapsed');
+            document.body.style.paddingBottom = '60vh';
+        } else {
+            el.classList.remove('log-drawer--maximized', 'collapsed');
+            el.classList.add('log-drawer--open');
+            document.body.classList.add('log-drawer-open');
+            document.body.classList.remove('log-drawer-collapsed');
+            document.body.style.paddingBottom = '';
+        }
+    }
+
+    /** Open drawer (ensure expanded) */
+    function open() {
+        if (isCollapsed) toggle();
+        if (isMaximized) maximize(); // un-maximize first
+    }
+
+    /** Close drawer (always collapse, no toggle) */
+    function close() {
+        const el = drawer();
+        isMaximized = false;
+        if (!isCollapsed) {
+            el.classList.remove('log-drawer--open', 'log-drawer--maximized');
+            el.classList.add('collapsed');
+            document.body.classList.remove('log-drawer-open');
+            document.body.classList.add('log-drawer-collapsed');
+            document.body.style.paddingBottom = '';
+            isCollapsed = true;
+        }
+    }
+
+    /** Get total entries count */
+    function count() { return logs.length; }
+
+    return { add, phase, step, info, success, warn, error, data, setStatus,
+             clear, toggle, maximize, open, close, count, applyFilter };
+})();
+
+// Global wrappers for onclick handlers
+function toggleLogDrawer() { LogDrawer.toggle(); }
+function maximizeLogDrawer() { LogDrawer.maximize(); }
+function closeLogDrawer() { LogDrawer.close(); }
+function clearLogDrawer() { LogDrawer.clear(); }
+function filterLogLines() { LogDrawer.applyFilter(); }
+
 </script>
+
+<!-- ═══ Bottom Log Drawer ═══ -->
+<div id="logDrawer" class="log-drawer log-drawer--open">
+    <!-- Header (click to collapse/expand) -->
+    <div class="log-drawer__header" onclick="toggleLogDrawer()" id="logDrawerHeader">
+        <span class="log-drawer__status-dot log-drawer__status-dot--idle" id="logDrawerDot"></span>
+        <span class="log-drawer__title">LOGS</span>
+        <span class="log-drawer__status-text" id="logDrawerStatus">idle</span>
+        <span class="log-drawer__counter" id="logDrawerCounter">0 lines</span>
+        <button class="log-drawer__ctrl-btn" onclick="event.stopPropagation(); maximizeLogDrawer()" title="Развернуть на весь экран">⤢</button>
+        <button class="log-drawer__ctrl-btn" onclick="event.stopPropagation(); closeLogDrawer()" title="Закрыть панель">✕</button>
+    </div>
+
+    <!-- Toolbar (visible when expanded) -->
+    <div class="log-drawer__toolbar" id="logDrawerToolbar">
+        <select class="log-drawer__filter" id="logDrawerFilter" onchange="filterLogLines()">
+            <option value="all">все фазы</option>
+            <option value="phase">фазы</option>
+            <option value="step">шаги</option>
+            <option value="data">данные</option>
+            <option value="success">успех</option>
+            <option value="warn">предупреждения</option>
+            <option value="error">ошибки</option>
+        </select>
+        <input type="text" class="log-drawer__search" id="logDrawerSearch" placeholder="поиск по тексту..." oninput="filterLogLines()">
+        <button class="log-drawer__clear-btn" onclick="clearLogDrawer()">очистить</button>
+    </div>
+
+    <!-- Content area -->
+    <div class="log-drawer__body" id="logDrawerBody">
+        <div class="ld-empty">Ожидание запуска pipeline...</div>
+    </div>
+</div>
 </body>
 </html>

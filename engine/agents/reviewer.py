@@ -470,24 +470,42 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
         Returns:
             Str formatted instructions for Writer
         """
+        # Normalize: accept both ReviewedDraft and plain dict
+        if isinstance(reviewed, dict):
+            round_num = reviewed.get('round_number', 1)
+            verdict_val = reviewed.get('verdict', 'NEEDS_REVISION')
+            if hasattr(verdict_val, 'value'):
+                verdict_val = verdict_val.value
+            score = reviewed.get('overall_score', reviewed.get('score', 0.0)) or 0.0
+            edits = reviewed.get('edits', [])
+            score_by_cat = reviewed.get('score_by_category', {})
+            suggestions = reviewed.get('improvement_suggestions', [])
+        else:
+            round_num = getattr(reviewed, 'round_number', 1)
+            verdict_val = reviewed.verdict.value if hasattr(reviewed.verdict, 'value') else str(reviewed.verdict)
+            score = getattr(reviewed, 'overall_score', 0.0) or 0.0
+            edits = getattr(reviewed, 'edits', [])
+            score_by_cat = getattr(reviewed, 'score_by_category', {})
+            suggestions = getattr(reviewed, 'improvement_suggestions', [])
+
         parts = [
-            f"=== REVISION INSTRUCTIONS (Review Round {reviewed.round_number}) ===",
-            f"Verdict: {reviewed.verdict.value}",
-            f"Overall Score: {reviewed.overall_score:.2f}",
+            f"=== REVISION INSTRUCTIONS (Review Round {round_num}) ===",
+            f"Verdict: {verdict_val}",
+            f"Overall Score: {score:.2f}",
             "",
         ]
 
         # Category scores
-        if reviewed.score_by_category:
+        if score_by_cat:
             parts.append("SCORES BY CATEGORY:")
-            for cat, cat_score in reviewed.score_by_category.items():
+            for cat, cat_score in score_by_cat.items():
                 parts.append(f"  {cat}: {cat_score:.2f}")
             parts.append("")
 
         # Critical & Major edits first (actionable items)
-        critical_edits = [e for e in reviewed.edits if e.severity == Severity.CRITICAL]
-        major_edits = [e for e in reviewed.edits if e.severity == Severity.MAJOR]
-        minor_edits = [e for e in reviewed.edits if e.severity == Severity.MINOR]
+        critical_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.CRITICAL if hasattr(e, 'severity') else e.get('severity') == 'critical')]
+        major_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.MAJOR if hasattr(e, 'severity') else e.get('severity') == 'major')]
+        minor_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.MINOR if hasattr(e, 'severity') else e.get('severity') == 'minor')]
 
         if critical_edits:
             parts.append("CRITICAL ISSUES (MUST FIX):")
@@ -518,14 +536,15 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             parts.append("")
 
         # Improvement suggestions
-        if reviewed.improvement_suggestions:
+        if suggestions:
             parts.append("GENERAL IMPROVEMENT SUGGESTIONS:")
-            for s in reviewed.improvement_suggestions:
+            for s in suggestions:
                 parts.append(f"  - {s}")
             parts.append("")
 
         # Fact check problems
-        failed_facts = [fc for fc in reviewed.fact_checks if not fc.verified]
+        fact_checks = reviewed.get('fact_checks', []) if isinstance(reviewed, dict) else getattr(reviewed, 'fact_checks', [])
+        failed_facts = [fc for fc in fact_checks if not (getattr(fc, 'verified', True) if hasattr(fc, 'verified') else fc.get('verified', True))]
         if failed_facts:
             parts.append("FACT-CHECK FAILURES (verify or correct):")
             for fc in failed_facts:
@@ -537,8 +556,9 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             parts.append("")
 
         # Summary
-        if reviewed.summary:
-            parts.append(f"REVIEWER SUMMARY:\n{reviewed.summary}")
+        summary = reviewed.get('summary', '') if isinstance(reviewed, dict) else getattr(reviewed, 'summary', '')
+        if summary:
+            parts.append(f"REVIEWER SUMMARY:\n{summary}")
 
         return "\n".join(parts)
 

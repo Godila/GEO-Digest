@@ -121,5 +121,13 @@ class LLMCallMixin:
             dict/list if parse_json=True
         """
         if parse_json:
-            return self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)
+            raw = self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)
+            if isinstance(raw, str):
+                import json
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
+                    self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")
+                    return raw
+            return raw
         return self.llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)

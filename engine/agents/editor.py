@@ -301,6 +301,16 @@ class EditorAgent:
             )
             raw_proposals = parse_proposals_from_text(synthesize_result.content)
 
+            # Critical: warn if synthesize produced nothing
+            if not raw_proposals:
+                logger.warning(
+                    "[editor] %s Synthesize returned 0 proposals! "
+                    "content_len=%d, content_preview=%s",
+                    state.job_id,
+                    len(synthesize_result.content),
+                    synthesize_result.content[:300] + ("..." if len(synthesize_result.content) > 300 else "")
+                )
+
             # ════════════════════════════════════════════
             # PHASE 3: VALIDATE (Python, ~1 sec)
             # ════════════════════════════════════════════
@@ -654,6 +664,23 @@ class EditorAgent:
         # Gap hypotheses
         gaps = self._extract_gaps(text)
 
+        # ── Generate findings text if content was empty (max_rounds bug) ──
+        if not text or len(text.strip()) < 20:
+            # Build findings from tool call history
+            parts = [f"Исследование завершено (анализ {len(result.tool_calls_made)} tool-вызовов)."]
+            if all_found:
+                parts.append(f"Найдено релевантных статей: {len(all_found)}.")
+            if explored_dois:
+                parts.append(f"Детально изучено: {len(explored_dois)} статей.")
+            if additional_queries:
+                parts.append(f"Выполнено поисковых запросов: {len(additional_queries)}.")
+            parts.append(f"Оценка материала: {sufficiency}.")
+            text = "\n".join(parts)
+            logger.info(
+                "[editor] Discovery content was empty, generated from %d tool calls",
+                len(result.tool_calls_made),
+            )
+
         return DiscoveryReport(
             key_findings=text[:2000],  # Truncate very long findings
             selected_dois=list(all_found),
@@ -676,7 +703,11 @@ class EditorAgent:
         evidence: EvidencePack,
         temperature: float,
     ) -> ToolUseResult:
-        """Run LLM synthesize phase: form proposals based on discovery."""
+        """Run LLM synthesize phase: form proposals based on discovery.
+
+        Uses direct LLM call (no tools) — LLM has all context from discovery report.
+        This avoids the 'empty content' bug when ToolUseLoop hits max_rounds.
+        """
         hint = discovery.proposal_count_hint
 
         user_msg = (
@@ -696,13 +727,59 @@ class EditorAgent:
         prompt += f"- Используй ТОЛЬКО DOI из списка selected_dois выше\n"
         prompt += f"- Отвечай ТОЛЬКО на русском языке\n"
 
-        result = self._make_loop(SYNTHESIZE_MAX_ROUNDS).run(
-            user_message=user_msg,
-            system_prompt=prompt,
-            temperature=temperature,
-            max_tokens=4096,
-        )
-        return result
+        # Direct LLM call — no tools, single round, guaranteed text response
+        try:
+            response = self.llm.complete(
+                prompt=user_msg,
+                system=prompt,
+                temperature=temperature,
+                max_tokens=4096,
+            )
+
+            # Log raw response for debugging (critical for format issues)
+            logger.info(
+                "[editor] Synthesize RAW response (%d chars): %s",
+                len(str(response)),
+                str(response)[:500] + ("..." if len(str(response)) > 500 else "")
+            )
+            # Handle different response formats
+            if isinstance(response, dict):
+                content = response.get("content", "")
+                if isinstance(content, list):
+                    # Content blocks format — extract text
+                    parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get("type") == "text":
+                                parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    content = "\n".join(parts)
+                usage = response.get("usage", {})
+            elif isinstance(response, str):
+                content = response
+                usage = {}
+            else:
+                content = str(response)
+                usage = {}
+
+            return ToolUseResult(
+                content=content or "",
+                tool_calls_made=[],
+                total_rounds=1,
+                stop_reason="end_turn",
+                usage=usage,
+            )
+        except Exception as e:
+            logger.warning("[editor] Synthesize direct call failed, fallback: %s", e)
+            # Fallback to ToolUseLoop if direct call fails
+            result = self._make_loop(SYNTHESIZE_MAX_ROUNDS).run(
+                user_message=user_msg,
+                system_prompt=prompt,
+                temperature=temperature,
+                max_tokens=4096,
+            )
+            return result
 
     def _format_synthesis_context(self, discovery: DiscoveryReport, evidence: EvidencePack) -> str:
         """Format discovery report + enriched article details for synthesis prompt."""

@@ -1,14 +1,17 @@
-"""Scout Agent -- poisk i gruppirovka statey po potentsialu. (Sprint 2)
+"""Scout Agent — search, score, and group articles by publication potential.
 
-Logika:
-1. Poluchaet topic ot polzovatelya / orchestrator'a
-2. Ishchet stat'i v storage ili zapuskaet svezhiy poisk
-3. Otpravlyaet top-N kandidatov v LLM dlya klassifikatsii
-4. Gruppiruet po tipu potentsiala: REPLICATION / REVIEW / DATA_PAPER
-5. Vozvrashchaet ScoutResult s ranzhirovannymi gruppami
+Pipeline v2 integration:
+1. Receives topic from orchestrator
+2. Searches articles in storage and/or fresh APIs
+3. Scores each article using engine.scoring (6 criteria)
+4. Filters by relevance threshold
+5. Sends top-N candidates to LLM for classification
+6. Returns ScoutResult with ranked groups + score metadata
 """
 
 from __future__ import annotations
+
+import logging
 
 from engine.agents.base import BaseAgent, LLMCallMixin
 from engine.agents.tools import AgentTools
@@ -18,24 +21,26 @@ from engine.schemas import (
     ScoutResult, AgentResult,
 )
 
-# ── Prompty ────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
-SCOUT_SYSTEM_PROMPT = """Ty -- nauchnyy redaktor geo-ekologicheskogo digest'a.
-Analiziruesh stat'i i opredelyaesh ikh potentsial dlya pisaniya novykh rabot.
+# ── Prompts ────────────────────────────────────────────────
 
-Klassifitsiruy kazhduyu stat'yu po tipu:
-- REPLICATION: metod mozhno vosproizvesti na drugikh dannykh/regionakh
-- REVIEW: gruppa statey dlya obzornoy stat'i
-- DATA_PAPER: dataset kak samostoyatel'nyy resurs
+SCOUT_SYSTEM_PROMPT = """Ты — научный редактор гео-экологического дайджеста.
+Анализируешь статьи и определяешь их потенциал для написания новых работ.
 
-Otchay strogo v JSON format:
+Классифицируй каждую статью по типу:
+- REPLICATION: метод можно воспроизвести на других данных/регионах
+- REVIEW: группа статей для обзорной статьи
+- DATA_PAPER: датасет как самостоятельный ресурс
+
+Ответ строго в JSON формате:
 {
   "articles": [
     {
       "doi": "...",
       "group_type": "REPLICATION|REVIEW|DATA_PAPER",
       "confidence": 0.0-1.0,
-      "rationale": "kratkoe obosnovanie",
+      "rationale": "краткое обоснование",
       "tags": ["tag1", "tag2"],
       "data_requirements": {...},
       "infrastructure_needs": {...}
@@ -46,22 +51,25 @@ Otchay strogo v JSON format:
 SCOUT_CLASSIFY_PROMPT = """Topic: {topic}
 Count: {count}
 
-Articles:
+Articles (pre-filtered by relevance scoring):
 {articles_text}
 
-Dlya kazhdoy stat'i opredi:
-1. group_type -- kakoy potentsial vidish'
-2. confidence -- uverennost' (0-1)
-3. rationale -- pochemu tak reshil (1-2 predlozheniya)
-4. tags -- 3-5 klyuchevykh tegov
+Для каждой статьи определи:
+1. group_type — какой потенциал видишь
+2. confidence — уверенность (0-1)
+3. rationale — почему так решил (1-2 предложения)
+4. tags — 3-5 ключевых тегов
 
-Dlya REPLICATION ukazhi:
-- data_requirements: kakie dannye nuzhny dlya vosproizvedeniya
-- infrastructure_needs: PO, zhelezo, vychislitel'nye resursy"""
+Для REPLICATION укажи:
+- data_requirements: какие данные нужны для воспроизведения
+- infrastructure_needs: ПО, железо, вычислительные ресурсы"""
 
 
 class ScoutAgent(BaseAgent, LLMCallMixin):
-    """Nakhodit i gruppiruet stat'i po potentsialu publikatsii."""
+    """Finds and groups articles by publication potential.
+
+    v2: Enriches candidates with engine.scoring before LLM classification.
+    """
 
     @property
     def name(self) -> str:
@@ -73,30 +81,46 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         max_articles: int = 20,
         mode: str = "storage",
         min_confidence: float = 0.5,
+        min_score_5: float = 2.5,
+        topic_query_text: str = "",
         **kwargs,
     ) -> AgentResult:
-        """Zapustit' skauting."""
-        self._log(f"Skauting nachat: topic={topic}, mode={mode}, max={max_articles}")
+        """Run scouting pipeline.
+
+        Args:
+            topic: Search topic
+            max_articles: Max articles to return
+            mode: "storage", "fresh", or "mixed"
+            min_confidence: Min LLM classification confidence (0-1)
+            min_score_5: Min scoring engine score (0-5 scale, default 2.5)
+            topic_query_text: Query text for relevance scoring boost
+        """
+        self._log(f"Scout started: topic={topic}, mode={mode}, max={max_articles}, min_score={min_score_5}")
 
         try:
-            articles = self._collect_candidates(topic, max_articles, mode)
+            # Phase 1: Collect + Score
+            articles, scored_count = self._collect_and_score(
+                topic, max_articles, mode, min_score_5, topic_query_text
+            )
             if not articles:
                 return AgentResult(
                     agent_name=self.name,
                     success=False,
-                    error="Ne naydeno statey po zaprosu",
+                    error="Не найдено статей по запросу (после скоринга)",
                 )
 
-            self._log(f"Kandidatov: {len(articles)}")
+            self._log(f"After scoring filter: {len(articles)} (scored: {scored_count})")
+
+            # Phase 2: LLM Classification
             groups = self._classify_articles(topic, articles)
 
             high_conf = [g for g in groups if g.confidence >= min_confidence]
             high_conf.sort(key=lambda g: g.confidence, reverse=True)
-            self._log(f"Grup posle fil'tra: {len(high_conf)}")
+            self._log(f"Groups after confidence filter: {len(high_conf)}")
 
             result = ScoutResult(
                 topic=topic,
-                total_found=len(articles),
+                total_found=scored_count,
                 after_dedup=len(articles),
                 groups=high_conf,
             )
@@ -104,40 +128,100 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 agent_name=self.name, success=True, data=result,
             )
         except Exception as e:
-            self._log(f"Oshibka: {e}")
+            self._log(f"Error: {e}")
             return AgentResult(
                 agent_name=self.name, success=False, error=str(e),
             )
 
+    def _collect_and_score(
+        self,
+        topic: str,
+        max_articles: int,
+        mode: str,
+        min_score_5: float,
+        topic_query_text: str,
+    ) -> tuple[list[Article], int]:
+        """Collect articles, apply scoring engine, filter by relevance.
+
+        Returns:
+            (filtered_articles, total_scored_count)
+        """
+        tools = AgentTools(self.storage)
+        raw_articles = []
+
+        # Collect from storage / fresh search
+        if mode in ("storage", "mixed"):
+            stored = tools.search(topic, limit=max_articles * 3)  # oversample
+            raw_articles.extend(stored)
+            self._log(f"From storage: {len(stored)}")
+
+        if mode in ("fresh", "mixed") and len(raw_articles) < max_articles * 3:
+            remaining = max_articles * 3 - len(raw_articles)
+            self._log(f"Fresh search: need {remaining} more")
+            try:
+                fresh = tools.search_fresh(
+                    query=topic,
+                    limit=remaining,
+                    save_to_storage=True,
+                )
+                raw_articles.extend(fresh)
+                self._log(f"Fresh results: {len(fresh)}")
+            except Exception as e:
+                self._log(f"Fresh search failed: {e}")
+
+        if not raw_articles:
+            return [], 0
+
+        # Score with engine.scoring
+        total_scored = len(raw_articles)
+        try:
+            from engine.scoring import score_articles_batch
+            scored_dicts = score_articles_batch(
+                articles=[a.to_dict() if hasattr(a, 'to_dict') else dict(a.data) for a in raw_articles],
+                topic_query_text=topic_query_text or topic,
+                min_score_5=min_score_5,
+            )
+            # Convert back to Article objects with enriched data
+            filtered = [Article(d) for d in scored_dicts[:max_articles]]
+            self._log(f"Scoring: {total_scored} → {len(scored_dicts)} passed → {len(filtered)} returned")
+            return filtered, total_scored
+        except ImportError:
+            # Fallback: no scoring module — return raw
+            self._log("engine.scoring not available, skipping scoring filter")
+            return raw_articles[:max_articles], total_scored
+        except Exception as e:
+            logger.warning(f"[scout] Scoring failed: {e}, using unfiltered results")
+            return raw_articles[:max_articles], total_scored
+
     def _collect_candidates(
         self, topic: str, max_articles: int, mode: str
     ) -> list[Article]:
-        """Sobrat' stat'i iz storage i/ili svezhego poiska."""
+        """Legacy method — collect without scoring. Used by old pipeline v1."""
         tools = AgentTools(self.storage)
         articles = []
 
         if mode in ("storage", "mixed"):
             stored = tools.search(topic, limit=max_articles)
             articles.extend(stored)
-            self._log(f"Iz storage: {len(stored)}")
+            self._log(f"From storage: {len(stored)}")
 
         if mode in ("fresh", "mixed") and len(articles) < max_articles:
             remaining = max_articles - len(articles)
-            self._log(f"Svezhiy poisk: nuzhno eshche {remaining}")
+            self._log(f"Fresh search: need {remaining} more")
             fresh = tools.search_fresh(
                 query=topic,
                 limit=remaining,
                 save_to_storage=True,
             )
             articles.extend(fresh)
-            self._log(f"Po svezhemu poisku: {len(fresh)}")
+            self._log(f"Fresh results: {len(fresh)}")
 
         return articles[:max_articles]
 
     def _classify_articles(
         self, topic: str, articles: list[Article]
     ) -> list[ArticleGroup]:
-        """Otpravit' stat'i v LLM dlya klassifikatsii."""
+        """Send articles to LLM for classification."""
         if not articles:
             return []
 
@@ -151,6 +235,12 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 part += f"\n   Abstract: {abstract}"
             if art.doi:
                 part += f"\n   DOI: {art.doi}"
+            # Add score info if available
+            scores = art.get("scores", {})
+            if scores:
+                total_5 = scores.get("total_5", 0)
+                art_type = art.get("article_type", "")
+                part += f"\n   Score: {total_5:.1f}/5.0 | Type: {art_type}"
             parts.append(part)
 
         prompt = SCOUT_CLASSIFY_PROMPT.format(
@@ -170,11 +260,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
     def _parse_classification(
         self, raw: dict | list | str, original_articles: list[Article]
     ) -> list[ArticleGroup]:
-        """Parsim LLM-otvet v spisok ArticleGroup.
-        Podderzhivayem 2 formata ot LLM:
-        1) { "articles": [{ doi, group_type, confidence }] } -- flatspisk
-        2) { "groups": [{ group_id, articles: [...], confidence }] } -- gruppy
-        """
+        """Parse LLM response into ArticleGroup list."""
         import json as _json
         import re as _re
 
@@ -204,10 +290,8 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
 
                 # Fallback: find any JSON object
                 if isinstance(parsed, str):
-                    # Find balanced braces - from last { to matching }
                     start = text.rfind('{')
                     if start >= 0:
-                        # Try progressively smaller substrings from start
                         for end in range(len(text), start, -1):
                             try:
                                 candidate = text[start:end]
@@ -217,18 +301,17 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                                 continue
 
         if not isinstance(parsed, (dict, list)):
-            self._log(f"Neponyatnyy format: {type(parsed)}")
-            self._log(f"Raw response (first 500 chars): {str(raw)[:500]}")
+            self._log(f"Unclear format: {type(parsed)}")
             return self._fallback_groups(original_articles)
 
-        # ── Format 1: { "groups": [...] } ──
+        # Format 1: { "groups": [...] }
         if isinstance(parsed, dict) and "groups" in parsed:
             return self._parse_group_format(parsed.get("groups", []), original_articles)
 
-        # ── Format 2: { "articles": [...] } (original flat format) ──
+        # Format 2: { "articles": [...] }
         items = parsed.get("articles", []) if isinstance(parsed, dict) else parsed
         if not items:
-            self._log(f"Pustoy otvet ot LLM, ispol'zuyu fallback")
+            self._log("Empty LLM response, using fallback")
             return self._fallback_groups(original_articles)
 
         doi_map = {a.doi: a for a in original_articles if a.doi}
@@ -291,7 +374,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         # distribute original articles across groups
         total_arts = sum(len(g.articles) for g in groups)
         if total_arts == 0 and original_articles:
-            self._log(f"LLM vernul gruppy bez statey, raspredelyayu {len(original_articles)} statey")
+            self._log(f"LLM returned groups without articles, distributing {len(original_articles)}")
             for i, art in enumerate(original_articles):
                 target_group = groups[i % len(groups)] if groups else None
                 if target_group:
@@ -315,7 +398,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         )]
 
     def estimate_cost(self, topic: str, max_articles: int = 20) -> dict:
-        """Otsenit' stoimost' (tokeny)."""
+        """Estimate cost (tokens)."""
         est_input = 500 + (max_articles * 150)
         est_output = 200 + (max_articles * 80)
         return {
@@ -326,8 +409,8 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         }
 
     def validate_input(self, **kwargs) -> tuple[bool, str]:
-        """Validirovat' vhodnye parametry."""
+        """Validate input parameters."""
         topic = kwargs.get("topic", "")
         if not topic or len(topic.strip()) < 3:
-            return False, "topic dolzhen byt' ot 3 simvolov"
+            return False, "topic должен быть от 3 символов"
         return True, ""

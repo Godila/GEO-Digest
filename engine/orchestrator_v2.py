@@ -41,10 +41,12 @@ logger = logging.getLogger(__name__)
 class PipelineState(str, Enum):
     """Состояния pipeline job."""
     IDLE = "idle"
+    SCOUTING = "scouting"       # Scout ищет + скорит статьи
     EDITING = "editing"         # Editor работает (анализ + предложения)
     SELECTING = "selecting"     # Ждём выбор пользователя
     DEVELOPING = "developing"   # Итеративная доработка (Reader + feedback)
     WRITING = "writing"         # Writer генерирует финальную статью
+    WRITTEN = "written"         # Статья написана, ждёт ревью или доработки
     REVIEWING = "reviewing"     # Reviewer проверяет
     DONE = "done"
     FAILED = "failed"
@@ -89,6 +91,12 @@ class PipelineJob:
     total_review_rounds: int = 0
     forced_accept: bool = False
 
+    # Scout results (pre-editor filtering)
+    scout_result: Optional[dict] = None  # {total_found, scored_count, top_articles, warnings}
+
+    # User-specified group type (overrides heuristic in _resolve_group_type)
+    group_type: Optional[str] = None  # "review", "replication", "data_paper"
+
     # Metadata
     created_at: str = ""
     updated_at: str = ""
@@ -116,6 +124,7 @@ class EditorOrchestrator:
         self._reader = None
         self._writer = None
         self._reviewer = None
+        self._scout = None
 
     @property
     def editor(self):
@@ -149,37 +158,150 @@ class EditorOrchestrator:
             self._reviewer = ReviewerAgent()
         return self._reviewer
 
+    @property
+    def scout(self):
+        if self._scout is None:
+            from engine.agents.scout import ScoutAgent
+            sa = ScoutAgent()
+            sa.storage = self._storage
+            sa.llm = self._llm_provider
+            self._scout = sa
+        return self._scout
+
     # ── Job Lifecycle ──────────────────────────────────────
 
     def create_job(self, topic: str, domain: str = None,
-                   user_comment: str = None) -> PipelineJob:
-        """Создаёт новый pipeline job в состоянии EDITING."""
+                   user_comment: str = None,
+                   group_type: str = None) -> PipelineJob:
+        """Создаёт новый pipeline job в состоянии SCOUTING."""
         job = PipelineJob(
             job_id=self._gen_job_id(),
             topic=topic,
             domain=domain,
             user_comment=user_comment,
-            state=PipelineState.EDITING,
+            group_type=group_type,
+            state=PipelineState.SCOUTING,
             created_at=now_iso(),
             updated_at=now_iso(),
         )
         self._save_job(job)
         return job
 
+    def run_scout_phase(self, job: PipelineJob) -> PipelineJob:
+        """Запускает Scout Agent — поиск + скоринг + классификация статей.
+
+        Scout фильтрует статьи через scoring engine (6 критериев),
+        затем LLM-классифицирует по потенциалу публикации.
+        Результат сохраняется в job.scout_result для использования Editor'ом.
+        """
+        job.state = PipelineState.SCOUTING
+        job.updated_at = now_iso()
+        self._save_job(job)
+
+        try:
+            # Extract topic query text for relevance scoring
+            topic_query = ""
+            try:
+                from engine.config import get_config
+                cfg = get_config()
+                from engine.scoring import extract_topic_query_text
+                topic_query = extract_topic_query_text(cfg._raw if hasattr(cfg, '_raw') else {})
+            except Exception:
+                pass
+
+            result = self.scout.run(
+                topic=job.topic,
+                max_articles=30,
+                mode="mixed",
+                min_confidence=0.3,
+                min_score_5=2.0,
+                topic_query_text=topic_query,
+            )
+
+            if result.success and result.data:
+                scout_data = result.data  # ScoutResult
+                groups = scout_data.groups if hasattr(scout_data, 'groups') else []
+
+                # Build compact scout_result for job
+                top_articles = []
+                for g in groups[:10]:
+                    articles_data = []
+                    for a in (g.articles or [])[:5]:
+                        art_dict = a.to_dict() if hasattr(a, 'to_dict') else a.data if hasattr(a, 'data') else {}
+                        articles_data.append({
+                            "doi": art_dict.get("doi", ""),
+                            "title": art_dict.get("title", ""),
+                            "title_ru": art_dict.get("title_ru", ""),
+                            "score_5": art_dict.get("scores", {}).get("total_5", 0),
+                            "article_type": art_dict.get("article_type", ""),
+                        })
+                    top_articles.append({
+                        "group_id": g.group_id,
+                        "group_type": g.group_type.value if hasattr(g.group_type, 'value') else str(g.group_type),
+                        "confidence": g.confidence,
+                        "rationale": g.rationale,
+                        "articles": articles_data,
+                        "keywords": g.keywords or [],
+                    })
+
+                job.scout_result = {
+                    "total_found": scout_data.total_found if hasattr(scout_data, 'total_found') else 0,
+                    "after_dedup": scout_data.after_dedup if hasattr(scout_data, 'after_dedup') else 0,
+                    "groups_count": len(groups),
+                    "top_articles": top_articles,
+                }
+                logger.info(
+                    f"[orch] Scout done: {scout_data.total_found} found, "
+                    f"{len(groups)} groups, top article score: "
+                    f"{top_articles[0]['articles'][0]['score_5'] if top_articles and top_articles[0].get('articles') else 'N/A'}"
+                )
+            else:
+                # Scout failed — continue without scout data
+                job.scout_result = {
+                    "total_found": 0,
+                    "after_dedup": 0,
+                    "groups_count": 0,
+                    "top_articles": [],
+                    "warning": result.error or "Scout returned no results",
+                }
+                logger.warning(f"[orch] Scout failed: {result.error}, continuing without scout data")
+
+        except Exception as e:
+            # Graceful fallback — don't crash the pipeline
+            job.scout_result = {
+                "total_found": 0,
+                "after_dedup": 0,
+                "groups_count": 0,
+                "top_articles": [],
+                "warning": f"Scout error: {e}",
+            }
+            logger.warning(f"[orch] Scout phase error: {e}, continuing without scout data")
+
+        job.updated_at = now_iso()
+        self._save_job(job)
+        return job
+
     def run_editing_phase(self, job: PipelineJob) -> PipelineJob:
         """Запускает Editor Agent (анализ + генерация предложений).
 
-        После генерации proposals обогащает их данными из графа знаний
-        (centrality, bridges, hubs) если граф доступен.
+        Если есть scout_result — обогащает user_instruction Scout-данными
+        (топ-статьи, их scores, типы) чтобы Editor использовал их как приоритет.
         """
         job.state = PipelineState.EDITING
         self._save_job(job)
 
         try:
+            # Enrich user_instruction with Scout data if available
+            user_instruction = job.user_comment or ""
+            scout_hint = self._build_scout_hint(job)
+            if scout_hint:
+                user_instruction = f"{user_instruction}\n\n{scout_hint}" if user_instruction else scout_hint
+                logger.info(f"[orch] Enriched Editor with Scout data: {len(job.scout_result.get('top_articles', []))} groups")
+
             result = self.editor.run(
                 topic=job.topic,
                 domain=job.domain,
-                user_instruction=job.user_comment,
+                user_instruction=user_instruction,
             )
             # Сохраняем результат editor как dict
             job.editor_result = self._serialize_editor_result(result)
@@ -277,14 +399,34 @@ class EditorOrchestrator:
                     elif isinstance(r, dict) and r.get("doi"):
                         dois.append(r["doi"])
                 
-                draft_data = StructuredDraft(
-                    group_type=GroupType.DATA_PAPER,
-                    source_articles=dois,
-                    title_suggestion=proposal.get("title", job.topic),
-                    abstract_suggestion=proposal.get("thesis", ""),
-                    proposed_contribution=proposal.get("contribution", ""),
-                )
-                logger.info(f"[orch] Created synthetic draft from proposal ({len(dois)} DOIs)")
+                # Auto-invoke Reader for rich context (critical for article quality)
+                if dois:
+                    try:
+                        reader_result = self.reader.run(dois=dois, topic=job.topic)
+                        reader_draft = reader_result.data if hasattr(reader_result, 'data') else reader_result
+                        if hasattr(reader_draft, 'rich_context') and reader_draft.rich_context:
+                            draft_data = reader_draft
+                            # Ensure group_type is set correctly
+                            if not draft_data.group_type or draft_data.group_type == GroupType.REVIEW:
+                                draft_data.group_type = self._resolve_group_type(proposal, job)
+                            logger.info(f"[orch] Auto-invoked Reader: rich_context={len(draft_data.rich_context)} chars, {len(dois)} DOIs")
+                        else:
+                            logger.warning("[orch] Reader returned empty rich_context, falling back to synthetic draft")
+                            draft_data = None  # will create synthetic below
+                    except Exception as e:
+                        logger.warning(f"[orch] Reader auto-invocation failed: {e}, using synthetic draft")
+                        draft_data = None  # will create synthetic below
+                
+                # Fallback: synthetic draft without rich_context
+                if draft_data is None:
+                    draft_data = StructuredDraft(
+                        group_type=self._resolve_group_type(proposal, job),
+                        source_articles=dois,
+                        title_suggestion=proposal.get("title", job.topic),
+                        abstract_suggestion=proposal.get("thesis", ""),
+                        proposed_contribution=proposal.get("contribution", ""),
+                    )
+                    logger.info(f"[orch] Created synthetic draft from proposal ({len(dois)} DOIs, no rich_context)")
 
             result = self.writer.run(
                 draft=draft_data,
@@ -299,7 +441,8 @@ class EditorOrchestrator:
             if article is None:
                 raise ValueError("Writer returned None — no draft data available")
             job.final_article = self._serialize_article(article)
-            job.state = PipelineState.REVIEWING
+            job.state = PipelineState.WRITTEN
+            logger.info(f"[orch] Article written successfully (job {job.job_id}), state=written")
         except Exception as e:
             job.error = f"Writer error: {e}"
             job.state = PipelineState.FAILED
@@ -329,13 +472,35 @@ class EditorOrchestrator:
 
         job.state = PipelineState.REVIEWING
 
+        # ── Fallback: auto-write if article not yet generated ──
         if not job.final_article:
-            logger.warning(f"[orch] No article yet for review (job {job.job_id}, state={job.state})")
-            # Write phase may still be running — don't fail, just return
-            job.error = "Review called before article was written"
-            job.updated_at = now_iso()
-            self._save_job(job)
-            return job
+            proposal = self._get_selected_proposal(job)
+            if not proposal:
+                job.state = PipelineState.FAILED
+                job.error = "Невозможно запустить ревью: не выбран proposal и нет статьи"
+                job.updated_at = now_iso()
+                self._save_job(job)
+                return job
+
+            logger.info(f"[orch] Auto-fallback: no final_article, running write() before review (job {job.job_id})")
+            try:
+                job = self.write(job)
+                # write() may set state to REVIEWING or leave an error
+                if not job.final_article:
+                    job.state = PipelineState.FAILED
+                    job.error = f"Auto-write failed: {job.error or 'Writer не сгенерировал статью'}"
+                    job.updated_at = now_iso()
+                    self._save_job(job)
+                    return job
+            except Exception as write_err:
+                logger.error(f"[orch] Auto-write fallback failed: {write_err}", exc_info=True)
+                job.state = PipelineState.FAILED
+                job.error = f"Auto-write перед ревью упал: {write_err}"
+                job.updated_at = now_iso()
+                self._save_job(job)
+                return job
+
+            logger.info(f"[orch] Auto-write succeeded, continuing with review (job {job.job_id})")
 
         max_rounds = REVISION_CONFIG.get("max_rounds", self.MAX_REVISION_ROUNDS)
         previous_reviews = []
@@ -524,7 +689,7 @@ class EditorOrchestrator:
                 # Use existing article as "draft" for rewriting
                 fa = job.final_article
                 if isinstance(fa, dict):
-                    text = fa.get('text', '')
+                    text = fa.get('text', '') or fa.get('content', '')
                 elif hasattr(fa, 'text'):
                     text = fa.text
                 else:
@@ -532,7 +697,7 @@ class EditorOrchestrator:
                 if text and len(text) > 10:
                     from engine.schemas import StructuredDraft, GroupType
                     draft = StructuredDraft(
-                        group_type=GroupType.DATA_PAPER,
+                        group_type=self._resolve_group_type(proposal, job),
                         content=text,
                         source_articles=[],
                         title_suggestion=fa.get('title', '') if isinstance(fa, dict) else getattr(fa, 'title', ''),
@@ -675,6 +840,41 @@ class EditorOrchestrator:
                 normalized.append({"doi": str(r), "title": ""})
         return normalized
 
+    @staticmethod
+    def _build_scout_hint(job: PipelineJob) -> str:
+        """Build a hint string from scout_result for Editor context.
+
+        Includes top-scored articles with their DOIs, scores, and types
+        so Editor prioritizes them in discovery/synthesis.
+        """
+        if not job.scout_result or not job.scout_result.get("top_articles"):
+            return ""
+
+        parts = ["=== SCOUT: ПРЕДВАРИТЕЛЬНЫЙ АНАЛИЗ СТАТЕЙ ==="]
+        parts.append(f"Найдено: {job.scout_result.get('total_found', 0)} статей, "
+                     f"групп: {job.scout_result.get('groups_count', 0)}")
+        parts.append("Приоритетные статьи (отсортированы по скорингу):")
+
+        for i, group in enumerate(job.scout_result.get("top_articles", [])[:5], 1):
+            gtype = group.get("group_type", "?")
+            conf = group.get("confidence", 0)
+            parts.append(f"\nГруппа {i} ({gtype}, confidence={conf:.2f}):")
+            if group.get("rationale"):
+                parts.append(f"  Обоснование: {group['rationale']}")
+            for art in group.get("articles", [])[:3]:
+                score = art.get("score_5", 0)
+                atype = art.get("article_type", "")
+                doi = art.get("doi", "")
+                title = art.get("title_ru", "") or art.get("title", "")
+                parts.append(f"  [{score:.1f}/5] {title}")
+                if doi:
+                    parts.append(f"    DOI: {doi}")
+                if atype:
+                    parts.append(f"    Тип: {atype}")
+
+        parts.append("\nИспользуй эти статьи как приоритетные источники для proposals.")
+        return "\n".join(parts)
+
     def _get_selected_proposal(self, job: PipelineJob) -> Optional[dict]:
         if not job.editor_result or not job.selected_proposal_id:
             return None
@@ -682,6 +882,42 @@ class EditorOrchestrator:
             if p.get("id") == job.selected_proposal_id:
                 return p
         return None
+
+    def _resolve_group_type(self, proposal: dict, job: PipelineJob = None):
+        """Determine GroupType from job override or proposal metadata.
+
+        Priority:
+          1. job.group_type — explicit user choice via API
+          2. proposal.article_type — explicit type in editor output
+          3. Heuristic based on reference count
+        """
+        from engine.schemas import GroupType
+
+        # 1. User-specified override from API (stored on job)
+        if job and job.group_type:
+            gt = job.group_type.lower().strip()
+            if gt == "review":
+                return GroupType.REVIEW
+            if gt == "replication":
+                return GroupType.REPLICATION
+            if gt == "data_paper":
+                return GroupType.DATA_PAPER
+
+        # 2. Check proposal for explicit type
+        article_type = proposal.get("article_type", "").lower()
+        if "review" in article_type:
+            return GroupType.REVIEW
+        if "replication" in article_type or "original" in article_type:
+            return GroupType.REPLICATION
+
+        # Heuristic: many references → likely a review
+        refs = proposal.get("key_references", [])
+        if len(refs) >= 8:
+            return GroupType.REVIEW
+        if len(refs) >= 4:
+            return GroupType.REPLICATION
+
+        return GroupType.DATA_PAPER
 
     def _save_job(self, job: PipelineJob):
         path = self.jobs_dir / f"{job.job_id}.json"
@@ -712,12 +948,22 @@ class EditorOrchestrator:
     def _format_revision_edits(reviewed) -> str:
         """Convert review edits into writer-friendly revision instructions."""
         # Safe access for both objects and dicts
-        _rn = getattr(reviewed, 'round_number', None) or (reviewed.get('round_number') if isinstance(reviewed, dict) else 1)
-        _sc = getattr(reviewed, 'overall_score', None) or (reviewed.get('overall_score') if isinstance(reviewed, dict) else 0)
-        _vd = getattr(reviewed, 'verdict', None) or (reviewed.get('verdict') if isinstance(reviewed, dict) else None)
-        _ed = getattr(reviewed, 'edits', None) or (reviewed.get('edits') if isinstance(reviewed, dict) else [])
-        _sg = getattr(reviewed, 'improvement_suggestions', None) or (reviewed.get('improvement_suggestions') if isinstance(reviewed, dict) else [])
-        _fc = getattr(reviewed, 'fact_checks', None) or (reviewed.get('fact_checks') if isinstance(reviewed, dict) else [])
+        _rn = getattr(reviewed, 'round_number', None) if not isinstance(reviewed, dict) else reviewed.get('round_number')
+        if _rn is None:
+            _rn = 1
+        _sc = getattr(reviewed, 'overall_score', None) if not isinstance(reviewed, dict) else reviewed.get('overall_score')
+        if _sc is None:
+            _sc = 0
+        _vd = getattr(reviewed, 'verdict', None) if not isinstance(reviewed, dict) else reviewed.get('verdict')
+        _ed = getattr(reviewed, 'edits', None) if not isinstance(reviewed, dict) else reviewed.get('edits')
+        if _ed is None:
+            _ed = []
+        _sg = getattr(reviewed, 'improvement_suggestions', None) if not isinstance(reviewed, dict) else reviewed.get('improvement_suggestions')
+        if _sg is None:
+            _sg = []
+        _fc = getattr(reviewed, 'fact_checks', None) if not isinstance(reviewed, dict) else reviewed.get('fact_checks')
+        if _fc is None:
+            _fc = []
 
         parts = [f"## Ревизия (round {_rn}, score={_sc:.2f})\n"]
 
@@ -754,8 +1000,8 @@ class EditorOrchestrator:
             return asdict(article)
         if isinstance(article, dict):
             return article
-        # Last resort: try to extract text
-        text = getattr(article, 'text', None) or str(article)
+        # Last resort: try to extract text (fallback: 'content' key if no 'text')
+        text = getattr(article, 'text', None) or getattr(article, 'content', None) or str(article)
         title = getattr(article, 'title', None) or ''
         return {"text": text, "title": title}
 

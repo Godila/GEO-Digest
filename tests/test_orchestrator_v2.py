@@ -91,12 +91,18 @@ def mock_article():
 
 @pytest.fixture
 def mock_review_approve():
-    return {"verdict": "approve", "score": 0.9, "comments": "Good article"}
+    result = MagicMock()
+    result.success = True
+    result.data = {"verdict": "ACCEPT", "score": 0.9, "comments": "Good article"}
+    return result
 
 
 @pytest.fixture
 def mock_review_needs_work():
-    return {"verdict": "needs_revision", "score": 0.5, "comments": "Missing data on Siberia"}
+    result = MagicMock()
+    result.success = True
+    result.data = {"verdict": "NEEDS_REVISION", "score": 0.5, "comments": "Missing data on Siberia"}
+    return result
 
 
 def _setup_job_at_selecting(orch, mock_editor_result):
@@ -117,12 +123,12 @@ def _setup_job_at_developing(orch, mock_editor_result):
 
 
 def _setup_job_at_writing(orch, mock_editor_result, mock_draft):
-    """Helper: создаёт job и доводит до WRITING (после develop)."""
+    """Helper: создаёт job и доводит до WRITTEN (после develop + write)."""
     job = _setup_job_at_developing(orch, mock_editor_result)
     with patch.object(orch.reader, 'run', return_value=mock_draft):
         job = orch.develop(job)
-    # Меняем состояние вручную для теста write
-    job.state = PipelineState.WRITING
+    # Меняем состояние вручную для теста review
+    job.state = PipelineState.WRITTEN
     return job
 
 
@@ -133,7 +139,7 @@ class TestCreateJob:
         job = orch.create_job(topic="Arctic methane")
         assert job.job_id.startswith("20")  # YYYYMMDD_
         assert job.topic == "Arctic methane"
-        assert job.state == PipelineState.EDITING
+        assert job.state == PipelineState.SCOUTING
         assert job.error is None
 
     def test_create_with_domain(self, orch):
@@ -148,7 +154,7 @@ class TestCreateJob:
         with open(path) as f:
             data = json.load(f)
         assert data["topic"] == "persist me"
-        assert data["state"] == "editing"
+        assert data["state"] == "scouting"
 
     def test_create_generates_unique_ids(self, orch):
         ids = [orch.create_job(topic=f"t{i}").job_id for i in range(5)]
@@ -276,7 +282,7 @@ class TestWrite:
             job = orch.write(job)
 
         mock_wr.assert_called_once()
-        assert job.state == PipelineState.REVIEWING
+        assert job.state == PipelineState.WRITTEN
         assert job.final_article is not None
 
     def test_write_failure_sets_failed(self, orch, mock_editor_result, mock_draft):
@@ -299,9 +305,10 @@ class TestWrite:
 class TestReview:
     def test_review_approve_goes_done(self, orch, mock_editor_result, mock_draft, mock_article, mock_review_approve):
         job = _setup_job_at_writing(orch, mock_editor_result, mock_draft)
-        job.final_article = mock_article  # Simulate write completed
+        job.final_article = mock_article
 
-        with patch.object(orch.reviewer, 'run', return_value=mock_review_approve):
+        with patch.object(orch.reviewer, 'run', return_value=mock_review_approve), \
+             patch.object(orch.writer, 'run', return_value=mock_article):
             job = orch.review(job)
 
         assert job.state == PipelineState.DONE
@@ -310,10 +317,13 @@ class TestReview:
         job = _setup_job_at_writing(orch, mock_editor_result, mock_draft)
         job.final_article = mock_article
 
-        with patch.object(orch.reviewer, 'run', return_value=mock_review_needs_work):
+        with patch.object(orch.reviewer, 'run', return_value=mock_review_needs_work), \
+             patch.object(orch.writer, 'run', return_value=mock_article):
             job = orch.review(job)
 
-        assert job.state == PipelineState.DEVELOPING  # Back!
+        # NEEDS_REVISION now triggers multi-round rewrite loop → forced accept after max rounds
+        assert job.state == PipelineState.DONE
+        assert job.forced_accept is True
 
     def test_review_failure_sets_failed(self, orch, mock_editor_result, mock_draft, mock_article):
         job = _setup_job_at_writing(orch, mock_editor_result, mock_draft)
@@ -325,9 +335,10 @@ class TestReview:
         assert job.state == PipelineState.FAILED
 
     def test_review_no_article_raises(self, orch):
-        job = PipelineJob(job_id="test", topic="t", state=PipelineState.REVIEWING)
-        with pytest.raises(ValueError, match="No article"):
-            orch.review(job)
+        job = PipelineJob(job_id="test", topic="t", state=PipelineState.WRITTEN)
+        # review() now handles missing article gracefully → FAILED state
+        job = orch.review(job)
+        assert job.state == PipelineState.FAILED
 
 
 class TestCancel:
@@ -440,7 +451,7 @@ class TestHappyPath:
 
         with patch.object(orch.writer, 'run', return_value=mock_article):
             job = orch.write(job)
-        assert job.state == PipelineState.REVIEWING
+        assert job.state == PipelineState.WRITTEN
         assert job.final_article is not None
 
         with patch.object(orch.reviewer, 'run', return_value=mock_review_approve):

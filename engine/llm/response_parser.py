@@ -69,6 +69,27 @@ def parse_proposals_from_text(text: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
+    # Strategy 4: find multiple JSON objects (not wrapped in array)
+    obj_matches = re.findall(r'\{[^{}]*(?:"title"\s*:\s*"[^"]+")[^{}]*\}', text, re.DOTALL)
+    if obj_matches and len(obj_matches) >= 1:
+        proposals = []
+        for om in obj_matches[:MAX_PROPOSALS_FROM_TEXT]:
+            try:
+                p = json.loads(om)
+                if isinstance(p, dict) and p.get("title"):
+                    proposals.append(_validate_proposal(p))
+            except (json.JSONDecodeError, ValueError):
+                continue
+        if proposals:
+            logger.info("Extracted %d proposals from loose JSON objects", len(proposals))
+            return proposals
+
+    # Strategy 5: extract from structured prose (fallback when LLM ignores JSON format)
+    proposals = _extract_proposals_from_prose(text)
+    if proposals:
+        logger.info("Extracted %d proposals from prose text (JSON parse failed)", len(proposals))
+        return proposals
+
     # Fallback: nothing parseable found
     logger.debug("Could not extract proposals from text (length=%d)", len(text))
     return []
@@ -113,6 +134,95 @@ def _validate_proposal(p: dict) -> dict:
         p["key_references"] = []
 
     return p
+
+
+MAX_PROPOSALS_FROM_TEXT = 3  # Max proposals to extract from loose prose
+
+
+def _extract_proposals_from_prose(text: str) -> list[dict]:
+    """
+    Fallback parser: extract proposals from free-form Russian text.
+
+    When LLM ignores JSON format and outputs structured prose,
+    try to extract proposal-like structures using heuristics.
+
+    Looks for patterns like:
+      - Numbered/bulleted sections with titles
+      - "Вариант N" / "Предложение N" / "Концепт N"
+      - DOI lists near thesis-like text
+    """
+    if not text or len(text) < 50:
+        return []
+
+    proposals = []
+
+    # Pattern 1: numbered sections like "1. Заголовок" or "Вариант 1:"
+    # Split by common delimiters
+    section_patterns = [
+        r'(?:^|\n)\s*(?:\d+\.|Вариант\s+\d+|Предложение\s+\d+|Концепт\s+\d+|Option\s+\d+)\s*[:.\s]*\n?\s*\*{0,2}(.+?)(?:\*{0,2})',
+        r'(?:^|\n)\s*(?:###?\s*|\*\*)(.{10,100}?)(?:\*\*|\n)',
+    ]
+
+    # Try to find title-like lines (bold, headers, or numbered)
+    lines = text.split('\n')
+    current_proposal = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Detect new proposal start
+        is_header = bool(re.match(r'^(?:\d+[\.\)]\s*|Вариант|Предложение|Концепт|Option|#)', stripped, re.IGNORECASE))
+        is_bold_header = stripped.startswith('**') and stripped.endswith('**') and len(stripped) > 5
+        looks_like_title = (
+            len(stripped) > 15 and len(stripped) < 200
+            and not stripped.startswith('|') and not stripped.startswith('-')
+            and not stripped.startswith('```') and not stripped.startswith('"')
+            and ('статья' in stripped.lower() or 'анализ' in stripped.lower()
+                 or 'исследование' in stripped.lower() or 'review' in stripped.lower()
+                 or 'emissions' in stripped.lower() or 'permafrost' in stripped.lower()
+                 or 'модель' in stripped.lower() or 'метод' in stripped.lower())
+            and current_proposal is None  # only start new if previous was saved
+        )
+
+        if is_header or is_bold_header:
+            # Save previous proposal if exists
+            if current_proposal and current_proposal.get("title"):
+                proposals.append(current_proposal)
+
+            title = stripped.lstrip('#* \t').rstrip('*:')
+            current_proposal = {"title": title, "thesis": "", "key_references": [], "confidence": 0.6}
+
+        elif current_proposal and stripped and not is_header:
+            # Accumulate content into thesis
+            # Check for DOIs in this line
+            doi_matches = re.findall(r'10\.\d{4,}/[^\s,\]\)}]+', stripped)
+            for doi in doi_matches:
+                doi_clean = doi.rstrip('`').rstrip(',').rstrip('.')
+                ref_key = f"DOI:{doi_clean}"
+                if ref_key not in current_proposal["key_references"]:
+                    current_proposal["key_references"].append(ref_key)
+
+            # Add non-empty, non-DOI-only lines to thesis
+            line_for_thesis = re.sub(r'10\.\d{4,}/[^\s,\]\)}]+', '[DOI]', stripped).strip()
+            if line_for_thesis and len(line_for_thesis) > 10 and not line_for_thesis.startswith(('-', '|', '•', '—')):
+                if current_proposal["thesis"]:
+                    current_proposal["thesis"] += " " + line_for_thesis
+                else:
+                    current_proposal["thesis"] = line_for_thesis
+
+    # Don't forget last proposal
+    if current_proposal and current_proposal.get("title"):
+        proposals.append(current_proposal)
+
+    # Validate and clean up
+    validated = []
+    for p in proposals[:3]:  # max 3 from prose
+        p = _validate_proposal(p)
+        # Only keep if we got a reasonable thesis (not just garbage)
+        if len(p.get("thesis", "")) > 20:
+            validated.append(p)
+
+    return validated
 
 
 def parse_single_json_object(text: str) -> dict | None:

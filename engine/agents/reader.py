@@ -58,6 +58,29 @@ Analyze this article for a {group_type} paper.
 {extra_instructions}"""
 
 
+RICH_READER_SYSTEM_PROMPT = """Ты — научный аналитик геоэкологических исследований.
+Проводишь ДЕТАЛЬНЫЙ анализ статей для написания новой научной работы.
+
+Извлеки из каждой статьи:
+1. КЛЮЧЕВЫЕ ФАКТЫ с цифрами: точные значения, проценты, размеры выборок, p-values
+2. МЕТОДОЛОГИЮ подробно: какие данные, период, территория, модели, ПО
+3. РЕЗУЛЬТАТЫ с числами: корреляции, тренды, статистика
+4. ПРОТИВОРЕЧИЯ между работами: где авторы расходятся
+5. GAP в знаниях — отдельно для каждого с контекстом
+6. ЦИТАТЫ: 3-5 ключевых утверждений verbatim для использования в статье
+
+Верни JSON:
+{
+  "key_facts": [{"claim": "...", "source_doi": "...", "evidence": "..."}],
+  "methods_detail": [{"method": "...", "data_source": "...", "period": "...", "tools": "..."}],
+  "results_with_numbers": [{"finding": "...", "value": "...", "comparison": "..."}],
+  "contradictions": [{"claim_a": "...", "author_a": "...", "claim_b": "...", "author_b": "..."}],
+  "gaps": [{"gap": "...", "context": "...", "who_noted": "..."}],
+  "verbatim_quotes": [{"quote": "...", "source_doi": "...", "section": "..."}],
+  "cross_connections": [{"articles": ["DOI1", "DOI2"], "connection": "..."}]
+}"""
+
+
 class ReaderAgent(BaseAgent, LLMCallMixin):
     """Chitaet PDF stat'i i sozdaet StructuredDraft."""
 
@@ -104,6 +127,16 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
 
             # 3. LLM analiz
             draft = self._analyze_with_llm(group, articles, extracted)
+
+            # Build rich context for Writer — detailed analysis with facts, quotes, contradictions
+            try:
+                draft.rich_context = self._build_rich_context(
+                    extracted,
+                    group.group_type if group else GroupType.REVIEW
+                )
+            except Exception as e:
+                self._log(f"Rich context build warning: {e}")
+                draft.rich_context = ""
 
             return AgentResult(
                 agent_name=self.name,
@@ -274,6 +307,83 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
 
         draft.articles_covered = len(articles)
         return draft
+
+    def _build_rich_context(self, extracted: dict, group_type: 'GroupType') -> str:
+        """Build rich context string for Writer from detailed article analysis."""
+        all_analyses = []
+        for key, data in extracted.items():
+            art = data["article"]
+            text = data["text"]
+            if not text or text == data["article"].abstract:
+                # Skip if only abstract available — not enough for rich analysis
+                if data["source"] != "pdf":
+                    continue
+
+            prompt_text = f"""Статья: {art.title}
+Авторы: {art.authors or 'N/A'}
+DOI: {art.doi or 'N/A'}
+Год: {art.year or 'N/A'}
+
+Текст статьи:
+{text[:12000]}
+
+Проведи детальный анализ для написания {group_type.value} статьи."""
+
+            raw = self.call_llm(
+                prompt=prompt_text,
+                system=RICH_READER_SYSTEM_PROMPT,
+                max_tokens=4096,
+                parse_json=True,
+            )
+
+            if isinstance(raw, dict):
+                analysis = self._format_rich_analysis(art, raw)
+                all_analyses.append(analysis)
+
+        return "\n\n---\n\n".join(all_analyses) if all_analyses else ""
+
+    def _format_rich_analysis(self, art, raw: dict) -> str:
+        """Format rich analysis dict into readable string for Writer context."""
+        parts = [f"## {art.title} ({art.doi or 'no DOI'})"]
+
+        if raw.get("key_facts"):
+            parts.append("### Ключевые факты:")
+            for f in raw["key_facts"][:8]:
+                claim = f.get("claim", "")
+                evidence = f.get("evidence", "")
+                parts.append(f"  • {claim}" + (f" — {evidence}" if evidence else ""))
+
+        if raw.get("methods_detail"):
+            parts.append("### Методология:")
+            for m in raw["methods_detail"][:5]:
+                parts.append(f"  • {m.get('method', '')}: данные={m.get('data_source', '')}, период={m.get('period', '')}, инструменты={m.get('tools', '')}")
+
+        if raw.get("results_with_numbers"):
+            parts.append("### Результаты с цифрами:")
+            for r in raw["results_with_numbers"][:8]:
+                parts.append(f"  • {r.get('finding', '')}: {r.get('value', '')}" + (f" (сравнение: {r.get('comparison', '')})" if r.get('comparison') else ""))
+
+        if raw.get("contradictions"):
+            parts.append("### Противоречия:")
+            for c in raw["contradictions"][:5]:
+                parts.append(f"  • {c.get('author_a', '?')}: {c.get('claim_a', '')} ↔ {c.get('author_b', '?')}: {c.get('claim_b', '')}")
+
+        if raw.get("gaps"):
+            parts.append("### Пробелы в знаниях:")
+            for g in raw["gaps"][:5]:
+                parts.append(f"  • {g.get('gap', '')} (контекст: {g.get('context', '')})")
+
+        if raw.get("verbatim_quotes"):
+            parts.append("### Ключевые цитаты для использования:")
+            for q in raw["verbatim_quotes"][:6]:
+                parts.append(f"  «{q.get('quote', '')}» — {q.get('source_doi', '')}")
+
+        if raw.get("cross_connections"):
+            parts.append("### Связи с другими статьями:")
+            for cc in raw["cross_connections"][:5]:
+                parts.append(f"  • {', '.join(cc.get('articles', []))}: {cc.get('connection', '')}")
+
+        return "\n".join(parts)
 
     def _parse_draft(
         self,

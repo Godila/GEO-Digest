@@ -1764,13 +1764,15 @@ async def pipeline_run(request: Request):
     topic = body.get("topic", "")
     domain = body.get("domain")
     user_comment = body.get("user_comment")
+    group_type = body.get("group_type")  # "review", "replication", "data_paper" — optional
 
     if not topic and not domain:
         raise HTTPException(400, "topic or domain required")
 
     try:
         orch = _get_orchestrator()
-        job = orch.create_job(topic=topic, domain=domain, user_comment=user_comment)
+        job = orch.create_job(topic=topic, domain=domain, user_comment=user_comment,
+                              group_type=group_type)
         # create_job() already calls _save_job() internally
 
         # Run editing phase in background — pass job object
@@ -1778,13 +1780,16 @@ async def pipeline_run(request: Request):
 
         def target():
             try:
+                # Phase 1: Scout (search + score + classify)
+                orch.run_scout_phase(_job_obj)
+                # Phase 2: Editor (analysis + proposals)
                 orch.run_editing_phase(_job_obj)
             except Exception as e:
-                logger.info(f"Pipeline editing failed: {e}")
+                logger.info(f"Pipeline failed: {e}")
                 try:
                     loaded = orch.load_job(_job_obj.job_id)
                     if loaded:
-                        from engine.schemas import PipelineState
+                        from engine.orchestrator_v2 import PipelineState
                         loaded.state = PipelineState.FAILED
                         loaded.error = str(e)
                         orch._save_job(loaded)
