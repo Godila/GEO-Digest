@@ -199,6 +199,231 @@ def build_polish_user_prompt(article_json: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  PASS 2b: SECTION-BY-SECTION EXPAND — одна секция за раз
+# ═══════════════════════════════════════════════════════════════
+
+# Мэппинг: какая часть rich_context нужна каждой секции
+SECTION_CONTEXT_KEYWORDS = {
+    "введение": ["gap", "пробел", "актуальн", "значим", "цель", "задач", "обзор", "истори", "контекст", "trend"],
+    "литератур": ["обзор", "литератур", "сравнен", "ранее", "известн", "существующ", "previous", "review"],
+    "метод": ["метод", "подход", "алгоритм", "модель", "методик", "датчик", "аппарат", "параметр", "method", "dataset", "данн"],
+    "результат": ["результат", "значени", "концентрац", "магнитуд", "координат", "скор", "точност", "показат", "обнаруж", "найден", "result", "found", "%", "±"],
+    "обсужден": ["обсужден", "интерпретаци", "сравнен", "противореч", "соглас", "ограничен", "limitat", "discuss", "mechanism", "механизм"],
+    "вывод": ["вывод", "заключен", "значим", "рекомендац", "перспектив", "conclusion", "future"],
+    "conclusion": ["вывод", "заключен", "значим", "рекомендац", "перспектив"],
+    "introduction": ["gap", "пробел", "актуальн", "цель", "задач"],
+    "method": ["метод", "подход", "алгоритм", "модель", "датчик"],
+    "result": ["результат", "значени", "концентрац", "скор", "точност"],
+    "discussion": ["обсужден", "интерпретаци", "сравнен", "ограничен"],
+    "review": ["обзор", "литератур", "сравнен", "ранее"],
+}
+
+# Целевой объём секций (слова) и max_tokens для LLM
+SECTION_TARGETS = {
+    "введение":        {"words": (400, 700),  "tokens": 2000},
+    "обзор литературы": {"words": (800, 1500), "tokens": 4000},
+    "методы":           {"words": (800, 1200), "tokens": 3000},
+    "результаты":       {"words": (900, 1500), "tokens": 4000},
+    "обсуждение":       {"words": (1000, 1500), "tokens": 4000},
+    "выводы":           {"words": (200, 400),   "tokens": 1500},
+    "список литературы": {"words": (100, 300),  "tokens": 1000},
+    # English fallback
+    "introduction":    {"words": (400, 700),  "tokens": 2000},
+    "literature":      {"words": (800, 1500), "tokens": 4000},
+    "methods":         {"words": (800, 1200), "tokens": 3000},
+    "results":         {"words": (900, 1500), "tokens": 4000},
+    "discussion":      {"words": (1000, 1500), "tokens": 4000},
+    "conclusion":      {"words": (200, 400),   "tokens": 1500},
+    "references":      {"words": (100, 300),   "tokens": 1000},
+}
+
+
+def extract_section_context(section_heading: str, rich_context: str) -> str:
+    """Extract the relevant portion of rich_context for a specific section.
+    
+    Instead of truncating rich_context to 6K/8K, we pick paragraphs that
+    contain keywords relevant to this section's topic.
+    """
+    if not rich_context:
+        return ""
+    
+    heading_lower = section_heading.lower()
+    keywords = []
+    for key, kws in SECTION_CONTEXT_KEYWORDS.items():
+        if key in heading_lower:
+            keywords = kws
+            break
+    
+    # If no keywords matched, return full context (up to 10K chars)
+    if not keywords:
+        return rich_context[:10000]
+    
+    # Split context into paragraphs and score each by keyword matches
+    paragraphs = rich_context.split("\n\n")
+    scored = []
+    for p in paragraphs:
+        p_lower = p.lower()
+        score = sum(1 for kw in keywords if kw in p_lower)
+        scored.append((score, p))
+    
+    # Take paragraphs with matches first, then fill with remaining
+    matched = [p for score, p in sorted(scored, reverse=True) if score > 0]
+    remaining = [p for score, p in scored if score == 0]
+    
+    result_paragraphs = matched + remaining
+    result = "\n\n".join(result_paragraphs)
+    
+    # Cap at 8000 chars per section (generous)
+    return result[:8000]
+
+
+def get_section_target(section_heading: str) -> dict:
+    """Get target word count and max_tokens for a section."""
+    heading_lower = section_heading.lower()
+    for key, target in SECTION_TARGETS.items():
+        if key in heading_lower:
+            return target
+    # Default for unknown sections
+    return {"words": (500, 1000), "tokens": 3000}
+
+
+def build_section_expand_system_prompt(group_type: GroupType, language: str, 
+                                        section_heading: str, format_: str = "markdown") -> str:
+    """System prompt for expanding a single section."""
+    type_key = _group_type_to_article_type(group_type)
+    type_info = ARTICLE_TYPES.get(type_key, ARTICLE_TYPES["original_research"])
+    lang_label = "русском" if language == "ru" else "English"
+    target = get_section_target(section_heading)
+    tone = _format_tone_rules()
+    
+    # LaTeX formatting rules
+    latex_rules = ""
+    if format_ == "latex":
+        latex_rules = """
+== ПРАВИЛА ФОРМАТИРОВАНИЯ LaTeX ==
+- Формулы: \\begin{equation} ... \\end{equation} для нумерованных, $$ ... $$ для ненумерованных
+- Inline формулы: $V_s$, $M_w$, $\\sigma$ и т.д.
+- Таблицы: \\begin{table} \\begin{tabular}{lcc} ... \\end{tabular} \\end{table}
+- Рисунки: \\begin{figure} \\centering \\includegraphics[width=\\textwidth]{figure.png} \\caption{...} \\end{figure}
+- Если описываешь график/диаграмму — укажи данные в формате для matplotlib (Python-код в блоке)
+- Простые схемы можно описать через TikZ
+- Ссылки: \\cite{AuthorYear} формат
+"""
+    
+    return f"""Ты — опытный научный писатель в области геоэкологии и геонаук.
+Пишешь ОДНУ секцию '{section_heading}' научной статьи на {lang_label} языке.
+
+== ТИП СТАТЬИ ==
+{type_info['label']}
+
+== ЦЕЛЕВОЙ ОБЪЁМ ЭТОЙ СЕКЦИИ ==
+{target['words'][0]}-{target['words'][1]} слов, примерно {target['words'][0]//5}-{target['words'][1]//5} абзацев.
+КАЖДЫЙ абзац — 4-8 предложений. Не 1-2, не 15.
+
+== СТИЛИСТИЧЕСКИЕ ПРАВИЛА ==
+{tone}
+{latex_rules}
+== КРИТИЧЕСКИЕ ПРАВИЛА ==
+1. КАЖДЫЙ абзац — минимум 1 конкретное число (магнитуда, концентрация, координаты, %, ±)
+2. КАЖДОЕ утверждение подкреплено ссылкой: [Автор и др., год] или (Author et al., Year)
+3. Никаких общих фраз: 'значения увеличились' → 'значения увеличились на 23% (с 1.2±0.1 до 1.5±0.2 мг/кг)'
+4. Пиши ПОЛНЫЙ текст, НЕ набросок, НЕ план, НЕ тезисы
+
+== ФОРМАТ ВЫВОДА ==
+Верни JSON (без markdown-обёрток):
+{{"heading": "{section_heading}", "content": "ПОЛНЫЙ текст секции с абзацами", "word_count": N}}"""
+
+
+def build_section_expand_user_prompt(
+    section_heading: str,
+    section_outline: str,
+    section_context: str,
+    previous_section_summary: str = "",
+) -> str:
+    """User prompt for expanding one section."""
+    transition_hint = ""
+    if previous_section_summary:
+        transition_hint = f"""
+== СВЯЗЬ С ПРЕДЫДУЩЕЙ СЕКЦИЕЙ ==
+Предыдущая секция закончилась так:
+{previous_section_summary[:500]}
+
+Начни эту секцию с логического перехода от предыдущей. Используй фразы:
+'Полученные результаты согласуются с...', 'В отличие от...', 'Это может быть объяснено...'
+"""
+    
+    context_block = ""
+    if section_context:
+        context_block = f"""
+== КОНТЕКСТ ИЗ ИСТОЧНИКОВ (используй конкретные цифры, методы, имена, годы) ==
+{section_context}
+
+ВАЖНО: Извлекай из контекста конкретные числа, названия методов, имена авторов, годы.
+Каждое число из контекста — кандидат для включения в секцию."""
+    
+    return f"""Напиши ПОЛНЫЙ текст секции '{section_heading}'.
+
+== ПЛАН ЭТОЙ СЕКЦИИ ==
+{section_outline}
+{transition_hint}{context_block}
+
+ПИШИ ПОЛНЫЙ ТЕКСТ. Каждый абзац 4-8 предложений с конкретными данными."""
+
+
+def build_references_system_prompt(language: str) -> str:
+    """System prompt for generating formatted references section."""
+    lang_label = "русском" if language == "ru" else "English"
+    return f"""Ты — научный редактор. Форматируешь список литературы на {lang_label} языке.
+
+ПРАВИЛА:
+- ГОСТ Р 7.0.5-2008 формат
+- Каждый источник с DOI если доступен
+- Алфавитный порядок (сначала кириллица, потом латиница)
+- Верни JSON: {{"heading": "Список литературы", "content": "отформатированный список", "references": [...]}}"""
+
+
+# ═══════════════════════════════════════════════════════════════
+#  REVISION: промпт для переработки по замечаниям Reviewer
+# ═══════════════════════════════════════════════════════════════
+
+def build_revision_system_prompt(language: str) -> str:
+    """System prompt for revising article based on reviewer feedback."""
+    lang_label = "русском" if language == "ru" else "English"
+    return f"""Ты — научный писатель, перерабатываешь статью по замечаниям рецензента.
+Язык: {lang_label}.
+
+ЗАДАЧА: Внести ТОЛЬКО указанные правки, не переписывая то, что рецензент одобрил.
+
+ПРАВИЛА:
+1. Сохраняй стиль и структуру одобренных секций
+2. Вноси точечные правки по каждому замечанию
+3. Усиливай слабые места конкретными данными
+4. Каждый абзац — 4-8 предложений с конкретными числами
+
+ФОРМАТ ВЫВОДА (JSON, без markdown):
+{{"title": "...", "sections": [{{"heading": "...", "content": "..."}}], "references": [...], "word_count": N}}"""
+
+
+def build_revision_user_prompt(article_text: str, revision_instructions: list) -> str:
+    """User prompt for article revision based on reviewer edits."""
+    edits_text = "\n\n".join(
+        f"Правка {i+1} [{e.get('severity', 'medium')}]: {e.get('description', '')}\n"
+        f"  Секция: {e.get('section', 'вся статья')}\n"
+        f"  Действие: {e.get('action', 'исправить')}"
+        for i, e in enumerate(revision_instructions)
+    )
+    return f"""ПЕРЕРАБОТАЙ статью по замечаниям рецензента.
+
+== ЗАМЕЧАНИЯ ==
+{edits_text}
+
+== ТЕКУЩАЯ СТАТЬЯ ==
+{article_text}
+
+Внеси правки и верни ПОЛНУЮ исправленную статью."""
+
+
+# ═══════════════════════════════════════════════════════════════
 #  УТИЛИТЫ
 # ═══════════════════════════════════════════════════════════════
 

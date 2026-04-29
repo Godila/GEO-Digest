@@ -699,48 +699,80 @@ class EditorOrchestrator:
     def _rewrite_article(self, job: PipelineJob) -> PipelineJob:
         """Send article back to Writer with revision instructions.
 
-        Called during the review loop when verdict is NEEDS_REVISION.
-        Updates job.final_article with the rewritten version.
+        Called during the review loop when verdict is NEEDS_REVISION or REJECT.
+        Uses Writer.rewrite_article() for targeted fixes.
         """
-        proposal = self._get_selected_proposal(job)
-        if not proposal:
-            logger.info("[orch] Cannot rewrite: no proposal selected, keeping original")
-            return job
-
         try:
-            # Build draft from current article (for rewrite context)
-            draft = job.current_draft
-            if not draft and job.final_article:
-                # Use existing article as "draft" for rewriting
-                fa = job.final_article
-                if isinstance(fa, dict):
-                    text = fa.get('text', '') or fa.get('content', '')
-                elif hasattr(fa, 'text'):
-                    text = fa.text
-                else:
-                    text = str(fa)
-                if text and len(text) > 10:
-                    from engine.schemas import StructuredDraft, GroupType
-                    draft = StructuredDraft(
-                        group_type=self._resolve_group_type(proposal, job),
-                        content=text,
-                        source_articles=[],
-                        title_suggestion=fa.get('title', '') if isinstance(fa, dict) else getattr(fa, 'title', ''),
-                        keywords=[],
-                    )
+            # Get current article text
+            article_text = ""
+            fa = job.final_article
+            if fa is None:
+                logger.info("[orch] Cannot rewrite: no article, keeping original")
+                return job
+            if isinstance(fa, dict):
+                article_text = fa.get('text', '') or fa.get('content', '') or ""
+            elif hasattr(fa, 'text'):
+                article_text = fa.text
+            elif fa:
+                article_text = str(fa)
 
-            result = self.writer.run(
-                draft=draft,
-                topic=proposal.get("title", job.topic),
-                thesis=proposal.get("thesis", ""),
-                references=self._normalize_refs(proposal.get("key_references", [])),
-                revision_instructions=job.revision_instructions or "",
+            if not article_text or len(article_text) < 50:
+                logger.info("[orch] Cannot rewrite: article too short, keeping original")
+                return job
+
+            # Parse revision instructions from review
+            revision_instructions = self._parse_revision_instructions(job.revision_instructions)
+
+            if not revision_instructions:
+                logger.info("[orch] No revision instructions, keeping original")
+                return job
+
+            # Use Writer.rewrite_article() — targeted revision, not full rewrite
+            revised_json = self.writer.rewrite_article(
+                article_text=article_text,
+                revision_instructions=revision_instructions,
+                language="ru",
+                format_="markdown",
             )
-            # Unwrap AgentResult
-            article = result.data if hasattr(result, 'data') else result
-            job.final_article = self._serialize_article(article)
+
+            # Parse revised article
+            import json as _json
+            try:
+                revised_data = _json.loads(revised_json) if isinstance(revised_json, str) else revised_json
+            except (_json.JSONDecodeError, TypeError):
+                revised_data = {"text": revised_json, "title": ""}
+
+            # Update job
+            from engine.schemas import WrittenArticle
+            if isinstance(revised_data, dict):
+                sections = revised_data.get("sections", [])
+                text_parts = []
+                title = revised_data.get("title", "")
+                if title:
+                    text_parts.append(f"# {title}\n")
+                for sec in sections:
+                    if isinstance(sec, dict):
+                        h = sec.get("heading", "")
+                        c = sec.get("content", "")
+                        if h:
+                            text_parts.append(f"## {h}\n")
+                        text_parts.append(c + "\n")
+                full_text = "\n".join(text_parts) if text_parts else str(revised_data)
+
+                article = WrittenArticle(
+                    text=full_text,
+                    title=title or (getattr(fa, 'title', '') if hasattr(fa, 'title') else (fa.get('title', '') if isinstance(fa, dict) else "")),
+                    format_="markdown",
+                    word_count=len(full_text.split()),
+                    sections=sections if isinstance(sections, list) else [],
+                    references=revised_data.get("references", []),
+                )
+                job.final_article = self._serialize_article(article)
+            else:
+                job.final_article = {"text": str(revised_data), "title": ""}
+
             job.state = PipelineState.REVIEWING  # Back to reviewing after rewrite
-            logger.info("[orch] Article rewritten, returning to REVIEW state")
+            logger.info(f"[orch] Article rewritten ({len(str(job.final_article))} chars), returning to REVIEW")
         except Exception as e:
             logger.warning(f"[orch] Rewrite failed: {e}, keeping current version")
             # Don't fail the whole job — keep existing article
@@ -749,6 +781,24 @@ class EditorOrchestrator:
         job.updated_at = now_iso()
         self._save_job(job)
         return job
+
+    def _parse_revision_instructions(self, instructions) -> list:
+        """Parse revision instructions into a list of edit dicts."""
+        if not instructions:
+            return []
+        if isinstance(instructions, list):
+            return instructions
+        if isinstance(instructions, str):
+            import json
+            try:
+                parsed = json.loads(instructions)
+                if isinstance(parsed, list):
+                    return parsed
+                if isinstance(parsed, dict):
+                    return parsed.get("edits", parsed.get("revision_instructions", [parsed]))
+            except (json.JSONDecodeError, TypeError):
+                return [{"description": instructions, "severity": "medium", "action": "исправить"}]
+        return []
 
     def cancel(self, job: PipelineJob) -> PipelineJob:
         """Отмена job из любого состояния."""
