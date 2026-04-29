@@ -148,12 +148,21 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         """
         tools = AgentTools(self.storage)
         raw_articles = []
+        seen_dois = set()
 
         # Collect from storage / fresh search
         if mode in ("storage", "mixed"):
-            stored = tools.search(topic, limit=max_articles * 3)  # oversample
-            raw_articles.extend(stored)
-            self._log(f"From storage: {len(stored)}")
+            # Split long topic into keywords for substring search
+            # storage.search uses exact substring match, so long phrases return 0
+            keywords = self._extract_keywords(topic)
+            for kw in keywords:
+                stored = tools.search(kw, limit=max_articles * 2)
+                for a in stored:
+                    doi = a.get("doi", "") or a.get("id", "")
+                    if doi not in seen_dois:
+                        seen_dois.add(doi)
+                        raw_articles.append(a)
+            self._log(f"From storage: {len(raw_articles)} (via {len(keywords)} keywords)")
 
         if mode in ("fresh", "mixed") and len(raw_articles) < max_articles * 3:
             remaining = max_articles * 3 - len(raw_articles)
@@ -192,6 +201,45 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         except Exception as e:
             logger.warning(f"[scout] Scoring failed: {e}, using unfiltered results")
             return raw_articles[:max_articles], total_scored
+
+    # ── Stopwords for keyword extraction ──────────────────────
+    _STOPWORDS = frozenset(
+        "a an the for and of in on to with from by using based application applications "
+        "approach approaches method methods new novel study review analysis overview "
+        "towards its their or between through which while during both these those "
+        "this that is are was were be been being have has had do does did will would "
+        "could should may might shall can".split()
+    )
+
+    def _extract_keywords(self, topic: str) -> list[str]:
+        """Split a long topic into searchable 1-3 word keywords.
+
+        storage.search_articles uses exact substring match on title/abstract.
+        Long phrases like 'deep learning for seismic interpretation' match nothing.
+        We split into meaningful bigrams/unigrams, filtering stopwords.
+        """
+        words = topic.lower().replace(",", " ").replace(";", " ").split()
+        # Filter stopwords
+        meaningful = [w for w in words if w not in self._STOPWORDS and len(w) > 2]
+        if not meaningful:
+            return [topic]  # fallback: use full topic
+
+        keywords = []
+        # Bigrams first (better precision)
+        for i in range(len(meaningful) - 1):
+            bigram = f"{meaningful[i]} {meaningful[i + 1]}"
+            keywords.append(bigram)
+        # Then individual words
+        keywords.extend(meaningful)
+
+        # Deduplicate, limit to top 6
+        seen = set()
+        unique = []
+        for k in keywords:
+            if k not in seen:
+                seen.add(k)
+                unique.append(k)
+        return unique[:6]
 
     def _collect_candidates(
         self, topic: str, max_articles: int, mode: str
