@@ -45,6 +45,107 @@ class OpenAICompatProvider(LLMProvider):
         except Exception:
             return False
 
+    # ── JSON Completion (with edge-case handling) ──────────────
+
+    def complete_json(self, prompt, system="", temperature=0.3, max_tokens=4096, **kwargs):
+        """Complete with JSON output — strips markdown fences and parses.
+
+        Handles common LLM edge cases:
+        1. Markdown code fences: ```json ... ``` or ``` ... ```
+        2. Partial JSON (truncated due to max_tokens)
+        3. Extra text before/after JSON
+        4. Already-parsed dict/list from upstream
+
+        Returns:
+            dict or list — parsed JSON, or raw string on failure.
+        """
+        import re
+
+        raw_text = self.complete(
+            prompt, system=system, temperature=temperature, max_tokens=max_tokens,
+        )
+
+        if not isinstance(raw_text, str):
+            # Already parsed by something upstream
+            return raw_text
+
+        text = raw_text.strip()
+
+        # ── Strip markdown code fences ──
+        # Match ```json ... ```, ``` ... ```, with optional whitespace
+        fence_match = re.search(
+            r"```(?:json|JSON)?\s*\n?(.*?)\n?\s*```",
+            text,
+            re.DOTALL,
+        )
+        if fence_match:
+            text = fence_match.group(1).strip()
+
+        # ── Try direct parse ──
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # ── Try to find JSON object or array in text ──
+        # Look for outermost { ... } or [ ... ]
+        for opener, closer in [("{", "}"), ("[", "]")]:
+            start = text.find(opener)
+            if start == -1:
+                continue
+            # Find matching closer by counting depth
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == opener:
+                    depth += 1
+                elif text[i] == closer:
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:i + 1]
+                        try:
+                            return json.loads(candidate)
+                        except json.JSONDecodeError:
+                            # Try to fix truncated JSON
+                            fixed = self._repair_truncated_json(candidate, opener, closer)
+                            if fixed is not None:
+                                return fixed
+                        break
+
+        # ── All parsing failed — return raw string ──
+        return raw_text
+
+    @staticmethod
+    def _repair_truncated_json(text: str, opener: str, closer: str):
+        """Attempt to repair truncated JSON by closing open structures.
+
+        Only handles simple cases: unclosed strings, arrays, objects.
+        Returns parsed dict/list or None on failure.
+        """
+        # Count open brackets/braces
+        open_braces = text.count("{") - text.count("}")
+        open_brackets = text.count("[") - text.count("]")
+
+        if open_braces < 0 or open_brackets < 0:
+            return None  # Malformed, not truncated
+
+        # Check for unclosed string at end
+        repaired = text
+        if repaired.endswith(",") or repaired.endswith(":"):
+            # Trailing comma or colon — remove and close
+            repaired = repaired.rstrip(",:")
+        if repaired.endswith('"') and repaired.count('"') % 2 != 0:
+            # Unclosed string — close it
+            repaired += '"'
+
+        # Close open structures
+        repaired += "]" * max(0, open_brackets)
+        repaired += "}" * max(0, open_braces)
+
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            return None
+
     # ── Tool-Use Completion ─────────────────────────────────────
 
     def tool_complete(

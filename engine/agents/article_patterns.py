@@ -372,6 +372,75 @@ REVISION_CONFIG = {
 }
 
 
+# ═══════════════════════════════════════════════════════════════
+#  FORMATTING RULES — Markdown и LaTeX инструкции для Writer
+# ═══════════════════════════════════════════════════════════════
+
+FORMATTING_RULES = {
+    "markdown": {
+        "equations": (
+            "Inline: $V_s$, $M_w$, $\\sigma$ — single dollar signs. "
+            "Display: $$ ... $$ on separate lines for standalone equations."
+        ),
+        "tables": (
+            "Markdown pipe tables:\n"
+            "| Параметр | Значение | Единица |\n"
+            "|----------|----------|---------|\n"
+            "| ...      | ...      | ...     |"
+        ),
+        "figures": (
+            "![caption](figure_name.png) — markdown image syntax. "
+            "Always include a descriptive caption."
+        ),
+        "matplotlib": (
+            "When describing a chart/plot, include a matplotlib-ready code block:\n"
+            "```python\n"
+            "import matplotlib.pyplot as plt\n"
+            "# data and plotting code\n"
+            "```"
+        ),
+        "citations": "[Автор и др., год] or (Author et al., Year) — inline text.",
+    },
+    "latex": {
+        "equations": (
+            "Numbered: \\begin{equation}\\n  ... \\label{eq:label}\\n\\end{equation}\n"
+            "Unnumbered: $$ ... $$\n"
+            "Inline: $V_s$, $M_w$, $\\sigma$"
+        ),
+        "tables": (
+            "\\begin{table}[htbp]\n"
+            "\\centering\n"
+            "\\caption{...}\\label{tab:label}\n"
+            "\\begin{tabular}{lcc}\n"
+            "\\hline\n"
+            "Параметр & Значение & Единица \\\\\n"
+            "\\hline\n"
+            "... \\\\\n"
+            "\\hline\n"
+            "\\end{tabular}\n"
+            "\\end{table}"
+        ),
+        "figures": (
+            "\\begin{figure}[htbp]\n"
+            "\\centering\n"
+            "\\includegraphics[width=\\textwidth]{figure.png}\n"
+            "\\caption{...}\\label{fig:label}\n"
+            "\\end{figure}"
+        ),
+        "matplotlib": (
+            "If describing a chart/diagram, provide matplotlib code block:\n"
+            "```python\n"
+            "import matplotlib.pyplot as plt\n"
+            "# data and plotting code\n"
+            "plt.savefig('figure_name.png', dpi=300)\n"
+            "```\n"
+            "Simple schemas can use TikZ."
+        ),
+        "citations": "\\cite{AuthorYear} — BibTeX reference format.",
+    },
+}
+
+
 def get_article_type(article_text: str, title: str = "") -> str:
     """Определить тип статьи по контенту."""
     text_lower = (article_text + " " + title).lower()

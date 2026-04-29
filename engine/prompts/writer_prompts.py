@@ -10,7 +10,7 @@ Multi-Pass стратегия:
 """
 from engine.agents.article_patterns import (
     EXPECTED_SECTIONS, TONE_RULES, SECTION_TRANSITIONS,
-    ARTICLE_TYPES, MULTI_PASS_CONFIG,
+    ARTICLE_TYPES, MULTI_PASS_CONFIG, FORMATTING_RULES,
 )
 from engine.schemas import GroupType
 
@@ -296,18 +296,16 @@ def build_section_expand_system_prompt(group_type: GroupType, language: str,
     target = get_section_target(section_heading)
     tone = _format_tone_rules()
     
-    # LaTeX formatting rules
-    latex_rules = ""
-    if format_ == "latex":
-        latex_rules = """
-== ПРАВИЛА ФОРМАТИРОВАНИЯ LaTeX ==
-- Формулы: \\begin{equation} ... \\end{equation} для нумерованных, $$ ... $$ для ненумерованных
-- Inline формулы: $V_s$, $M_w$, $\\sigma$ и т.д.
-- Таблицы: \\begin{table} \\begin{tabular}{lcc} ... \\end{tabular} \\end{table}
-- Рисунки: \\begin{figure} \\centering \\includegraphics[width=\\textwidth]{figure.png} \\caption{...} \\end{figure}
-- Если описываешь график/диаграмму — укажи данные в формате для matplotlib (Python-код в блоке)
-- Простые схемы можно описать через TikZ
-- Ссылки: \\cite{AuthorYear} формат
+    # Formatting rules (markdown or latex)
+    format_key = format_ if format_ in FORMATTING_RULES else "markdown"
+    fmt = FORMATTING_RULES[format_key]
+    format_rules = f"""
+== ПРАВИЛА ФОРМАТИРОВАНИЯ ({format_key.upper()}) ==
+- Формулы: {fmt['equations']}
+- Таблицы: {fmt['tables']}
+- Рисунки: {fmt['figures']}
+- Графики/диаграммы: {fmt['matplotlib']}
+- Цитирование: {fmt['citations']}
 """
     
     return f"""Ты — опытный научный писатель в области геоэкологии и геонаук.
@@ -322,7 +320,7 @@ def build_section_expand_system_prompt(group_type: GroupType, language: str,
 
 == СТИЛИСТИЧЕСКИЕ ПРАВИЛА ==
 {tone}
-{latex_rules}
+{format_rules}
 == КРИТИЧЕСКИЕ ПРАВИЛА ==
 1. КАЖДЫЙ абзац — минимум 1 конкретное число (магнитуда, концентрация, координаты, %, ±)
 2. КАЖДОЕ утверждение подкреплено ссылкой: [Автор и др., год] или (Author et al., Year)

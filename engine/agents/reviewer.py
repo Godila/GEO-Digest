@@ -461,108 +461,94 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
     # ── Revision Instructions Builder ───────────────────────────────
 
     def _build_revision_instructions(self, reviewed: ReviewedDraft) -> str:
-        """Formiruyet konkretnye instruktsii dlya Writer'a na osnove review.
+        """Build structured revision instructions for Writer.
 
-        Converts the ReviewedDraft into actionable rewrite instructions
-        that the Writer agent can consume directly.
+        Returns a JSON string containing a list of edit dicts with keys:
+          - section: which part of the article
+          - description: what needs fixing
+          - severity: critical / major / minor
+          - action: what to do (исправить / добавить / удалить / переписать)
 
-        Args:
-            reviewed: ReviewedDraft s rezul'tatami review
-
-        Returns:
-            Str formatted instructions for Writer
+        The orchestrator's _parse_revision_instructions() will parse this
+        JSON list and pass it directly to Writer.rewrite_article().
         """
+        import json as _json
+
         # Normalize: accept both ReviewedDraft and plain dict
         if isinstance(reviewed, dict):
-            round_num = reviewed.get('round_number', 1)
-            verdict_val = reviewed.get('verdict', 'NEEDS_REVISION')
-            if hasattr(verdict_val, 'value'):
-                verdict_val = verdict_val.value
-            score = reviewed.get('overall_score', reviewed.get('score', 0.0)) or 0.0
             edits = reviewed.get('edits', [])
-            score_by_cat = reviewed.get('score_by_category', {})
             suggestions = reviewed.get('improvement_suggestions', [])
+            fact_checks = reviewed.get('fact_checks', [])
         else:
-            round_num = getattr(reviewed, 'round_number', 1)
-            verdict_val = reviewed.verdict.value if hasattr(reviewed.verdict, 'value') else str(reviewed.verdict)
-            score = getattr(reviewed, 'overall_score', 0.0) or 0.0
             edits = getattr(reviewed, 'edits', [])
-            score_by_cat = getattr(reviewed, 'score_by_category', {})
             suggestions = getattr(reviewed, 'improvement_suggestions', [])
+            fact_checks = getattr(reviewed, 'fact_checks', [])
 
-        parts = [
-            f"=== REVISION INSTRUCTIONS (Review Round {round_num}) ===",
-            f"Verdict: {verdict_val}",
-            f"Overall Score: {score:.2f}",
-            "",
-        ]
+        structured_edits = []
 
-        # Category scores
-        if score_by_cat:
-            parts.append("SCORES BY CATEGORY:")
-            for cat, cat_score in score_by_cat.items():
-                parts.append(f"  {cat}: {cat_score:.2f}")
-            parts.append("")
+        for e in edits:
+            if isinstance(e, dict):
+                sev = str(e.get('severity', 'minor')).lower()
+                loc = e.get('location', '')
+                reason = e.get('reason', e.get('description', ''))
+                suggested = e.get('suggested', '')
+            else:
+                # Edit dataclass
+                sev_val = getattr(e, 'severity', Severity.MINOR)
+                sev = sev_val.value if hasattr(sev_val, 'value') else str(sev_val).lower()
+                loc = getattr(e, 'location', '')
+                reason = getattr(e, 'reason', getattr(e, 'description', ''))
+                suggested = getattr(e, 'suggested', '')
 
-        # Critical & Major edits first (actionable items)
-        critical_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.CRITICAL if hasattr(e, 'severity') else e.get('severity') == 'critical')]
-        major_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.MAJOR if hasattr(e, 'severity') else e.get('severity') == 'major')]
-        minor_edits = [e for e in edits if (getattr(e, 'severity', None) == Severity.MINOR if hasattr(e, 'severity') else e.get('severity') == 'minor')]
+            # Determine action verb from category / content
+            action = "исправить"
+            if suggested and len(suggested) > 20:
+                action = "переписать"
+            if isinstance(e, dict):
+                cat = e.get('category', '')
+            else:
+                cat = getattr(e, 'category', '')
+            if cat in ('structure',):
+                action = "переструктурировать"
+            elif cat in ('citation',):
+                action = "добавить ссылку"
 
-        if critical_edits:
-            parts.append("CRITICAL ISSUES (MUST FIX):")
-            for e in critical_edits:
-                parts.append(
-                    f"  [{e.location}] {e.reason}\n"
-                    f"    Original: {e.original[:150]}\n"
-                    f"    Suggested: {e.suggested[:150]}\n"
-                    f"    Category: {e.category}"
-                )
-            parts.append("")
+            structured_edits.append({
+                "section": loc,
+                "description": str(reason)[:300],
+                "severity": sev,
+                "action": action,
+            })
 
-        if major_edits:
-            parts.append("MAJOR ISSUES (SHOULD FIX):")
-            for e in major_edits:
-                parts.append(
-                    f"  [{e.location}] {e.reason}\n"
-                    f"    Original: {e.original[:150]}\n"
-                    f"    Suggested: {e.suggested[:150]}\n"
-                    f"    Category: {e.category}"
-                )
-            parts.append("")
+        # Add failed fact-checks as critical edits
+        for fc in fact_checks:
+            if isinstance(fc, dict):
+                verified = fc.get('verified', True)
+            else:
+                verified = getattr(fc, 'verified', True)
+            if not verified:
+                claim = fc.get('claim', str(fc)[:120]) if isinstance(fc, dict) else getattr(fc, 'claim', str(fc))[:120]
+                structured_edits.append({
+                    "section": "general",
+                    "description": f"Факт-чек: \"{claim}\" — не подтверждено источниками",
+                    "severity": "critical",
+                    "action": "исправить",
+                })
 
-        if minor_edits:
-            parts.append("MINOR ISSUES (optional fixes):")
-            for e in minor_edits[:10]:  # Limit minor issues
-                parts.append(f"  [{e.location}] {e.reason}: {e.suggested[:100]}")
-            parts.append("")
+        # Add improvement suggestions as minor edits
+        for s in suggestions:
+            if isinstance(s, str) and s.strip():
+                structured_edits.append({
+                    "section": "general",
+                    "description": str(s)[:300],
+                    "severity": "minor",
+                    "action": "улучшить",
+                })
 
-        # Improvement suggestions
-        if suggestions:
-            parts.append("GENERAL IMPROVEMENT SUGGESTIONS:")
-            for s in suggestions:
-                parts.append(f"  - {s}")
-            parts.append("")
+        if not structured_edits:
+            return "[]"
 
-        # Fact check problems
-        fact_checks = reviewed.get('fact_checks', []) if isinstance(reviewed, dict) else getattr(reviewed, 'fact_checks', [])
-        failed_facts = [fc for fc in fact_checks if not (getattr(fc, 'verified', True) if hasattr(fc, 'verified') else fc.get('verified', True))]
-        if failed_facts:
-            parts.append("FACT-CHECK FAILURES (verify or correct):")
-            for fc in failed_facts:
-                parts.append(
-                    f"  Claim: {fc.claim[:120]}\n"
-                    f"  Source DOI: {fc.source_doi}\n"
-                    f"  Verdict: {fc.verdict}"
-                )
-            parts.append("")
-
-        # Summary
-        summary = reviewed.get('summary', '') if isinstance(reviewed, dict) else getattr(reviewed, 'summary', '')
-        if summary:
-            parts.append(f"REVIEWER SUMMARY:\n{summary}")
-
-        return "\n".join(parts)
+        return _json.dumps(structured_edits, ensure_ascii=False)
 
     # ── Score parsing helpers ───────────────────────────────────────
 
