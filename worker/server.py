@@ -41,7 +41,15 @@ if str(SCRIPTS_DIR) not in sys.path:
 _FILE_DIR = Path(__file__).resolve().parent  # /app/worker
 WORKER_DIR = _FILE_DIR.parent               # /app (or project root)
 SCRIPTS_DIR = WORKER_DIR / "scripts"
-DATA_DIR = WORKER_DIR / "data"
+
+# In Docker with :ro mount at /app/src, __file__ resolves to /app/src/worker/server.py
+# so WORKER_DIR becomes /app/src (read-only). Detect and override:
+if WORKER_DIR.name == "src" and Path("/app/data").is_dir():
+    DATA_DIR = Path("/app/data")
+    RUNS_DIR = Path("/app/runs") if Path("/app/runs").is_dir() else WORKER_DIR / "runs"
+else:
+    DATA_DIR = WORKER_DIR / "data"
+    RUNS_DIR = WORKER_DIR / "runs"
 
 # Engine: try Docker mount path first, then local path
 _ENGINE_CANDIDATES = [
@@ -113,16 +121,15 @@ def _ensure_engine_imports():
     _engine_imports_done = True
 
 # Ensure data dir exists
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(exist_ok=True, parents=True)
 
 # Scripts use these paths — symlink or configure them to DATA_DIR
 ARTICLES_DB = DATA_DIR / "articles.jsonl"
 GRAPH_DATA = DATA_DIR / "graph_data.json"
 STATUS_FILE = DATA_DIR / "run_status.json"
-RUNS_DIR = WORKER_DIR / "runs"
 CONFIG_PATH = WORKER_DIR / "config.yaml"
 
-RUNS_DIR.mkdir(exist_ok=True)
+RUNS_DIR.mkdir(exist_ok=True, parents=True)
 
 # ── Logging ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1411,7 +1418,10 @@ def _get_orchestrator() -> "EditorOrchestrator":
         from engine.llm.minimax import MiniMaxProvider
         from engine.config import get_config
 
-        storage = JsonlStorage(data_dir=str(DATA_DIR))
+        # Resolve writable data dir (may differ from module-level DATA_DIR
+        # when source is mounted :ro at /app/src)
+        _writable_data = Path("/app/data") if Path("/app/data").is_dir() else DATA_DIR
+        storage = JsonlStorage(data_dir=str(_writable_data))
         cfg = get_config()
         llm = MiniMaxProvider(
             api_key=cfg.llm.api_key,
@@ -1419,7 +1429,7 @@ def _get_orchestrator() -> "EditorOrchestrator":
             base_url=cfg.llm.base_url,
         )
         _orchestrator = EditorOrchestrator(
-            jobs_dir=str(DATA_DIR / "jobs"),
+            jobs_dir=str(_writable_data / "jobs"),
             storage=storage,
             llm_provider=llm,
         )
@@ -1793,12 +1803,17 @@ async def pipeline_run(request: Request):
 
         def target():
             try:
+                import logging as _log
+                _log.getLogger("pipeline").info(f"[pipeline] Starting scout phase for job {_job_obj.job_id}")
                 # Phase 1: Scout (search + score + classify)
                 orch.run_scout_phase(_job_obj)
+                _log.getLogger("pipeline").info(f"[pipeline] Scout done, scout_result={'yes' if _job_obj.scout_result else 'none'}")
                 # Phase 2: Editor (analysis + proposals)
                 orch.run_editing_phase(_job_obj)
+                _log.getLogger("pipeline").info(f"[pipeline] Editor done, state={_job_obj.state}")
             except Exception as e:
-                logger.info(f"Pipeline failed: {e}")
+                import traceback
+                logger.info(f"Pipeline failed: {e}\n{traceback.format_exc()}")
                 try:
                     loaded = orch.load_job(_job_obj.job_id)
                     if loaded:
