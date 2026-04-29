@@ -1990,6 +1990,60 @@ async def pipeline_review(job_id: str):
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/pipeline/jobs/{job_id}/export")
+async def pipeline_export_job(job_id: str, format: str = "docx"):
+    """Export final article as DOCX, PDF, or Markdown file download.
+
+    Query params:
+      format: "docx" (default), "pdf", or "md"
+    """
+    from starlette.responses import FileResponse
+
+    if format not in ("docx", "pdf", "md"):
+        raise HTTPException(400, f"Unsupported format: {format}. Use: docx, pdf, md")
+
+    orch = _get_orchestrator()
+    job = orch.load_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Pipeline job {job_id} not found")
+
+    fa = job.final_article if hasattr(job, 'final_article') else None
+    if not fa:
+        raise HTTPException(400, "No final article to export. Complete writing first.")
+
+    try:
+        from engine.exporter import export_article
+        output_dir = str(DATA_DIR / "exports")
+        path = export_article(job, fmt=format, output_dir=output_dir)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Export failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Export failed: {e}")
+
+    mime_map = {
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pdf": "application/pdf",
+        "md": "text/markdown",
+    }
+    filename = os.path.basename(path)
+    return FileResponse(
+        path,
+        media_type=mime_map.get(format, "application/octet-stream"),
+        filename=filename,
+    )
+
+
+@app.get("/api/pipeline/jobs/{job_id}/formats")
+async def pipeline_export_formats():
+    """Return available export formats for the environment."""
+    try:
+        from engine.exporter import get_available_formats
+        return {"formats": get_available_formats()}
+    except Exception:
+        return {"formats": ["md"]}
+
+
 @app.delete("/api/pipeline/jobs/{job_id}")
 async def pipeline_delete_job(job_id: str):
     """Cancel/delete a pipeline job."""

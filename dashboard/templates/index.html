@@ -4366,7 +4366,8 @@ function showArticlePreviewModal(article, jobId) {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--border-subtle)">
         <h3 style="margin:0;font-size:var(--text-md);font-weight:600;color:var(--text)">📄 Финальная статья</h3>
         <div style="display:flex;gap:8px;align-items:center">
-          <button onclick="downloadArticle('${jobId}')" class="btn-primary btn-sm">⬇ Скачать .md</button>
+          <button onclick="downloadArticle('${jobId}','docx')" class="btn-primary btn-sm">⬇ DOCX</button>
+          <button onclick="downloadArticle('${jobId}','md')" class="btn-primary btn-sm" style="background:rgba(107,114,128,.15);color:var(--text-secondary)">⬇ .md</button>
           <button onclick="this.closest('.modal-backdrop').remove()" aria-label="Закрыть" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer">&times;</button>
         </div>
       </div>
@@ -4376,17 +4377,40 @@ function showArticlePreviewModal(article, jobId) {
     document.body.appendChild(modal);
 }
 
-function downloadArticle(jobId) {
-    api(`/pipeline/jobs/${jobId}`).then(job => {
-        const article = job.final_article;
-        const content = typeof article === 'string' ? article : (article.content || article.body || JSON.stringify(article, null, 2));
-        const blob = new Blob([content], {type: 'text/markdown'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = `article_${jobId}.md`; a.click();
-        URL.revokeObjectURL(url);
-        toast('✅ Статья скачана!', 'success');
-    });
+function downloadArticle(jobId, format) {
+    format = format || 'md';
+    if (format === 'md') {
+        // Old-style: fetch text and create blob
+        api(`/pipeline/jobs/${jobId}`).then(job => {
+            const article = job.final_article;
+            const content = typeof article === 'string' ? article : (article.text || article.content || article.body || JSON.stringify(article, null, 2));
+            const blob = new Blob([content], {type: 'text/markdown'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `article_${jobId}.md`; a.click();
+            URL.revokeObjectURL(url);
+            toast('✅ Markdown скачан!', 'success');
+        });
+    } else {
+        // Server-side export: DOCX / PDF
+        const fetching = format === 'docx' ? 'DOCX' : 'PDF';
+        toast(`⏳ Генерация ${fetching}...`, 'info');
+        fetch(`/api/pipeline/jobs/${jobId}/export?format=${format}`)
+            .then(r => {
+                if (!r.ok) return r.json().then(j => { throw new Error(j.detail || 'Export failed'); });
+                return r.blob();
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `article_${jobId}.${format}`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast(`✅ ${fetching} скачан!`, 'success');
+            })
+            .catch(e => toast(`❌ Ошибка экспорта: ${e.message}`, 'error'));
+    }
 }
 
 function renderSimpleMarkdown(md) {
