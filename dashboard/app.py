@@ -415,6 +415,37 @@ async def api_config_update(updates: dict):
     return _worker_post("/api/digest/config", None)
 
 
+# ── Pipeline export proxy ─────────────────────────────────────
+@app.get("/api/pipeline/jobs/{job_id}/export")
+async def api_pipeline_export(job_id: str, format: str = "docx"):
+    """Export article as DOCX/PDF/MD — proxy to worker.
+
+    Returns binary file download.
+    """
+    import urllib.parse
+    path = f"/api/pipeline/jobs/{urllib.parse.quote(job_id, safe='')}/export?format={format}"
+    try:
+        import requests as _req
+        r = _req.request("GET", f"{WORKER_URL}{path}", timeout=60)
+    except _req.ConnectionError:
+        raise HTTPException(status_code=503, detail="Worker unavailable")
+    except _req.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Worker error: {e}")
+
+    # Forward Content-Disposition from worker or generate one
+    cd = r.headers.get("content-disposition", "")
+    if not cd:
+        ext = {"docx": "docx", "pdf": "pdf", "md": "md"}.get(format, "docx")
+        filename = f"article_{job_id[:12]}.{ext}"
+        cd = f'attachment; filename="{filename}"'
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get("content-type", "application/octet-stream"),
+        headers={"Content-Disposition": cd},
+    )
+
+
 @app.get("/api/digest/dedup")
 async def api_dedup_stats():
     """Dedup stats → proxy to worker."""
