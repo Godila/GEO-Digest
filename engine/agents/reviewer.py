@@ -220,8 +220,10 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
                 strictness=effective_strictness,
             )
 
-            # 3. Call REVIEWER model (separate from writer!)
-            raw_review = self.reviewer_llm.complete_json(
+            # 3. Call REVIEWER model (separate from writer!) — with timeout
+            raw_review = self._run_with_timeout(
+                self.reviewer_llm.complete_json,
+                120,
                 prompt=prompt,
                 system=system_prompt,
                 max_tokens=4096,

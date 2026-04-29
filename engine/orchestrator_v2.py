@@ -919,10 +919,24 @@ class EditorOrchestrator:
 
         return GroupType.DATA_PAPER
 
+    @staticmethod
+    def _sanitize_strings(obj):
+        """Recursively sanitize control characters in strings for JSON safety."""
+        import re as _re
+        _CTRL_RE = _re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+        if isinstance(obj, str):
+            return _CTRL_RE.sub('', obj)
+        if isinstance(obj, dict):
+            return {k: EditorOrchestrator._sanitize_strings(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [EditorOrchestrator._sanitize_strings(v) for v in obj]
+        return obj
+
     def _save_job(self, job: PipelineJob):
         path = self.jobs_dir / f"{job.job_id}.json"
+        data = self._sanitize_strings(asdict(job))
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(asdict(job), f, ensure_ascii=False, indent=2, default=str)
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
     @staticmethod
     def _gen_job_id() -> str:

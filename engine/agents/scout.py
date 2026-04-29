@@ -230,27 +230,6 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
         "could should may might shall can".split()
     )
 
-    def _run_with_timeout(self, fn, timeout_sec: int, *args, **kwargs):
-        """Run fn in a thread with timeout. Raises TimeoutError on expiry."""
-        import threading
-        result_box = [None]
-        error_box = [None]
-
-        def _target():
-            try:
-                result_box[0] = fn(*args, **kwargs)
-            except Exception as exc:
-                error_box[0] = exc
-
-        t = threading.Thread(target=_target, daemon=True)
-        t.start()
-        t.join(timeout=timeout_sec)
-        if t.is_alive():
-            raise TimeoutError(f"{fn.__name__} timed out after {timeout_sec}s")
-        if error_box[0] is not None:
-            raise error_box[0]
-        return result_box[0]
-
     def _extract_keywords(self, topic: str) -> list[str]:
         """Split a long topic into searchable 1-3 word keywords.
 

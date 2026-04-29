@@ -402,7 +402,15 @@ class AgentTools:
                 urls_to_try.append(("arXiv-id", f"https://arxiv.org/pdf/{arxiv_id}.pdf"))
         
         for label, url in urls_to_try:
-            path = self._try_download_pdf(url, article.canonical_id, timeout)
+            # Use DOI or title as cache key (canonical_id is often None → collision)
+            cache_key = (
+                article.canonical_id
+                or getattr(article, 'doi', None)
+                or article.get('doi', '')
+                or article.get('title', '')[:80]
+                or url
+            )
+            path = self._try_download_pdf(url, cache_key, timeout)
             if path:
                 print(f"  [PDF] Downloaded via {label}: {path.name}", file=sys.stderr)
                 return path

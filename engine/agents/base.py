@@ -114,6 +114,30 @@ class BaseAgent(ABC):
 class LLMCallMixin:
     """Mixin for agents that primarily call LLM with structured prompts."""
 
+    # ── LLM timeout ───────────────────────────────────────────
+    _LLM_TIMEOUT_SECONDS = 120  # default timeout for all LLM calls
+
+    def _run_with_timeout(self, fn, timeout_sec: int, *args, **kwargs):
+        """Run fn in a thread with timeout. Raises TimeoutError on expiry."""
+        import threading
+        result_box = [None]
+        error_box = [None]
+
+        def _target():
+            try:
+                result_box[0] = fn(*args, **kwargs)
+            except Exception as exc:
+                error_box[0] = exc
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        t.join(timeout=timeout_sec)
+        if t.is_alive():
+            raise TimeoutError(f"{fn.__name__} timed out after {timeout_sec}s")
+        if error_box[0] is not None:
+            raise error_box[0]
+        return result_box[0]
+
     def call_llm(
         self,
         prompt: str,
@@ -121,22 +145,28 @@ class LLMCallMixin:
         max_tokens: int = 0,
         temperature: float = 0.3,
         parse_json: bool = False,
+        timeout: int = 0,
     ) -> Any:
         """
-        Call LLM and optionally parse JSON response.
+        Call LLM with timeout protection and optionally parse JSON response.
 
         Returns:
             str if parse_json=False
             dict/list if parse_json=True
         """
-        if parse_json:
-            raw = self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)
-            if isinstance(raw, str):
-                import json
-                try:
-                    return json.loads(raw)
-                except json.JSONDecodeError:
-                    self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")
-                    return raw
-            return raw
-        return self.llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)
+        timeout_sec = timeout or self._LLM_TIMEOUT_SECONDS
+
+        def _do_call():
+            if parse_json:
+                raw = self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)
+                if isinstance(raw, str):
+                    import json
+                    try:
+                        return json.loads(raw)
+                    except json.JSONDecodeError:
+                        self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")
+                        return raw
+                return raw
+            return self.llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)
+
+        return self._run_with_timeout(_do_call, timeout_sec)
