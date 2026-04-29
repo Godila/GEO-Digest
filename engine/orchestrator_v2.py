@@ -434,18 +434,24 @@ class EditorOrchestrator:
                 gt = draft_data.get("group_type", "review")
                 if isinstance(gt, str):
                     gt = GroupType(gt)
-                draft_data = StructuredDraft(
-                    group_type=gt,
-                    source_articles=draft_data.get("source_articles", []),
-                    title_suggestion=draft_data.get("title_suggestion", ""),
-                    abstract_suggestion=draft_data.get("abstract_suggestion", ""),
-                    proposed_contribution=draft_data.get("proposed_contribution", ""),
-                    rich_context=draft_data.get("rich_context", ""),
-                    key_findings=draft_data.get("key_findings", []),
-                    methodology_notes=draft_data.get("methodology_notes", ""),
-                    data_extracts=draft_data.get("data_extracts", {}),
-                )
-                logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context)} chars)")
+                # Use **kwargs filtering to only pass valid params
+                _valid_keys = {
+                    "draft_id", "group_type", "source_articles",
+                    "title_suggestion", "abstract_suggestion", "keywords",
+                    "gap_identified", "proposed_contribution", "confidence",
+                    "estimated_effort", "methods_summary", "architecture",
+                    "data_requirements", "infrastructure_needs",
+                    "code_availability", "metrics", "baseline_comparison",
+                    "reproducibility_score", "scope", "articles_covered",
+                    "methodology", "trends_identified",
+                    "dataset_description", "access_method", "format_",
+                    "size_gb", "coverage", "usage_examples",
+                    "created_at", "rich_context", "raw_llm_output",
+                }
+                _filtered = {k: v for k, v in draft_data.items() if k in _valid_keys}
+                _filtered["group_type"] = gt
+                draft_data = StructuredDraft(**_filtered)
+                logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context or '')} chars)")
 
             result = self.writer.run(
                 draft=draft_data,
