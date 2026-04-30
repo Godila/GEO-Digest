@@ -339,6 +339,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         
         Used instead of _pass_polish for section-by-section writing:
         each section is already polished during expansion.
+        Appends formatted references section from DOI metadata.
         """
         import json
         from engine.schemas import WrittenArticle
@@ -351,6 +352,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         
         title = data.get("title", "") or getattr(draft, 'title', '')
         sections = data.get("sections", [])
+        references = data.get("references", [])
         
         # Assemble markdown article
         parts = []
@@ -365,6 +367,22 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             if content:
                 parts.append(content)
         
+        # ── Generate references from DOI metadata ──
+        ref_entries = []
+        
+        # Try references from LLM first
+        if isinstance(references, list) and references:
+            ref_entries = [str(r) for r in references if r]
+        
+        # If LLM didn't return references, build from DOI metadata
+        if not ref_entries:
+            ref_entries = self._build_references_from_draft(draft)
+        
+        if ref_entries:
+            parts.append(f"\n## Список литературы\n")
+            for i, ref in enumerate(ref_entries, 1):
+                parts.append(f"{i}. {ref}")
+        
         text = "\n\n".join(parts)
         words = len(text.split())
         
@@ -374,7 +392,51 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             title=title,
             format_=format_,
             language=language,
+            references=ref_entries,
         )
+
+    def _build_references_from_draft(self, draft) -> list[str]:
+        """Build formatted references from draft DOI metadata."""
+        from engine.agents.tools import AgentTools
+        tools = AgentTools(self.storage)
+        
+        dois = getattr(draft, 'source_articles', []) or getattr(draft, 'key_references', []) or []
+        refs = []
+        
+        for doi in dois[:25]:
+            doi_clean = doi.strip().strip('`').strip('*"')
+            art = tools.search_by_doi(doi_clean)
+            if art:
+                # Build bibliographic entry
+                authors = getattr(art, 'authors', '') or ''
+                year = getattr(art, 'year', '') or ''
+                art_title = getattr(art, 'title', '') or ''
+                journal = getattr(art, 'journal', '') or getattr(art, 'container_title', '') or ''
+                volume = getattr(art, 'volume', '') or ''
+                pages = getattr(art, 'pages', '') or ''
+                
+                entry = ""
+                if authors:
+                    entry += f"{authors}"
+                if year:
+                    entry += f" ({year})"
+                if art_title:
+                    entry += f" {art_title}."
+                if journal:
+                    entry += f" {journal}"
+                if volume:
+                    entry += f", {volume}"
+                if pages:
+                    entry += f", {pages}"
+                entry += f" DOI: {doi_clean}"
+                
+                if entry.strip():
+                    refs.append(entry.strip())
+            else:
+                # Fallback: just DOI
+                refs.append(f"DOI: {doi_clean}")
+        
+        return refs
 
     # ─────────────────────────────────────────────────────────
     #  REVISION: переработка по замечаниям Reviewer (Шаг 4)

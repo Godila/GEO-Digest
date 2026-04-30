@@ -387,6 +387,17 @@ class EditorOrchestrator:
             )
             
             if needs_synthetic:
+                # Check if develop() already ran Reader and stored a draft with rich_context
+                if isinstance(draft_data, dict) and draft_data.get('rich_context'):
+                    logger.info("[orch] Reusing Reader draft from develop() phase")
+                    from engine.schemas import StructuredDraft, GroupType
+                    try:
+                        draft_data = StructuredDraft(**{k: v for k, v in draft_data.items() if k != 'error'})
+                    except Exception:
+                        pass  # will fall through to synthetic
+                    needs_synthetic = not hasattr(draft_data, 'rich_context')
+            
+            if needs_synthetic:
                 from engine.schemas import StructuredDraft, GroupType
                 refs = proposal.get("key_references", [])
                 # refs can be strings ("DOI:...") or dicts ({"doi": "..."})

@@ -209,12 +209,22 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             tools = AgentTools(self.storage)
             articles = []
             missing_dois = []
+            needs_pdf = []  # Articles in storage but without PDF URL
             for doi in dois:
                 art = tools.search_by_doi(doi)
                 if art:
                     articles.append(art)
+                    # Check if article has no PDF URL — try to enrich via Unpaywall
+                    if not getattr(art, 'pdf_url', None):
+                        needs_pdf.append((doi, art))
                 else:
                     missing_dois.append(doi)
+            
+            # Enrich articles without PDF URL via Unpaywall API
+            if needs_pdf:
+                self._log(f"  {len(needs_pdf)} DOI in storage without PDF, enriching via Unpaywall...")
+                for doi, art in needs_pdf:
+                    self._enrich_pdf_url(doi, art)
             
             # Fallback: create Article stubs for DOIs not in storage
             if missing_dois:
@@ -230,6 +240,32 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             return articles
 
         return []
+    
+    def _enrich_pdf_url(self, doi: str, art: Article) -> None:
+        """Enrich Article in-place with PDF URL from Unpaywall."""
+        import urllib.parse, json
+        try:
+            email = "geo-digest@research.bot"
+            url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            
+            pdf_url = (data.get("best_oa_location") or {}).get("url_for_pdf", "")
+            if not pdf_url:
+                pdf_url = (data.get("first_oa_location") or {}).get("url_for_pdf", "")
+            
+            if pdf_url:
+                # Set on the underlying dict (Article wraps a dict)
+                if hasattr(art, '_data'):
+                    art._data['pdf_url'] = pdf_url
+                self._log(f"    PDF enriched for {doi}: {pdf_url[:60]}")
+            else:
+                self._log(f"    No OA PDF for {doi}")
+        except Exception as e:
+            self._log(f"    Unpaywall failed for {doi}: {e}")
     
     def _resolve_doi_from_api(self, doi: str) -> Optional[Article]:
         """Create Article stub from DOI using Unpaywall + Crossref APIs."""
