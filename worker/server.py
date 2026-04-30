@@ -1904,6 +1904,12 @@ async def pipeline_develop(job_id: str, request: Request):
         def target():
             try:
                 orch.develop(_job_obj, user_feedback=_feedback or "")
+                # Auto-continue: develop (Reader) → write (Writer) → review (Reviewer)
+                logger.info(f"[pipeline] Develop done, auto-starting write for {_job_obj.job_id}")
+                orch.write(_job_obj)
+                logger.info(f"[pipeline] Write done, auto-starting review for {_job_obj.job_id}")
+                orch.review(_job_obj)
+                logger.info(f"[pipeline] Pipeline complete for {_job_obj.job_id}")
             except Exception as e:
                 logger.error(f"Pipeline develop FAILED: {e}", exc_info=True)
                 try:

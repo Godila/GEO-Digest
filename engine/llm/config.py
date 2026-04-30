@@ -15,19 +15,20 @@ WRITER_LLM_CONFIG = {
     "provider_class": "OpenAICompatProvider",
     "base_url": "https://openrouter.ai/api/v1",
     "api_key": "REDACTED_OPENROUTER_KEY",
-    "model": "google/gemini-3.1-flash-lite-preview",
-    "timeout": 180,
+    "model": "google/gemini-2.5-flash",
+    "timeout": 300,
     "temperature": 0.3,
 }
 
 
 def get_writer_llm() -> OpenAICompatProvider:
-    """Create and return the Writer's dedicated LLM provider (OpenRouter/Gemini Flash Lite).
+    """Create and return the Writer's dedicated LLM provider (OpenRouter/Gemini 2.5 Flash).
 
-    Uses a lightweight, fast model for content generation.
+    Uses a fast, non-reasoning model for reliable JSON output in content generation.
+    Reasoning models (3.1 Pro) break JSON parsing — Flash is safer for Writer.
 
     Returns:
-        OpenAICompatProvider configured for Gemini Flash Lite via OpenRouter.
+        OpenAICompatProvider configured for Gemini 2.5 Flash via OpenRouter.
     """
     cfg = WRITER_LLM_CONFIG
     return OpenAICompatProvider(
@@ -46,7 +47,7 @@ REVIEWER_LLM_CONFIG = {
     "base_url": "https://openrouter.ai/api/v1",
     "api_key": "REDACTED_OPENROUTER_KEY",
     "model": "google/gemini-3.1-pro-preview",
-    "timeout": 180,
+    "timeout": 300,
     "temperature": 0.15,
 }
 
