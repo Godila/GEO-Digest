@@ -467,26 +467,26 @@ def build_references_system_prompt(language: str) -> str:
 def build_revision_system_prompt(language: str) -> str:
     """System prompt for revising article based on reviewer feedback."""
     lang_label = "русском" if language == "ru" else "English"
-    return f"""Ты — научный писатель, перерабатываешь статью по замечаниям рецензента.
+    return f"""Ты — научный писатель, перерабатываешь КОНКРЕТНЫЕ секции статьи по замечаниям рецензента.
 Язык: {lang_label}.
 
-ЗАДАЧА: Внести ТОЛЬКО указанные правки в указанные секции.
-НЕ переписывай одобренные секции заново — только исправляй проблемные места.
+ЗАДАЧА: Переписать ТОЛЬКО указанные секции. Вернуть JSON ТОЛЬКО с переписанными секциями.
+НЕ переписывай и НЕ возвращай одобренные секции — они будут сохранены как есть.
 
 ПРАВИЛА:
-1. Сохраняй стиль и структуру одобренных секций БЕЗ ИЗМЕНЕНИЙ
-2. Вноси точечные правки по каждому замечанию
-3. Усиливай слабые места конкретными данными и цитатами
-4. Каждый исправленный абзац — 4-8 предложений с конкретными числами
-5. ОБЩИЙ ОБЪЁМ СТАТЬИ НЕ ДОЛЖЕН ПРЕВЫШАТЬ 6000 слов
-6. Если правка касается только одного абзаца — перепиши только его
+1. Каждый исправленный абзац — 4-8 предложений с конкретными числами
+2. Усиливай слабые места конкретными данными и цитатами из источников
+3. НЕ СОКРАЩАЙ контент — только расширяй и углубляй
+4. Обсуждение: минимум 800 слов (сравнение с другими исследованиями, механизмы, ограничения)
+5. Выводы: минимум 300 слов (резюме каждого ключевого вывода, значимость, перспективы)
+6. Сохраняй академический стиль без AI-штампов
 
 ФОРМАТ ВЫВОДА (JSON, без markdown):
-{{"title": "...", "sections": [{{"heading": "...", "content": "..."}}], "references": [...], "word_count": N}}"""
+{{"rewritten_sections": [{{"heading": "Обсуждение", "content": "..."}}], "title_change": null или "новый заголовок"}}"""
 
 
 def build_revision_user_prompt(article_text: str, revision_instructions: list) -> str:
-    """User prompt for article revision based on reviewer edits."""
+    """User prompt for article revision — sends only affected sections."""
     edits_text = "\n\n".join(
         f"Правка {i+1} [{e.get('severity', 'medium')}]: {e.get('description', '')}\n"
         f"  Секция: {e.get('section', 'вся статья')}\n"
@@ -494,18 +494,14 @@ def build_revision_user_prompt(article_text: str, revision_instructions: list) -
         for i, e in enumerate(revision_instructions)
     )
     
-    # Determine which sections need editing vs keeping as-is
+    # Determine which sections need editing
     affected_sections = set()
     for e in revision_instructions:
         sec = e.get('section', '')
         if sec:
-            affected_sections.add(sec)
+            # Normalize: match partial headings
+            affected_sections.add(sec.lower().strip())
     
-    # Count current words to set budget
-    current_words = len(article_text.split())
-    budget = min(current_words + 200, 6000)  # Allow slight growth but cap
-    
-    # Extract only affected sections (not the whole article)
     # Split article into sections
     sections_dict = {}
     current_heading = ""
@@ -521,22 +517,38 @@ def build_revision_user_prompt(article_text: str, revision_instructions: list) -
     if current_heading:
         sections_dict[current_heading] = "\n".join(current_content)
     
-    # Build focused context: only affected sections + list of kept sections
+    # Build context: ONLY affected sections for rewriting
     affected_text = ""
     kept_sections = []
     for heading, content in sections_dict.items():
-        if heading in affected_sections or not affected_sections:
+        is_affected = (
+            heading.lower().strip() in affected_sections
+            or any(a in heading.lower() for a in affected_sections)
+            or not affected_sections  # if no specific section → all affected
+        )
+        if is_affected:
             affected_text += content + "\n\n"
         else:
             kept_sections.append(heading)
     
-    # If no specific sections identified, send full article but truncated
+    # If no specific sections identified, send full article (truncated to 20K)
     if not affected_text:
         affected_text = article_text[:20000]
     
     kept_info = ""
     if kept_sections:
-        kept_info = f"\n\nСекции БЕЗ ИЗМЕНЕНИЙ (не переписывай): {', '.join(kept_sections)}"
+        kept_info = f"\n\nСекции БЕЗ ИЗМЕНЕНИЙ (НЕ включай их в ответ): {', '.join(kept_sections)}"
+    
+    # Section-specific minimums to prevent shrinkage
+    min_words = ""
+    for heading in sections_dict:
+        h = heading.lower()
+        if "обсужд" in h or "discuss" in h:
+            min_words += f"\n- {heading}: МИНИМУМ 800 слов"
+        elif "вывод" in h or "заключ" in h or "conclu" in h:
+            min_words += f"\n- {heading}: МИНИМУМ 300 слов"
+        elif "введен" in h or "introd" in h:
+            min_words += f"\n- {heading}: МИНИМУМ 500 слов"
     
     return f"""ПЕРЕРАБОТАЙ указанные секции по замечаниям рецензента.
 
@@ -547,13 +559,10 @@ def build_revision_user_prompt(article_text: str, revision_instructions: list) -
 == СЕКЦИИ ДЛЯ ПРАВКИ ==
 {affected_text}
 
-== БЮДЖЕТ ==
-Текущий объём: {current_words} слов
-Максимальный объём после правок: {budget} слов
-НЕ превышай бюджет.
+== МИНИМАЛЬНЫЙ ОБЪЁМ СЕКЦИЙ =={min_words}
 
-Верни JSON со ВСЕМИ секциями статьи (исправленными + неизменёнными).
-Для неизменённых секций просто скопируй их content как есть."""
+Верни JSON ТОЛЬКО с переписанными секциями ( НЕ включай одобренные секции).
+Формат: {{"rewritten_sections": [{{"heading": "...", "content": "..."}}]}}"""
 
 
 # ═══════════════════════════════════════════════════════════════

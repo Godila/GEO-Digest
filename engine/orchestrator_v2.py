@@ -767,16 +767,89 @@ class EditorOrchestrator:
                 format_="markdown",
             )
 
-            # Parse revised article
+            # Parse revised article — merge rewritten sections with original
             import json as _json
             try:
                 revised_data = _json.loads(revised_json) if isinstance(revised_json, str) else revised_json
             except (_json.JSONDecodeError, TypeError):
-                revised_data = {"text": revised_json, "title": ""}
-
-            # Update job
+                revised_data = {"rewritten_sections": [], "text": revised_json}
+            
             from engine.schemas import WrittenArticle
-            if isinstance(revised_data, dict):
+            
+            if isinstance(revised_data, dict) and "rewritten_sections" in revised_data:
+                # ── TARGETED REWRITE: merge rewritten sections into original ──
+                rewritten = revised_data.get("rewritten_sections", [])
+                
+                # Build heading→content map from rewritten sections
+                rewritten_map = {}
+                for sec in rewritten:
+                    if isinstance(sec, dict):
+                        h = sec.get("heading", "").strip()
+                        if h:
+                            rewritten_map[h.lower()] = sec.get("content", "")
+                
+                # Parse original article sections
+                orig_sections = {}
+                orig_text = article_text
+                current_heading = ""
+                current_lines = []
+                for line in orig_text.split("\n"):
+                    if line.startswith("## "):
+                        if current_heading:
+                            orig_sections[current_heading] = "\n".join(current_lines)
+                        current_heading = line.strip("# ").strip()
+                        current_lines = [line]
+                    else:
+                        current_lines.append(line)
+                if current_heading:
+                    orig_sections[current_heading] = "\n".join(current_lines)
+                
+                # Get original title
+                title = ""
+                title_change = revised_data.get("title_change")
+                for line in orig_text.split("\n"):
+                    if line.startswith("# ") and not line.startswith("## "):
+                        title = line.strip("# ").strip()
+                        break
+                if title_change:
+                    title = title_change
+                
+                # Merge: replace affected sections, keep others
+                merged_parts = []
+                if title:
+                    merged_parts.append(f"# {title}\n")
+                
+                replaced_count = 0
+                for heading, content in orig_sections.items():
+                    # Check if this section was rewritten
+                    new_content = None
+                    for rw_h, rw_c in rewritten_map.items():
+                        if rw_h in heading.lower() or heading.lower() in rw_h:
+                            new_content = rw_c
+                            break
+                    
+                    if new_content:
+                        merged_parts.append(f"## {heading}\n")
+                        merged_parts.append(new_content + "\n")
+                        replaced_count += 1
+                    else:
+                        merged_parts.append(content + "\n")
+                
+                full_text = "\n".join(merged_parts)
+                
+                logger.info(f"[orch] Targeted rewrite: replaced {replaced_count} sections, kept {len(orig_sections) - replaced_count} unchanged")
+                
+                article = WrittenArticle(
+                    text=full_text,
+                    title=title or "",
+                    format_="markdown",
+                    word_count=len(full_text.split()),
+                    sections=[{"heading": h, "content": c} for h, c in orig_sections.items()],
+                    references=revised_data.get("references", []),
+                )
+                job.final_article = self._serialize_article(article)
+            elif isinstance(revised_data, dict):
+                # ── FALLBACK: old-style full rewrite ──
                 sections = revised_data.get("sections", [])
                 text_parts = []
                 title = revised_data.get("title", "")
