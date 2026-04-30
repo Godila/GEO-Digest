@@ -1145,8 +1145,8 @@ class EditorOrchestrator:
         dois = []
         for ref in references:
             if isinstance(ref, str):
-                # Убираем префиксы DOI:/doi:
-                clean = ref.replace("DOI:", "").replace("doi:", "").strip()
+                # Убираем префиксы DOI:/doi: и markdown-символы
+                clean = ref.replace("DOI:", "").replace("doi:", "").strip().strip("`").strip("'\",")
                 if doi_pattern.match(clean):
                     dois.append(clean)
             elif isinstance(ref, dict):
