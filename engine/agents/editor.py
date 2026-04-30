@@ -712,15 +712,18 @@ class EditorAgent:
 
         user_msg = (
             f"На основе своего исследования предложи концепты статей по теме '{topic}'.\n"
-            f"Качество >> количество. Предложи от 1 до {hint} вариантов.\n"
+            f"Предложи от 1 до {hint} вариантов.\n"
+            f"⚠️ ВАЖНО: включай ВСЕ релевантные DOI из списка selected_dois в key_references каждого proposal.\n"
+            f"Минимум {min(len(discovery.selected_dois), 10)} источников на proposal. Сейчас доступно: {len(discovery.selected_dois)} DOI.\n"
             f"Оценка материала: {discovery.material_sufficiency}."
         )
 
         prompt = SYNTHESIZE_SYSTEM_PROMPT + "\n\n"
         prompt += self._format_synthesis_context(discovery, evidence)
         prompt += f"\n## ОГРАНИЧЕНИЯ\n"
-        prompt += f"- Максимум {MAX_PROPOSALS_HARD} вариантов (качество > количества)\n"
+        prompt += f"- Максимум {MAX_PROPOSALS_HARD} вариантов\n"
         prompt += f"- Материал: {discovery.material_sufficiency} (предложи ~{hint} вариантов)\n"
+        prompt += f"- ⚠️ key_references: минимум {min(len(discovery.selected_dois), 10)} DOI на proposal из {len(discovery.selected_dois)} доступных\n"
         if domain:
             prompt += f"- Домен: {domain}\n"
         prompt += f"- Тема: {topic}\n"
@@ -733,7 +736,7 @@ class EditorAgent:
                 prompt=user_msg,
                 system=prompt,
                 temperature=temperature,
-                max_tokens=4096,
+                max_tokens=8192,
             )
 
             # Log raw response for debugging (critical for format issues)

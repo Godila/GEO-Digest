@@ -130,9 +130,10 @@ class EditorOrchestrator:
     def editor(self):
         if self._editor is None:
             from engine.agents.editor import EditorAgent
+            from engine.llm.config import get_editor_llm
             self._editor = EditorAgent(
                 storage=self._storage,
-                llm=self._llm_provider,
+                llm=get_editor_llm(),   # Gemini 3 Flash (medium reasoning) — critical source decisions
                 jobs_dir=str(self.jobs_dir),
             )
         return self._editor
