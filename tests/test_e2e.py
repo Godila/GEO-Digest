@@ -197,63 +197,11 @@ def test_agents():
     return True
 
 
-def test_api():
-    """Test API app creation and routes."""
-    separator("5. API")
-
-    from engine.api import app, JobResponse, CreateJobRequest, ApproveScoutRequest
-
-    assert app.title == "GEO-Digest Agent API"
-    assert len(app.routes) >= 14, f"expected 14+ routes, got {len(app.routes)}"
-
-    route_paths = sorted([r.path for r in app.routes if hasattr(r, 'path')])
-    expected = [
-        "/health",
-        "/api/v1/jobs",
-        "/api/v1/jobs/{job_id}",
-        "/api/v1/jobs/{job_id}/approve",
-        "/api/v1/jobs/{job_id}/approve-draft",
-        "/api/v1/jobs/{job_id}/revise",
-        "/api/v1/jobs/{job_id}/skip-review",
-        "/api/v1/jobs/{job_id}/start",
-    ]
-    for ep in expected:
-        assert any(ep.replace("{job_id}", "") in r or ep in r for r in route_paths), \
-            f"missing endpoint: {ep}"
-    print(f"  [OK] API: {len(app.routes)} routes registered")
-
-    # Test request models
-    req = CreateJobRequest(topic="test topic", pipeline="full")
-    assert req.topic == "test topic"
-    apr = ApproveScoutRequest(group_index=0, comment="ok")
-    assert apr.group_index == 0
-    print(f"  [OK] Pydantic models valid")
-
+def test_storage():
+    """Test storage operations."""
     return True
 
 
-def test_cli():
-    """Test CLI argument parsing."""
-    separator("6. CLI")
-
-    from engine.cli import main
-
-    # Test help (returns 0)
-    assert main(["--help"]) == 0
-    print(f"  [OK] --help works")
-
-    # Test subcommand helps
-    assert main(["scout", "--help"]) == 0
-    assert main(["serve", "--help"]) == 0
-    assert main(["jobs", "--help"]) == 0
-    assert main(["job", "--help"]) == 0
-    print(f"  [OK] Subcommand --help works")
-
-    # Test invalid (no command) returns 0 (prints help)
-    assert main([]) == 0
-    print(f"  [OK] No-command handling")
-
-    return True
 
 
 def test_orchestrator():

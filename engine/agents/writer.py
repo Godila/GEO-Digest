@@ -1,14 +1,12 @@
 """Writer Agent — Multi-Pass StructuredDraft → WrittenArticle.
 
-Стратегия (калибровка по журналу «Геология и геофизика Юга России»):
-  Pass 1: Outline — детальный план с тезисами каждого абзаца (~400 слов)
-  Pass 2: Expand — полный текст каждой секции по плану (~4000-5500 слов)
-  Pass 3: Polish — шлифовка связности, цитирования, переходов
+Стратегия:
+  Pass 1: Outline — детальный план с тезисами каждого абзаца
+  Pass 2: Section-by-Section Expand — полный текст каждой секции
+  Assemble — сборка секций + список литературы (без LLM)
 
-Целевые параметры (измерено по 22 статьям):
-  Средний объём: 4407 слов
-  Среднее ссылок: 38.3
-  Плотность цитирования: 8.6/1000 слов
+Evidence-Grounded Writing v3: structured evidence extraction (reader.py),
+CARS rhetorical model + evidence chaining (article_patterns.py + writer_prompts.py).
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ from engine.schemas import (
 from engine.prompts.writer_prompts import (
     build_outline_system_prompt, build_outline_user_prompt,
     build_expand_system_prompt, build_expand_user_prompt,
-    build_polish_system_prompt, build_polish_user_prompt,
     build_target_word_count, build_length_instruction, build_max_tokens,
 )
 
@@ -475,25 +472,6 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         if isinstance(result, dict):
             return json.dumps(result, ensure_ascii=False, indent=2)
         return str(result)
-
-    # ─────────────────────────────────────────────────────────
-    #  PASS 3: POLISH
-    # ─────────────────────────────────────────────────────────
-
-    def _pass_polish(self, expanded_json: str, draft, format_, language) -> WrittenArticle:
-        """Pass 3: Polish the expanded article."""
-        system = build_polish_system_prompt(language)
-        user = build_polish_user_prompt(expanded_json)
-
-        raw = self.call_llm(
-            prompt=user,
-            system=system,
-            max_tokens=32000,
-            parse_json=True,
-            temperature=0.2,
-        )
-
-        return self._parse_written(raw, draft, format_, language)
 
     # ─────────────────────────────────────────────────────────
     #  FALLBACK: Single-Pass (старый подход)

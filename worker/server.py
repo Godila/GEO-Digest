@@ -1320,51 +1320,6 @@ async def orch_get_job(job_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
-async def orch_approve_group(job_id: str, request: Request):
-    """Approve Scout result → start Reader phase.
-    Body: {"group_index": int, "comment": ""}
-    """
-    _ensure_engine_imports()
-    try:
-        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
-    except Exception:
-        body = {}
-
-    group_index = body.get("group_index", 0)
-    comment = body.get("comment", "")
-
-    orch = _get_orch()
-    state = orch.approve_group(job_id, group_index=int(group_index), comment=str(comment))
-    return _job_state_to_dict(state)
-
-
-@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
-async def orch_approve_draft(job_id: str, request: Request):
-    """Approve Reader draft → start Writer phase.
-    Body: {"comment": ""}
-    """
-    _ensure_engine_imports()
-    try:
-        body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
-    except Exception:
-        body = {}
-
-    comment = body.get("comment", "")
-    orch = _get_orch()
-    state = orch.approve_draft(job_id, comment=str(comment))
-    return _job_state_to_dict(state)
-
-
-@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
-async def orch_skip_review(job_id: str):
-    """Skip review → mark job as complete."""
-    _ensure_engine_imports()
-    orch = _get_orch()
-    state = orch.skip_review(job_id)
-    return _job_state_to_dict(state)
-
-
 @app.delete("/api/orchestrator/jobs/{job_id}")
 async def orch_cancel_job(job_id: str):
     """Cancel a running pipeline job."""

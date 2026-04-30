@@ -525,23 +525,6 @@ async def api_orch_get_job(job_id: str):
     """Get orchestrator job state -> proxy to worker."""
     return _worker_get(f"/api/orchestrator/jobs/{job_id}")
 
-@app.post("/api/orchestrator/jobs/{job_id}/approve-group")
-async def api_orch_approve_group(job_id: str, request: Request):
-    """Approve scout group -> start reader -> proxy to worker."""
-    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
-    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-group", json_body=body, timeout=30)
-
-@app.post("/api/orchestrator/jobs/{job_id}/approve-draft")
-async def api_orch_approve_draft(job_id: str, request: Request):
-    """Approve draft -> start writer -> proxy to worker."""
-    body = await request.json() if request.headers.get('content-type', '').startswith('application/json') else {}
-    return _worker_post(f"/api/orchestrator/jobs/{job_id}/approve-draft", json_body=body, timeout=30)
-
-@app.post("/api/orchestrator/jobs/{job_id}/skip-review")
-async def api_orch_skip_review(job_id: str):
-    """Skip review -> complete -> proxy to worker."""
-    return _worker_post(f"/api/orchestrator/jobs/{job_id}/skip-review")
-
 @app.delete("/api/orchestrator/jobs/{job_id}")
 async def api_orch_cancel_job(job_id: str):
     """Cancel pipeline job -> proxy to worker."""
