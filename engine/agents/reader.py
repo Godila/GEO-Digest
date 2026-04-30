@@ -14,6 +14,7 @@ Dlya raznykh GroupType raznye polya:
 """
 
 from __future__ import annotations
+import os
 
 from engine.agents.base import BaseAgent, LLMCallMixin
 from engine.agents.tools import AgentTools
@@ -245,7 +246,7 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         """Enrich Article in-place with PDF URL from Unpaywall."""
         import urllib.parse, json
         try:
-            email = "geo-digest@research.bot"
+            email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
             req = urllib.request.Request(url, headers={
                 "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
@@ -279,7 +280,7 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         
         # 1. Unpaywall for OA URL + metadata
         try:
-            email = "geo-digest@research.bot"
+            email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
             req = urllib.request.Request(url, headers={
                 "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"

@@ -339,7 +339,7 @@ class AgentTools:
 
         try:
             import urllib.parse, json
-            email = "geo-digest@research.bot"
+            email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
 
             req = urllib.request.Request(url, headers={

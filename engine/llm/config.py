@@ -5,13 +5,20 @@ Editor:  Gemini 3 Flash (reasoning, medium) — critical decisions: source selec
 Reviewer: Gemini 3.1 Pro (reasoning, best) — quality review + rewrite.
 Reader:  MiniMax M2.7 (via Anthropic API) — evidence extraction.
 Scout:  MiniMax M2.7 — search + classify.
-"""
 
+All keys and models configured via environment variables (see .env.example).
+"""
+import os
 from engine.llm.openai_compat import OpenAICompatProvider
 
-# ── OpenRouter (Gemini) ──
-OR_KEY = "REDACTED_OPENROUTER_KEY"
-OR_BASE = "https://openrouter.ai/api/v1"
+# ── OpenRouter (Gemini) — from env vars ──
+OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OR_BASE = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+# ── Model names — configurable via env, sensible defaults ──
+WRITER_MODEL = os.environ.get("WRITER_MODEL", "google/gemini-3-flash-preview")
+EDITOR_MODEL = os.environ.get("EDITOR_MODEL", "google/gemini-3-flash-preview")
+REVIEWER_MODEL = os.environ.get("REVIEWER_MODEL", "google/gemini-3.1-pro-preview")
 
 
 def get_writer_llm() -> OpenAICompatProvider:
@@ -19,7 +26,7 @@ def get_writer_llm() -> OpenAICompatProvider:
     return OpenAICompatProvider(
         api_key=OR_KEY,
         base_url=OR_BASE,
-        model="google/gemini-3-flash-preview",
+        model=WRITER_MODEL,
         timeout=300,
         reasoning_effort="low",      # Minimal thinking → max content tokens
         use_json_mode=True,
@@ -39,7 +46,7 @@ def get_editor_llm() -> OpenAICompatProvider:
     return OpenAICompatProvider(
         api_key=OR_KEY,
         base_url=OR_BASE,
-        model="google/gemini-3-flash-preview",
+        model=EDITOR_MODEL,
         timeout=300,
         reasoning_effort="medium",   # Deeper thinking for source decisions
         use_json_mode=False,         # Editor returns text + JSON, not pure JSON
@@ -52,7 +59,7 @@ def get_reviewer_llm() -> OpenAICompatProvider:
     return OpenAICompatProvider(
         api_key=OR_KEY,
         base_url=OR_BASE,
-        model="google/gemini-3.1-pro-preview",
+        model=REVIEWER_MODEL,
         timeout=300,
         reasoning_effort="medium",   # More thinking for nuanced review
         use_json_mode=True,
