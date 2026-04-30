@@ -48,10 +48,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
     def call_llm(self, prompt, system="", max_tokens=0, temperature=0.3,
                  parse_json=False, timeout=0):
         """Override call_llm to use Writer LLM instead of default MiniMax."""
-        from engine.llm.config import WRITER_LLM_CONFIG
         timeout_sec = timeout or self._LLM_TIMEOUT_SECONDS
-        # Use writer-specific temperature as default
-        effective_temp = temperature if temperature != 0.3 else WRITER_LLM_CONFIG.get("temperature", 0.3)
 
         def _do_call():
             if parse_json:
@@ -122,9 +119,11 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             expanded = self._pass_expand_sections(outline, full_context, group_type, language, format_,
                                                    evidence_blocks=ev_blocks)
 
-            # ─── PASS 3: POLISH ──────────────────────────────
-            self._log("Pass 3: Шлифовка статьи...")
-            article = self._pass_polish(expanded, draft, format_, language)
+            # ─── SKIP PASS 3 (POLISH) for section-by-section ───
+            # Section-by-section уже производит качественный текст.
+            # Polish отправляет 40K+ chars в LLM → reasoning model обрезает JSON → статья теряется.
+            self._log("Пропускаю Pass 3 (полировка) — section-by-section уже достаточно")
+            article = self._assemble_sections(expanded, draft, format_, language)
 
             self._log(f"Готово! Объём: {article.word_count} слов")
             return AgentResult(agent_name=self.name, success=True, data=article)
@@ -168,12 +167,12 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         result = self.call_llm(
             prompt=user,
             system=system,
-            max_tokens=8000,
+            max_tokens=16000,
             parse_json=True,
             temperature=0.3,
         )
 
-        # Outline — это JSON с планом, сохраняем как строку для pass 2
+        # Outline — JSON с планом, сохраняем как строку для pass 2
         if isinstance(result, dict):
             import json
             return json.dumps(result, ensure_ascii=False, indent=2)
@@ -335,6 +334,48 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             sections.append({"heading": "Основная часть", "outline": outline})
         return {"title": "", "sections": sections}
 
+    def _assemble_sections(self, expanded_json: str, draft, format_, language) -> "WrittenArticle":
+        """Assemble expanded sections into WrittenArticle without LLM call.
+        
+        Used instead of _pass_polish for section-by-section writing:
+        each section is already polished during expansion.
+        """
+        import json
+        from engine.schemas import WrittenArticle
+        
+        # Parse expanded sections
+        try:
+            data = json.loads(expanded_json) if isinstance(expanded_json, str) else expanded_json
+        except json.JSONDecodeError:
+            data = {"sections": []}
+        
+        title = data.get("title", "") or getattr(draft, 'title', '')
+        sections = data.get("sections", [])
+        
+        # Assemble markdown article
+        parts = []
+        if title:
+            parts.append(f"# {title}\n")
+        
+        for sec in sections:
+            heading = sec.get("heading", "")
+            content = sec.get("content", "")
+            if heading:
+                parts.append(f"\n## {heading}\n")
+            if content:
+                parts.append(content)
+        
+        text = "\n\n".join(parts)
+        words = len(text.split())
+        
+        return WrittenArticle(
+            text=text,
+            word_count=words,
+            title=title,
+            format_=format_,
+            language=language,
+        )
+
     # ─────────────────────────────────────────────────────────
     #  REVISION: переработка по замечаниям Reviewer (Шаг 4)
     # ─────────────────────────────────────────────────────────
@@ -363,7 +404,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         result = self.call_llm(
             prompt=user,
             system=system,
-            max_tokens=16384,
+            max_tokens=32000,
             parse_json=True,
             temperature=0.3,
         )
@@ -385,7 +426,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         raw = self.call_llm(
             prompt=user,
             system=system,
-            max_tokens=16384,
+            max_tokens=32000,
             parse_json=True,
             temperature=0.2,
         )

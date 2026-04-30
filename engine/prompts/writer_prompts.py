@@ -254,21 +254,21 @@ SECTION_CONTEXT_KEYWORDS = {
 
 # Целевой объём секций (слова) и max_tokens для LLM
 SECTION_TARGETS = {
-    "введение":        {"words": (400, 700),  "tokens": 2000},
-    "обзор литературы": {"words": (800, 1500), "tokens": 4000},
-    "методы":           {"words": (800, 1200), "tokens": 3000},
-    "результаты":       {"words": (900, 1500), "tokens": 4000},
-    "обсуждение":       {"words": (1000, 1500), "tokens": 4000},
-    "выводы":           {"words": (200, 400),   "tokens": 1500},
-    "список литературы": {"words": (100, 300),  "tokens": 1000},
+    "введение":        {"words": (400, 700),  "tokens": 6000},
+    "обзор литературы": {"words": (800, 1500), "tokens": 12000},
+    "методы":           {"words": (800, 1200), "tokens": 9000},
+    "результаты":       {"words": (900, 1500), "tokens": 12000},
+    "обсуждение":       {"words": (1000, 1500), "tokens": 12000},
+    "выводы":           {"words": (200, 400),   "tokens": 4500},
+    "список литературы": {"words": (100, 300),  "tokens": 3000},
     # English fallback
-    "introduction":    {"words": (400, 700),  "tokens": 2000},
-    "literature":      {"words": (800, 1500), "tokens": 4000},
-    "methods":         {"words": (800, 1200), "tokens": 3000},
-    "results":         {"words": (900, 1500), "tokens": 4000},
-    "discussion":      {"words": (1000, 1500), "tokens": 4000},
-    "conclusion":      {"words": (200, 400),   "tokens": 1500},
-    "references":      {"words": (100, 300),   "tokens": 1000},
+    "introduction":    {"words": (400, 700),  "tokens": 6000},
+    "literature":      {"words": (800, 1500), "tokens": 12000},
+    "methods":         {"words": (800, 1200), "tokens": 9000},
+    "results":         {"words": (900, 1500), "tokens": 12000},
+    "discussion":      {"words": (1000, 1500), "tokens": 12000},
+    "conclusion":      {"words": (200, 400),   "tokens": 4500},
+    "references":      {"words": (100, 300),   "tokens": 3000},
 }
 
 
@@ -318,7 +318,7 @@ def get_section_target(section_heading: str) -> dict:
         if key in heading_lower:
             return target
     # Default for unknown sections
-    return {"words": (500, 1000), "tokens": 3000}
+    return {"words": (500, 1000), "tokens": 9000}
 
 
 def build_section_expand_system_prompt(group_type: GroupType, language: str, 
@@ -470,13 +470,16 @@ def build_revision_system_prompt(language: str) -> str:
     return f"""Ты — научный писатель, перерабатываешь статью по замечаниям рецензента.
 Язык: {lang_label}.
 
-ЗАДАЧА: Внести ТОЛЬКО указанные правки, не переписывая то, что рецензент одобрил.
+ЗАДАЧА: Внести ТОЛЬКО указанные правки в указанные секции.
+НЕ переписывай одобренные секции заново — только исправляй проблемные места.
 
 ПРАВИЛА:
-1. Сохраняй стиль и структуру одобренных секций
+1. Сохраняй стиль и структуру одобренных секций БЕЗ ИЗМЕНЕНИЙ
 2. Вноси точечные правки по каждому замечанию
-3. Усиливай слабые места конкретными данными
-4. Каждый абзац — 4-8 предложений с конкретными числами
+3. Усиливай слабые места конкретными данными и цитатами
+4. Каждый исправленный абзац — 4-8 предложений с конкретными числами
+5. ОБЩИЙ ОБЪЁМ СТАТЬИ НЕ ДОЛЖЕН ПРЕВЫШАТЬ 6000 слов
+6. Если правка касается только одного абзаца — перепиши только его
 
 ФОРМАТ ВЫВОДА (JSON, без markdown):
 {{"title": "...", "sections": [{{"heading": "...", "content": "..."}}], "references": [...], "word_count": N}}"""
@@ -490,15 +493,67 @@ def build_revision_user_prompt(article_text: str, revision_instructions: list) -
         f"  Действие: {e.get('action', 'исправить')}"
         for i, e in enumerate(revision_instructions)
     )
-    return f"""ПЕРЕРАБОТАЙ статью по замечаниям рецензента.
+    
+    # Determine which sections need editing vs keeping as-is
+    affected_sections = set()
+    for e in revision_instructions:
+        sec = e.get('section', '')
+        if sec:
+            affected_sections.add(sec)
+    
+    # Count current words to set budget
+    current_words = len(article_text.split())
+    budget = min(current_words + 200, 6000)  # Allow slight growth but cap
+    
+    # Extract only affected sections (not the whole article)
+    # Split article into sections
+    sections_dict = {}
+    current_heading = ""
+    current_content = []
+    for line in article_text.split("\n"):
+        if line.startswith("## "):
+            if current_heading:
+                sections_dict[current_heading] = "\n".join(current_content)
+            current_heading = line.strip("# ").strip()
+            current_content = [line]
+        else:
+            current_content.append(line)
+    if current_heading:
+        sections_dict[current_heading] = "\n".join(current_content)
+    
+    # Build focused context: only affected sections + list of kept sections
+    affected_text = ""
+    kept_sections = []
+    for heading, content in sections_dict.items():
+        if heading in affected_sections or not affected_sections:
+            affected_text += content + "\n\n"
+        else:
+            kept_sections.append(heading)
+    
+    # If no specific sections identified, send full article but truncated
+    if not affected_text:
+        affected_text = article_text[:20000]
+    
+    kept_info = ""
+    if kept_sections:
+        kept_info = f"\n\nСекции БЕЗ ИЗМЕНЕНИЙ (не переписывай): {', '.join(kept_sections)}"
+    
+    return f"""ПЕРЕРАБОТАЙ указанные секции по замечаниям рецензента.
 
 == ЗАМЕЧАНИЯ ==
 {edits_text}
+{kept_info}
 
-== ТЕКУЩАЯ СТАТЬЯ ==
-{article_text}
+== СЕКЦИИ ДЛЯ ПРАВКИ ==
+{affected_text}
 
-Внеси правки и верни ПОЛНУЮ исправленную статью."""
+== БЮДЖЕТ ==
+Текущий объём: {current_words} слов
+Максимальный объём после правок: {budget} слов
+НЕ превышай бюджет.
+
+Верни JSON со ВСЕМИ секциями статьи (исправленными + неизменёнными).
+Для неизменённых секций просто скопируй их content как есть."""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -540,7 +595,7 @@ def build_max_tokens(group_type: GroupType) -> int:
     Add 50% buffer for JSON structure overhead.
     """
     target = build_target_word_count(group_type)
-    return min(int(target["target"] * 1.5 * 1.5), 16384)
+    return min(int(target["target"] * 1.5 * 1.5), 32000)
 
 
 def _group_type_to_article_type(group_type: GroupType) -> str:

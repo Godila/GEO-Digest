@@ -1,30 +1,92 @@
-"""OpenAI-Compatible LLM Provider (for Reviewer Agent)."""
+"""OpenAI-Compatible LLM Provider with OpenRouter optimizations.
+
+Supports:
+- response_format: {"type": "json_object"} for guaranteed JSON
+- reasoning.effort: control thinking token budget for reasoning models
+- plugins: response-healing for automatic JSON repair
+- Auto-detects OpenRouter base URL and enables optimizations
+"""
 from __future__ import annotations
 import json, time, urllib.error, urllib.request
 from engine.llm.base import LLMProvider
 
 class OpenAICompatProvider(LLMProvider):
     DEFAULT_BASE_URL = "https://api.openai.com/v1"
-    
-    def __init__(self, api_key="", base_url="", model="gpt-4o", timeout=180, retries=3, **kwargs):
+
+    def __init__(self, api_key="", base_url="", model="gpt-4o",
+                 timeout=300, retries=3, reasoning_effort="low",
+                 use_json_mode=True, use_response_healing=True, **kwargs):
         super().__init__(model, **kwargs)
         self.api_key = api_key
         self.base_url = base_url or self.DEFAULT_BASE_URL
         self.timeout = timeout
         self.retries = retries
-    
+        self.reasoning_effort = reasoning_effort
+        self.use_json_mode = use_json_mode
+        self.use_response_healing = use_response_healing
+
+    @property
+    def is_openrouter(self):
+        return "openrouter.ai" in self.base_url
+
+    @property
+    def is_reasoning_model(self):
+        """Detect reasoning/thinking models."""
+        name = self.model.lower()
+        return any(x in name for x in [
+            "gemini-3", "gemini-2.5", "o1", "o3", "o4",
+            "deepseek-r1", "claude-3.7", "claude-4",
+            "glm-5",
+        ])
+
     def _headers(self):
         return {"Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}"}
-    
-    def complete(self, prompt, system="", temperature=0.3, max_tokens=4096):
-        url = f"{self.base_url}/chat/completions"
+
+    def _build_payload(self, prompt, system, temperature, max_tokens,
+                       force_json=False):
+        """Build API payload with OpenRouter-specific optimizations."""
         msgs = []
         if system:
             msgs.append({"role": "system", "content": system})
         msgs.append({"role": "user", "content": prompt})
-        payload = {"model": self.model, "messages": msgs,
-                   "temperature": temperature, "max_tokens": max_tokens}
+
+        payload = {
+            "model": self.model,
+            "messages": msgs,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if not self.is_openrouter:
+            return payload
+
+        # ── OpenRouter-specific optimizations ──
+
+        # 1. Reasoning effort — reduce thinking tokens for reasoning models
+        #    so more of max_tokens budget goes to actual content
+        if self.is_reasoning_model and self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+
+        # 2. JSON mode — force valid JSON output
+        if force_json and self.use_json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        # 3. Response healing — auto-repair malformed JSON
+        if (force_json or self.use_response_healing) and self.use_response_healing:
+            payload.setdefault("plugins", [])
+            payload["plugins"].append({"id": "response-healing"})
+
+        return payload
+
+    def complete(self, prompt, system="", temperature=0.3, max_tokens=4096):
+        """Standard text completion."""
+        payload = self._build_payload(prompt, system, temperature, max_tokens)
+        return self._request(payload)
+
+    def _request(self, payload):
+        """Execute API request with retries."""
+        url = f"{self.base_url}/chat/completions"
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
         last_err = None
@@ -38,62 +100,111 @@ class OpenAICompatProvider(LLMProvider):
                 if attempt < self.retries:
                     time.sleep(2 ** attempt)
         raise RuntimeError(f"OpenAI API error: {last_err}")
-    
+
     def health_check(self):
         try:
             self.complete("ping", max_tokens=5); return True
         except Exception:
             return False
 
-    # ── JSON Completion (with edge-case handling) ──────────────
+    # ── JSON Completion (with OpenRouter optimizations) ──────
 
     def complete_json(self, prompt, system="", temperature=0.3, max_tokens=4096, **kwargs):
-        """Complete with JSON output — strips markdown fences and parses.
+        """Complete with guaranteed JSON output.
 
-        Handles common LLM edge cases:
-        1. Markdown code fences: ```json ... ``` or ``` ... ```
-        2. Partial JSON (truncated due to max_tokens)
-        3. Extra text before/after JSON
-        4. Already-parsed dict/list from upstream
+        When using OpenRouter:
+        1. Sends response_format: {type: "json_object"} for guaranteed JSON
+        2. Enables response-healing plugin for auto-repair
+        3. Uses reasoning.effort to control thinking budget
 
-        Returns:
-            dict or list — parsed JSON, or raw string on failure.
+        Falls back to manual JSON extraction for non-OpenRouter providers.
         """
         import re
 
-        raw_text = self.complete(
-            prompt, system=system, temperature=temperature, max_tokens=max_tokens,
-        )
+        if self.is_openrouter and self.use_json_mode:
+            # OpenRouter path: guaranteed JSON + healing
+            payload = self._build_payload(
+                prompt, system, temperature, max_tokens, force_json=True,
+            )
+            raw_text = self._request(payload)
+
+            if isinstance(raw_text, dict) or isinstance(raw_text, list):
+                return raw_text
+
+            if not isinstance(raw_text, str):
+                return raw_text
+
+            # response_format guarantees valid JSON, but just in case:
+            text = raw_text.strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
+
+            # Markdown fence extraction (shouldn't be needed with json_object mode)
+            fence_match = re.search(
+                r"```(?:json|JSON)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL,
+            )
+            if fence_match:
+                try:
+                    return json.loads(fence_match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+
+            # Brute-force JSON extraction
+            for opener, closer in [("{", "}"), ("[", "]")]:
+                start = text.find(opener)
+                if start == -1:
+                    continue
+                depth = 0
+                for i in range(start, len(text)):
+                    if text[i] == opener:
+                        depth += 1
+                    elif text[i] == closer:
+                        depth -= 1
+                        if depth == 0:
+                            candidate = text[start:i + 1]
+                            try:
+                                return json.loads(candidate)
+                            except json.JSONDecodeError:
+                                fixed = self._repair_truncated_json(candidate, opener, closer)
+                                if fixed is not None:
+                                    return fixed
+                            break
+
+            return raw_text
+        else:
+            # Non-OpenRouter path: manual JSON extraction
+            raw_text = self.complete(
+                prompt, system=system, temperature=temperature, max_tokens=max_tokens,
+            )
+            return self._extract_json(raw_text)
+
+    def _extract_json(self, raw_text):
+        """Extract JSON from raw LLM text output."""
+        import re
 
         if not isinstance(raw_text, str):
-            # Already parsed by something upstream
             return raw_text
 
         text = raw_text.strip()
 
-        # ── Strip markdown code fences ──
-        # Match ```json ... ```, ``` ... ```, with optional whitespace
+        # Strip markdown code fences
         fence_match = re.search(
-            r"```(?:json|JSON)?\s*\n?(.*?)\n?\s*```",
-            text,
-            re.DOTALL,
+            r"```(?:json|JSON)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL,
         )
         if fence_match:
             text = fence_match.group(1).strip()
 
-        # ── Try direct parse ──
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        # ── Try to find JSON object or array in text ──
-        # Look for outermost { ... } or [ ... ]
         for opener, closer in [("{", "}"), ("[", "]")]:
             start = text.find(opener)
             if start == -1:
                 continue
-            # Find matching closer by counting depth
             depth = 0
             for i in range(start, len(text)):
                 if text[i] == opener:
@@ -105,39 +216,28 @@ class OpenAICompatProvider(LLMProvider):
                         try:
                             return json.loads(candidate)
                         except json.JSONDecodeError:
-                            # Try to fix truncated JSON
                             fixed = self._repair_truncated_json(candidate, opener, closer)
                             if fixed is not None:
                                 return fixed
                         break
 
-        # ── All parsing failed — return raw string ──
         return raw_text
 
     @staticmethod
     def _repair_truncated_json(text: str, opener: str, closer: str):
-        """Attempt to repair truncated JSON by closing open structures.
-
-        Only handles simple cases: unclosed strings, arrays, objects.
-        Returns parsed dict/list or None on failure.
-        """
-        # Count open brackets/braces
+        """Attempt to repair truncated JSON by closing open structures."""
         open_braces = text.count("{") - text.count("}")
         open_brackets = text.count("[") - text.count("]")
 
         if open_braces < 0 or open_brackets < 0:
-            return None  # Malformed, not truncated
+            return None
 
-        # Check for unclosed string at end
         repaired = text
         if repaired.endswith(",") or repaired.endswith(":"):
-            # Trailing comma or colon — remove and close
             repaired = repaired.rstrip(",:")
         if repaired.endswith('"') and repaired.count('"') % 2 != 0:
-            # Unclosed string — close it
             repaired += '"'
 
-        # Close open structures
         repaired += "]" * max(0, open_brackets)
         repaired += "}" * max(0, open_braces)
 
@@ -156,30 +256,9 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float = 0.25,
         max_tokens: int = 4096,
     ) -> dict:
-        """
-        Tool-use completion via OpenAI chat/completions API.
-
-        Converts between Anthropic-format messages (internal) and
-        OpenAI chat/completions format with function calling.
-
-        Args:
-            messages: Conversation history in Anthropic format.
-                Converted to OpenAI format internally.
-            tools: List of tool definitions (Anthropic format, converted).
-            system: System prompt string.
-            temperature: Sampling temperature.
-            max_tokens: Max output tokens.
-
-        Returns:
-            dict with keys: content, stop_reason, usage, model
-            (Same format as MiniMax.tool_complete for consistency)
-        """
+        """Tool-use completion via OpenAI chat/completions API."""
         url = f"{self.base_url}/chat/completions"
-
-        # Convert Anthropic → OpenAI message format
         oai_messages = self._convert_messages(messages, system)
-
-        # Convert Anthropic → OpenAI tools format
         oai_tools = None
         if tools:
             oai_tools = self._convert_tools(tools)
@@ -193,6 +272,9 @@ class OpenAICompatProvider(LLMProvider):
         if oai_tools:
             payload["tools"] = oai_tools
             payload["tool_choice"] = "auto"
+
+        if self.is_openrouter and self.is_reasoning_model and self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
 
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
@@ -224,7 +306,6 @@ class OpenAICompatProvider(LLMProvider):
             if isinstance(content, str):
                 oai.append({"role": role, "content": content})
             elif isinstance(content, list):
-                # Handle content blocks (text, tool_use, tool_result)
                 parts = []
                 has_tool_calls = False
                 tool_calls_list = []
@@ -244,7 +325,6 @@ class OpenAICompatProvider(LLMProvider):
                             },
                         })
                     elif btype == "tool_result":
-                        # tool_result goes into user message as context
                         result_text = block.get("content", "")
                         is_error = block.get("is_error", False)
                         prefix = "[Error] " if is_error else ""
@@ -285,7 +365,6 @@ class OpenAICompatProvider(LLMProvider):
         usage = result.get("usage", {})
         finish_reason = choice.get("finish_reason", "stop")
 
-        # Map finish reasons
         stop_map = {
             "stop": "end_turn",
             "tool_calls": "tool_use",
@@ -294,13 +373,11 @@ class OpenAICompatProvider(LLMProvider):
         }
         stop_reason = stop_map.get(finish_reason, "end_turn")
 
-        # Build content blocks
         content_blocks = []
         text_content = msg.get("content", "")
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
 
-        # Convert tool_calls to tool_use blocks
         tool_calls = msg.get("tool_calls", [])
         for tc in tool_calls:
             fn = tc.get("function", {})

@@ -1,71 +1,38 @@
 """LLM Provider Factory — creates configured provider instances.
 
-Provides separate LLM instances for Writer (OpenRouter/Gemini Flash Lite)
-and Reviewer (OpenRouter/Gemini Pro).
+Writer:  Gemini 3 Flash (reasoning, cheap) — bulk article writing.
+Reviewer: Gemini 3.1 Pro (reasoning, best) — quality review + rewrite.
+Reader:  MiniMax M2.7 (via Anthropic API) — evidence extraction.
 """
-
-from __future__ import annotations
 
 from engine.llm.openai_compat import OpenAICompatProvider
 
-
-# ── Writer LLM Config (OpenRouter / Gemini Flash Lite) ──────────────
-
-WRITER_LLM_CONFIG = {
-    "provider_class": "OpenAICompatProvider",
-    "base_url": "https://openrouter.ai/api/v1",
-    "api_key": "REDACTED_OPENROUTER_KEY",
-    "model": "google/gemini-2.5-flash",
-    "timeout": 300,
-    "temperature": 0.3,
-}
+# ── OpenRouter (Gemini) ──
+OR_KEY = "REDACTED_OPENROUTER_KEY"
+OR_BASE = "https://openrouter.ai/api/v1"
 
 
 def get_writer_llm() -> OpenAICompatProvider:
-    """Create and return the Writer's dedicated LLM provider (OpenRouter/Gemini 2.5 Flash).
-
-    Uses a fast, non-reasoning model for reliable JSON output in content generation.
-    Reasoning models (3.1 Pro) break JSON parsing — Flash is safer for Writer.
-
-    Returns:
-        OpenAICompatProvider configured for Gemini 2.5 Flash via OpenRouter.
-    """
-    cfg = WRITER_LLM_CONFIG
+    """Writer LLM: Gemini 3 Flash — fast, cheap, reasoning-capable."""
     return OpenAICompatProvider(
-        api_key=cfg["api_key"],
-        base_url=cfg["base_url"],
-        model=cfg["model"],
-        timeout=cfg["timeout"],
-        retries=3,
+        api_key=OR_KEY,
+        base_url=OR_BASE,
+        model="google/gemini-3-flash-preview",
+        timeout=300,
+        reasoning_effort="low",      # Minimal thinking → max content tokens
+        use_json_mode=True,
+        use_response_healing=True,
     )
 
 
-# ── Reviewer LLM Config (OpenRouter / Gemini Pro) ──────────────────
-
-REVIEWER_LLM_CONFIG = {
-    "provider_class": "OpenAICompatProvider",
-    "base_url": "https://openrouter.ai/api/v1",
-    "api_key": "REDACTED_OPENROUTER_KEY",
-    "model": "google/gemini-3.1-pro-preview",
-    "timeout": 300,
-    "temperature": 0.15,
-}
-
-
 def get_reviewer_llm() -> OpenAICompatProvider:
-    """Create and return the Reviewer's dedicated LLM provider (OpenRouter/Gemini Pro).
-
-    Uses a SEPARATE, higher-capability model from the Writer — this is
-    intentional for independent quality assessment (different model = less bias).
-
-    Returns:
-        OpenAICompatProvider configured for Gemini Pro via OpenRouter.
-    """
-    cfg = REVIEWER_LLM_CONFIG
+    """Reviewer LLM: Gemini 3.1 Pro — best quality review."""
     return OpenAICompatProvider(
-        api_key=cfg["api_key"],
-        base_url=cfg["base_url"],
-        model=cfg["model"],
-        timeout=cfg["timeout"],
-        retries=3,
+        api_key=OR_KEY,
+        base_url=OR_BASE,
+        model="google/gemini-3.1-pro-preview",
+        timeout=300,
+        reasoning_effort="medium",   # More thinking for nuanced review
+        use_json_mode=True,
+        use_response_healing=True,
     )

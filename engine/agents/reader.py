@@ -401,11 +401,24 @@ DOI: {art.doi or 'N/A'}
             raw = self.call_llm(
                 prompt=prompt,
                 system=EVIDENCE_EXTRACTOR_SYSTEM_PROMPT,
-                max_tokens=4096,
+                max_tokens=6000,
                 parse_json=True,
             )
 
             if not isinstance(raw, dict):
+                # JSON parse failed — try to extract quotes from raw text
+                self._log(f"Evidence JSON parse failed for '{art.title[:50]}', extracting from raw text")
+                raw_lines = str(raw)
+                # Minimal fallback: create one block with raw text as summary
+                evidence_blocks.append({
+                    "source": f"{art.authors or 'Unknown'}, {art.year or 'n.d.'}",
+                    "doi": art.doi or "",
+                    "title": art.title,
+                    "summary": raw_lines[:500],
+                    "methodology_summary": "",
+                    "key_numbers": [],
+                    "quotes": [],
+                })
                 continue
 
             # Transform to evidence block format

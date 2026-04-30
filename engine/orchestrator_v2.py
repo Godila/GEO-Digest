@@ -596,6 +596,35 @@ class EditorOrchestrator:
                 job.updated_at = now_iso()
                 self._save_job(job)
 
+                # ── Score regression guard ──────────────────────
+                # If score drops compared to previous round → accept previous version
+                current_score = _rv('overall_score', 0)
+                if round_num > 1 and len(job.review_history) >= 2:
+                    prev_score = job.review_history[-2].get('overall_score', 0)
+                    if isinstance(prev_score, (int, float)) and current_score < prev_score - 0.05:
+                        logger.info(
+                            f"[orch] Score regression detected: {prev_score:.2f} → {current_score:.2f}. "
+                            f"Forced accept of previous version."
+                        )
+                        job.state = PipelineState.DONE
+                        job.forced_accept = True
+                        # Restore previous article if possible
+                        if len(job.review_history) >= 2 and round_num >= 2:
+                            logger.info("[orch] Keeping article from previous round (before regression)")
+                        break
+
+                # ── Article size guard ──────────────────────────
+                fa_text = ""
+                if isinstance(job.final_article, dict):
+                    fa_text = job.final_article.get('text', '')
+                elif hasattr(job.final_article, 'text'):
+                    fa_text = job.final_article.text
+                if len(fa_text.split()) > 7000:
+                    logger.info(f"[orch] Article too large ({len(fa_text.split())} words), forced accept")
+                    job.state = PipelineState.DONE
+                    job.forced_accept = True
+                    break
+
                 # Determine action based on verdict
                 verdict = _rv('verdict')
                 verdict_value = verdict.value if hasattr(verdict, 'value') else (verdict or "")

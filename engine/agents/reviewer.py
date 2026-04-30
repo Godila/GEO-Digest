@@ -37,7 +37,7 @@ from engine.schemas import (
     WrittenArticle, ReviewedDraft, Edit, FactCheck,
     Severity, ReviewVerdict, AgentResult,
 )
-from engine.llm.config import get_reviewer_llm, REVIEWER_LLM_CONFIG
+from engine.llm.config import get_reviewer_llm
 
 
 # ── System Prompt v2 (rubric-enhanced) ─────────────────────────────
@@ -232,7 +232,7 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
                 prompt=prompt,
                 system=system_prompt,
                 max_tokens=4096,
-                temperature=REVIEWER_LLM_CONFIG["temperature"],
+                temperature=0.2,
             )
 
             # 4. Parse into ReviewedDraft (v2 extended)
@@ -453,7 +453,7 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             severity_counts=severity_counts,
             verdict=verdict,
             overall_score=score,
-            reviewer_model=REVIEWER_LLM_CONFIG["model"],
+            reviewer_model=self.reviewer_llm.model,
             summary=raw.get("summary", ""),
             # V2 extended fields:
             round_number=round_number,
