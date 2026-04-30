@@ -1145,8 +1145,11 @@ class EditorOrchestrator:
         dois = []
         for ref in references:
             if isinstance(ref, str):
-                # Убираем префиксы DOI:/doi: и markdown-символы
-                clean = ref.replace("DOI:", "").replace("doi:", "").strip().strip("`").strip("'\",")
+                # Убираем префиксы DOI:/doi: и markdown/URL-мусор
+                clean = ref.replace("DOI:", "").replace("doi:", "").strip()
+                # Strip any trailing markdown (**, `, etc.) and punctuation
+                import re as _re
+                clean = _re.sub(r'[*`"\'.,;:)\]}>]+$', '', clean).strip()
                 if doi_pattern.match(clean):
                     dois.append(clean)
             elif isinstance(ref, dict):
