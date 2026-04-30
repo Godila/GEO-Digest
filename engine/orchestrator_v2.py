@@ -349,6 +349,7 @@ class EditorOrchestrator:
                 draft_data = self._serialize_draft(draft)
                 job.current_draft = draft_data
             except Exception as e:
+                self._log(f"Reader FAILED: {e}", level="ERROR")
                 job.current_draft = {"error": str(e), "proposal_summary": proposal.get("thesis", "")[:200]}
         else:
             job.current_draft = {"note": "No key references to read"}

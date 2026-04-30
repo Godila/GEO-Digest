@@ -208,13 +208,89 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         if dois:
             tools = AgentTools(self.storage)
             articles = []
+            missing_dois = []
             for doi in dois:
                 art = tools.search_by_doi(doi)
                 if art:
                     articles.append(art)
+                else:
+                    missing_dois.append(doi)
+            
+            # Fallback: create Article stubs for DOIs not in storage
+            if missing_dois:
+                self._log(f"  {len(missing_dois)} DOI not in storage, resolving via API...")
+                for doi in missing_dois:
+                    art = self._resolve_doi_from_api(doi)
+                    if art:
+                        articles.append(art)
+                    else:
+                        self._log(f"  Could not resolve DOI: {doi}")
+            
+            self._log(f"  Resolved: {len(articles)}/{len(dois)} articles")
             return articles
 
         return []
+    
+    def _resolve_doi_from_api(self, doi: str) -> Optional[Article]:
+        """Create Article stub from DOI using Unpaywall + Crossref APIs."""
+        import urllib.parse, json
+        
+        title = ""
+        abstract = ""
+        year = None
+        authors = []
+        pdf_url = ""
+        
+        # 1. Unpaywall for OA URL + metadata
+        try:
+            email = "geo-digest@research.bot"
+            url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            title = data.get("title", "")
+            year = data.get("year")
+            pdf_url = (data.get("best_oa_location") or {}).get("url_for_pdf", "")
+            if not pdf_url:
+                pdf_url = (data.get("first_oa_location") or {}).get("url_for_pdf", "")
+            for a in (data.get("z_authors") or [])[:10]:
+                authors.append(a.get("given", "") + " " + a.get("family", ""))
+        except Exception:
+            pass
+        
+        # 2. Crossref for abstract if missing
+        if not title or not abstract:
+            try:
+                url = f"https://api.crossref.org/works/{urllib.parse.quote(doi)}"
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
+                })
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    cr = json.loads(resp.read()).get("message", {})
+                if not title:
+                    title = cr.get("title", [""])[0]
+                abstract = cr.get("abstract", "")
+                if not year:
+                    dp = cr.get("published-print") or cr.get("published-online") or {}
+                    year = (dp.get("date-parts") or [[None]])[0][0]
+            except Exception:
+                pass
+        
+        if not title:
+            return None
+        
+        return Article({
+            "doi": doi,
+            "title": title,
+            "abstract": abstract[:2000] if abstract else "",
+            "year": year or 2024,
+            "authors": authors[:10],
+            "source": "api_resolved",
+            "oa_url": pdf_url,
+            "enrichment_status": "basic",
+        })
 
     def _extract_all_texts(
         self,

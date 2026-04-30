@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────
 
-DISCOVERY_MAX_ROUNDS = 4       # Max LLM rounds in discovery phase
+DISCOVERY_MAX_ROUNDS = 6       # Max LLM rounds in discovery phase (more = more DOIs found)
 SYNTHESIZE_MAX_ROUNDS = 2      # Max LLM rounds in synthesize phase
 ABSTRACT_PREVIEW_LEN = 300     # Chars of abstract in evidence pack
 MAX_PROPOSALS_HARD = 3         # Hard cap on proposals (quality > quantity)
@@ -556,7 +556,7 @@ class EditorAgent:
             user_message=user_msg,
             system_prompt=prompt,
             temperature=temperature,
-            max_tokens=4096,
+            max_tokens=8192,     # Reasoning model needs more tokens (thinking + content)
         )
         return result
 
@@ -865,6 +865,16 @@ class EditorAgent:
 
         key_references = valid_refs if valid_refs else unchecked_refs
 
+        # ── AUTO-COMPLETE: add missing DOIs from Discovery ──
+        # LLM often omits DOIs — ensure ALL discovery-selected DOIs are included
+        existing_dois = {r.replace("DOI:", "").replace("doi:", "").strip() for r in key_references}
+        for doi in discovery.selected_dois:
+            if doi not in existing_dois:
+                key_references.append(f"DOI:{doi}")
+                existing_dois.add(doi)
+        if len(key_references) > len(valid_refs or unchecked_refs):
+            self._log(f"Auto-completed refs: {len(valid_refs or unchecked_refs)} → {len(key_references)} DOI")
+
         # Duplicate check
         is_duplicate = False
         title = raw.get("title", "")
@@ -922,7 +932,7 @@ class EditorAgent:
 
         # Enriched sources
         enriched = []
-        for ref in key_references[:15]:
+        for ref in key_references[:30]:
             doi_clean = ref.replace("DOI:", "").replace("doi:", "").strip()
             art = next((a for a in evidence.all_articles if a["doi"] == doi_clean), None)
             if art:
