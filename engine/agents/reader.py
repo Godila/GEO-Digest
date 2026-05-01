@@ -168,18 +168,9 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             # Evidence blocks provide sufficient context for Writer
             draft.rich_context = ""
 
-            # Extract structured evidence blocks — PDF only (skip abstract-only)
-            pdf_extracted = {k: v for k, v in extracted.items() if v.get("source") == "pdf"}
-            try:
-                draft.evidence_blocks = self._extract_evidence_blocks(
-                    pdf_extracted,
-                    group.group_type if group else GroupType.REVIEW
-                )
-                self._log(f"Evidence blocks: {len(draft.evidence_blocks)} sources, "
-                          f"{sum(len(eb.get('quotes', [])) for eb in draft.evidence_blocks)} quotes extracted")
-            except Exception as e:
-                self._log(f"Evidence extraction warning: {e}")
-                draft.evidence_blocks = []
+            # Evidence blocks — extracted inline in single LLM call above
+            # No separate _extract_evidence_blocks call (was causing N extra LLM calls)
+            draft.evidence_blocks = []
 
             return AgentResult(
                 agent_name=self.name,
@@ -420,14 +411,31 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             )
             parts.append(part)
 
-        # Dlya odnoy stat'i — pryamoy zapros, dlya neskol'kikh — agregatsiya
-        if len(parts) == 1:
-            raw = self.call_llm(prompt=parts[0], system=READER_SYSTEM_PROMPT,
-                                max_tokens=4096, parse_json=True)
-            return self._parse_draft(raw, group_type, articles, parts[0])
-        else:
-            # Mnogo statey: analiziruem po odel'nosti, potom agregiruem
-            return self._analyze_multiple(parts, group_type, articles)
+        # Single LLM call for all articles — concatenate with truncation
+        # This reduces N calls to 1, avoiding OpenRouter rate limits and timeouts
+        MAX_CHARS_PER_ARTICLE = 5000
+        truncated_parts = []
+        for part in parts:
+            if len(part) > MAX_CHARS_PER_ARTICLE:
+                truncated_parts.append(part[:MAX_CHARS_PER_ARTICLE] + "\n...[truncated]")
+            else:
+                truncated_parts.append(part)
+        
+        combined = "\n\n===NEXT ARTICLE===\n\n".join(truncated_parts)
+        combined_prompt = f"""Analyze ALL {len(articles)} research articles below (separated by ===NEXT ARTICLE===).
+For the FULL collection, extract a SINGLE unified analysis with:
+1. Main themes and research landscape
+2. Key methods used across articles
+3. Important findings and quantitative results (with exact numbers)
+4. Trends in the field
+5. Research gaps and open questions
+6. For each article: key verbatim quotes with context (for evidence-grounded writing)
+
+{combined}"""
+        
+        raw = self.call_llm(prompt=combined_prompt, system=READER_SYSTEM_PROMPT,
+                            max_tokens=8192, parse_json=True)
+        return self._parse_draft(raw, group_type, articles, combined)
 
     def _get_type_instructions(self, group_type: GroupType) -> str:
         """Dopolnitel'nye instruktsii dlya konkretnogo tipa."""
