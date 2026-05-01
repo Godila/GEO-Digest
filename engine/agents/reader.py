@@ -400,14 +400,15 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             source = data["source"]
 
             # Ogranichivaem dlinu teksta (LLM context limit)
-            # PDF: DeepSeek 1M context — ne obrezaem, polnyy tekst
+            # PDF: ogranichivaem do 30K chars dlya skorosti
+            # (DeepSeek 1M context podderzhivaet, no generatsiya medlennaya na >100K tokens)
             # Abstract+S2: uvelichen do 8000 dlya bolee glubokogo analiza
             if source == "pdf":
-                max_chars = len(text)  # Bez obrezki dlya PDF
+                max_chars = min(len(text), 30000)  # 30K — balans glubiny i skorosti
             elif "s2" in source:
-                max_chars = min(len(text), 8000)  # S2 enrichment — 8000 max
+                max_chars = min(len(text), 8000)
             else:
-                max_chars = min(len(text), 5000)  # Abstract-only — 5000 max
+                max_chars = min(len(text), 5000)
             if len(text) > max_chars:
                 text = text[:max_chars]
 
@@ -513,8 +514,8 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
                     })
                 continue
 
-            # PDF text — no truncation (Gemini 1M context); abstract stays as-is
-            text_for_llm = text
+            # PDF text — limit to 30K chars for speed; abstract stays as-is
+            text_for_llm = text[:30000] if len(text) > 30000 else text
 
             prompt = f"""Статья: {art.title}
 Авторы: {art.authors or 'N/A'}
