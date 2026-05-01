@@ -3,7 +3,7 @@
 Writer:  DeepSeek V4 Pro (reasoning, 384K output) — deep article writing.
 Editor:  DeepSeek V4 Flash (reasoning, cheap) — critical decisions: source selection, proposals.
 Reviewer: Gemini 3.1 Pro (reasoning, best) — quality review + rewrite.
-Reader:  MiniMax M2.7 (via Anthropic API) — evidence extraction.
+Reader:  DeepSeek V4 Flash (reasoning, 1M context) — evidence extraction from PDFs.
 Scout:  MiniMax M2.7 — search + classify.
 
 All keys and models configured via environment variables (see .env.example).
@@ -19,6 +19,7 @@ OR_BASE = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 WRITER_MODEL = os.environ.get("WRITER_MODEL", "deepseek/deepseek-v4-pro")
 EDITOR_MODEL = os.environ.get("EDITOR_MODEL", "deepseek/deepseek-v4-flash")
 REVIEWER_MODEL = os.environ.get("REVIEWER_MODEL", "google/gemini-3.1-pro-preview")
+READER_MODEL = os.environ.get("READER_MODEL", "deepseek/deepseek-v4-flash")
 
 
 def get_writer_llm() -> OpenAICompatProvider:
@@ -61,6 +62,23 @@ def get_reviewer_llm() -> OpenAICompatProvider:
         model=REVIEWER_MODEL,
         timeout=300,
         reasoning_effort="medium",   # More thinking for nuanced review
+        use_json_mode=True,
+        use_response_healing=True,
+    )
+
+
+def get_reader_llm() -> OpenAICompatProvider:
+    """Reader LLM: DeepSeek V4 Flash — fast, 1M context, reasoning.
+
+    Reader extracts structured evidence from PDFs (60-120K chars each).
+    DeepSeek V4 Flash handles long context without timeout, unlike MiniMax.
+    """
+    return OpenAICompatProvider(
+        api_key=OR_KEY,
+        base_url=OR_BASE,
+        model=READER_MODEL,
+        timeout=300,
+        reasoning_effort="low",      # Evidence extraction — straightforward
         use_json_mode=True,
         use_response_healing=True,
     )

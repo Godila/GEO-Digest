@@ -145,7 +145,8 @@ class EditorOrchestrator:
     def reader(self):
         if self._reader is None:
             from engine.agents.reader import ReaderAgent
-            self._reader = ReaderAgent()
+            from engine.llm.config import get_reader_llm
+            self._reader = ReaderAgent(llm=get_reader_llm())
         return self._reader
 
     @property
