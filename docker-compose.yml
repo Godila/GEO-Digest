@@ -10,8 +10,6 @@ services:
       - "3000:3000"
     volumes:
       - geo-data:/app/data:rw
-      - ./dashboard/templates:/app/dashboard/templates:ro
-      - ./dashboard/static:/app/dashboard/static:ro
     environment:
       - DASHBOARD_PORT=3000
       - WORKER_URL=http://worker:3001
