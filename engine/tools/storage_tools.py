@@ -156,7 +156,7 @@ class StorageTools:
     def _load_articles(self) -> list[Article]:
         """Lazy-load all articles from storage (cached)."""
         if self._articles_cache is None:
-            self._articles_cache = self.storage.load_all_articles()
+            self._articles_cache = self.storage.load_all_articles() or []
         return self._articles_cache
 
     def _invalidate_cache(self):
@@ -167,7 +167,7 @@ class StorageTools:
         """Get output directory for existing articles check."""
         if self._output_dir is None:
             self._output_dir = getattr(self.storage, 'data_dir', Path("/app/data")) / "output"
-        return self._output_dir
+        return self._output_dir  # type: ignore[return-value]
 
     # ── Helper methods ────────────────────────────────────────────
 

@@ -58,7 +58,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
                         self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")
                         return raw
                 return raw
-            return self.writer_llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=effective_temp)
+            return self.writer_llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)
 
         return self._run_with_timeout(_do_call, timeout_sec)
 
@@ -97,6 +97,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
                 error="Не передан draft (StructuredDraft)",
             )
 
+        outline = None  # initialized before try for fallback safety
         try:
             group_type = draft.group_type or GroupType.REPLICATION
             tools = AgentTools(self.storage)
@@ -348,6 +349,8 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             data = {"sections": []}
         
         title = data.get("title", "") or getattr(draft, 'title', '')
+        if not isinstance(title, str):
+            title = str(title) if title else ""
         sections = data.get("sections", [])
         references = data.get("references", [])
         
@@ -498,7 +501,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
                 temperature=0.4,
             )
 
-            article = self._parse_written(raw, draft, format_, language)
+            article = self._parse_written(raw if raw is not None else "", draft, format_, language)
             return AgentResult(agent_name=self.name, success=True, data=article)
         except Exception as e:
             return AgentResult(agent_name=self.name, success=False, error=str(e))

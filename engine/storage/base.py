@@ -2,7 +2,10 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from engine.schemas import Article
 
 class StorageBackend(ABC):
     def __init__(self, data_dir: str = "/app/data"):
@@ -21,7 +24,7 @@ class StorageBackend(ABC):
     def count(self) -> int: ...
 
     @abstractmethod
-    def get_article_by_doi(self, doi: str): ...
+    def get_article_by_doi(self, doi: str) -> "Article | None": ...
 
     @abstractmethod
     def add_article(self, article: dict): ...

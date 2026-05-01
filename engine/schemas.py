@@ -303,12 +303,15 @@ class AgentResult:
     def __init__(self, agent_name="", success=False, data=None, error="", duration_sec=0.0, tokens_used=0, metadata=None):
         self.agent_name = agent_name; self.success = success; self.data = data; self.error = error
         self.duration_sec = duration_sec; self.tokens_used = tokens_used; self.metadata = metadata or {}
+        # Dynamic attributes set by Reader agent
+        self.rich_context: str = ""
+        self.group_type: object = None
     def to_dict(self):
         d = {"agent_name": self.agent_name, "success": self.success, "error": self.error,
              "duration_sec": self.duration_sec, "tokens_used": self.tokens_used, "metadata": self.metadata}
         if isinstance(self.data, (ScoutResult, GroupDraft, WrittenArticle, ReviewedDraft)):
             d["data"] = self.data.to_dict()
-        elif hasattr(self.data, "to_dict"): d["data"] = self.data.to_dict()
+        elif hasattr(self.data, "to_dict"): d["data"] = self.data.to_dict()  # type: ignore[union-attr]
         else: d["data"] = self.data
         return d
 

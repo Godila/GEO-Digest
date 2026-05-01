@@ -23,7 +23,7 @@ class LLMProvider(ABC):
         """Send prompt to LLM, return response text."""
         ...
 
-    def complete_json(self, prompt: str, system: str = "", **kwargs) -> str:
+    def complete_json(self, prompt: str, system: str = "", temperature: float = 0.3, max_tokens: int = 4096, **kwargs) -> str | dict | list:
         """Complete with JSON output hint."""
         system = (system + "\n\nRespond ONLY with valid JSON. No markdown fences.").strip()
         return self.complete(prompt, system=system, **kwargs)

@@ -46,7 +46,7 @@ def _get_stealth():
     """Lazy-initialize StealthyFetcher singleton. Thread-safe via GIL."""
     global _stealth_instance
     if _stealth_instance is None:
-        from scrapling import StealthyFetcher
+        from scrapling import StealthyFetcher  # type: ignore[import-untyped]
         print("  [HTTP] Starting StealthyFetcher (Patchright + Chromium)...", file=sys.stderr)
         _stealth_instance = StealthyFetcher(auto_install=True)
     return _stealth_instance
@@ -87,7 +87,7 @@ def _fetch_with_retry(
     Raises:
         Last exception on network failure after all retries exhausted.
     """
-    from scrapling import Fetcher
+    from scrapling import Fetcher  # type: ignore[import-untyped]
 
     merged_headers = {
         "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)",
@@ -117,7 +117,9 @@ def _fetch_with_retry(
                 )
                 used_stealth = True
                 stealth = _get_stealth()
-                resp = stealth.fetch(url, headless=True, timeout=timeout * 2)
+                if stealth is None:
+                    raise RuntimeError("StealthyFetcher not available")
+                resp = stealth.fetch(url, headless=True, timeout=timeout * 2)  # type: ignore[union-attr]
                 status = resp.status_code
                 # Return whatever stealth gave us (could be success or another error)
                 return status, resp.content

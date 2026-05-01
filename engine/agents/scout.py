@@ -118,7 +118,7 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 articles_for_llm = articles[:15]
                 groups = self._run_with_timeout(
                     self._classify_articles, 60, topic, articles_for_llm,
-                )
+                ) or []
                 high_conf = [g for g in groups if g.confidence >= min_confidence]
                 high_conf.sort(key=lambda g: g.confidence, reverse=True)
                 self._log(f"Groups after confidence filter: {len(high_conf)}")

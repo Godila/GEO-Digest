@@ -152,7 +152,8 @@ class ToolUseLoop:
             "ToolUseLoop started: max_rounds=%d, tools=%d",
             self.max_rounds, len(schemas),
         )
-
+        messages = list(initial_messages) if initial_messages else []
+        round_num = 0
         for round_num in range(1, self.max_rounds + 1):
             logger.debug("ToolUseLoop round %d/%d", round_num, self.max_rounds)
 
@@ -256,7 +257,7 @@ class ToolUseLoop:
 
                     # Convert to Anthropic format for LLM context
                     if hasattr(result, 'to_content_block'):
-                        block = result.to_content_block(tc.id)
+                        block = result.to_content_block(tc.id)  # type: ignore[union-attr]
                     else:
                         block = {
                             "type": "tool_result",
@@ -350,7 +351,7 @@ class ToolUseLoop:
                 calls.append(ToolCall(
                     id=block.get("id", f"call_{uuid.uuid4().hex[:6]}"),
                     name=block.get("name", ""),
-                    arguments=block.get("input") if isinstance(block.get("input"), dict) else {},
+                    arguments=block.get("input") if isinstance(block.get("input"), dict) else {},  # type: ignore[arg-type]
                 ))
 
         return calls

@@ -96,7 +96,7 @@ class AgentTools:
             sys.path.insert(0, _sources_path)
 
         try:
-            from sources import get_active_sources, search_all_sources, dedup_and_merge
+            from sources import get_active_sources, search_all_sources, dedup_and_merge  # type: ignore[import-untyped]
         except ImportError as e:
             print(f"  [Sources] Import error: {e}", file=sys.stderr)
             print(f"  [Sources] Tried path: {_sources_path}", file=sys.stderr)
@@ -139,7 +139,7 @@ class AgentTools:
 
         # Save new articles to storage
         if save_to_storage and articles:
-            added = self.storage.add_articles_batch([a.data for a in articles])
+            added = self.storage.add_articles_batch([a.data for a in articles])  # type: ignore[attr-defined]
             if added:
                 print(f"  [Sources] Saved {added} new articles to storage", file=sys.stderr)
 
@@ -193,7 +193,7 @@ class AgentTools:
               
               LLM Summary: Key findings...
         """
-        from engine.utils import format_citation
+        from engine.utils import format_citation  # type: ignore[import-untyped]
         
         lines = []
         idx = getattr(article, "_idx", "")
@@ -255,7 +255,7 @@ class AgentTools:
             
             for i, art in enumerate(arts):
                 total += 1
-                art._idx = total
+                art._idx = total  # type: ignore[attr-defined]
                 blocks.append(self.format_article_summary(art, include_llm=include_llm))
                 blocks.append("")  # blank line between
         
@@ -293,7 +293,7 @@ class AgentTools:
             lines.extend([f"", f"── Методы ──", draft.methods_summary])
         
         dr = draft.data_requirements
-        if any([dr.input_data, dr.data_format, dr.volume_estimate]):
+        if dr is not None and any([dr.input_data, dr.data_format, dr.volume_estimate]):
             lines.extend([
                 f"",
                 f"── Требования к данным ──",
@@ -304,7 +304,7 @@ class AgentTools:
             ])
         
         infra = draft.infrastructure_needs
-        if any([infra.hardware, infra.software]):
+        if infra is not None and any([infra.hardware, infra.software]):
             lines.extend([
                 f"",
                 f"── Инфраструктура ──",
@@ -449,7 +449,7 @@ class AgentTools:
                 )
                 return cache_path
                 
-        except DownloadError as e:
+        except DownloadError as e:  # type: ignore[possibly-undefined]
             print(f"  [PDF] Failed {url[:60]}...: {e}", file=sys.stderr)
         except Exception as e:
             print(f"  [PDF] Error {url[:60]}...: {e}", file=sys.stderr)
@@ -464,7 +464,7 @@ class AgentTools:
         (headings, lists, tables). Falls back to empty string on error.
         """
         try:
-            from markitdown import MarkItDown
+            from markitdown import MarkItDown  # type: ignore[import-untyped]
 
             md = MarkItDown(enable_plugins=False)
             result = md.convert(str(pdf_path))

@@ -105,7 +105,7 @@ def _to_docx(md: str, output_path: str) -> str:
             "Pandoc not available. Install: pip install pypandoc_binary"
         )
 
-    assert pypandoc is not None  # guaranteed by _HAS_PANDOC
+    assert pypandoc is not None  # guaranteed by _HAS_PANDOC  # type: ignore[possibly-undefined]
 
     extra_args = [
         "--from", "markdown+tex_math_dollars+pipe_tables+raw_tex",
@@ -118,7 +118,7 @@ def _to_docx(md: str, output_path: str) -> str:
     if ref_doc:
         extra_args.extend(["--reference-doc", ref_doc])
 
-    pypandoc.convert_text(
+    pypandoc.convert_text(  # type: ignore[possibly-undefined]
         md,
         "docx",
         format="markdown+tex_math_dollars+pipe_tables+raw_tex",

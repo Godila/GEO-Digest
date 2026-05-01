@@ -59,7 +59,7 @@ class EngineConfig:
         raw = {}
         if HAS_YAML and path.exists():
             try:
-                raw = yaml.safe_load(path.read_text()) or {}
+                raw = yaml.safe_load(path.read_text()) or {}  # type: ignore[possibly-undefined]
             except Exception:
                 pass
 

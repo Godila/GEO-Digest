@@ -127,7 +127,7 @@ class LLMCallMixin:
             try:
                 result_box[0] = fn(*args, **kwargs)
             except Exception as exc:
-                error_box[0] = exc
+                error_box[0] = exc  # type: ignore[assignment]
 
         t = threading.Thread(target=_target, daemon=True)
         t.start()
@@ -158,15 +158,15 @@ class LLMCallMixin:
 
         def _do_call():
             if parse_json:
-                raw = self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)
+                raw = self.llm.complete_json(prompt, system=system, max_tokens=max_tokens or 4096)  # type: ignore[attr-defined]
                 if isinstance(raw, str):
                     import json
                     try:
                         return json.loads(raw)
                     except json.JSONDecodeError:
-                        self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")
+                        self._log(f"call_llm: JSON parse failed, returning raw string ({len(raw)} chars)")  # type: ignore[attr-defined]
                         return raw
                 return raw
-            return self.llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)
+            return self.llm.complete(prompt, system=system, max_tokens=max_tokens or 4096, temperature=temperature)  # type: ignore[attr-defined]
 
         return self._run_with_timeout(_do_call, timeout_sec)

@@ -15,6 +15,7 @@ Dlya raznykh GroupType raznye polya:
 
 from __future__ import annotations
 import os
+from typing import Optional
 
 from engine.agents.base import BaseAgent, LLMCallMixin
 from engine.agents.tools import AgentTools
@@ -672,22 +673,10 @@ DOI: {art.doi or 'N/A'}
         if group_type == GroupType.REPLICATION:
             dr = raw.get("data_requirements", {})
             if dr and isinstance(dr, dict):
-                data_req = DataRequirements(
-                    data_types=dr.get("data_types", []),
-                    spatial_coverage=dr.get("spatial_coverage", ""),
-                    temporal_coverage=dr.get("temporal_coverage", ""),
-                    sample_size=dr.get("sample_size"),
-                    format_notes=dr.get("format_notes", ""),
-                )
+                data_req = DataRequirements(**{k: v for k, v in dr.items() if k in ('input_data','data_format','volume_estimate','acquisition','preprocessing','labels_available','split_strategy','geographic_context')})
             inf = raw.get("infrastructure_needs", {})
             if inf and isinstance(inf, dict):
-                infra = InfrastructureNeeds(
-                    software=inf.get("software", []),
-                    hardware=inf.get("hardware", ""),
-                    compute_hours=inf.get("compute_hours"),
-                    expertise=inf.get("expertise", []),
-                    cost_estimate=inf.get("cost_estimate", ""),
-                )
+                infra = InfrastructureNeeds(**{k: v for k, v in inf.items() if k in ('hardware','software','compute_time','expertise','cost_estimate')})
 
         draft = StructuredDraft(
             draft_id=draft_id,

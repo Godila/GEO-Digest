@@ -196,6 +196,8 @@ class EditorAgent:
                 for name in graph_reg.list_tools():
                     schema = graph_reg.get_schema(name)
                     handler = graph_reg.get(name)
+                    if handler is None or schema is None:
+                        continue
                     self._tools.register(
                         name=name, handler=handler,
                         description=schema.get("description", ""),
@@ -731,6 +733,8 @@ class EditorAgent:
         prompt += f"- Отвечай ТОЛЬКО на русском языке\n"
 
         # Direct LLM call — no tools, single round, guaranteed text response
+        if self.llm is None:
+            raise RuntimeError("LLM provider not initialized")
         try:
             response = self.llm.complete(
                 prompt=user_msg,
@@ -873,7 +877,7 @@ class EditorAgent:
                 key_references.append(f"DOI:{doi}")
                 existing_dois.add(doi)
         if len(key_references) > len(valid_refs or unchecked_refs):
-            self._log(f"Auto-completed refs: {len(valid_refs or unchecked_refs)} → {len(key_references)} DOI")
+            logger.info(f"Auto-completed refs: {len(valid_refs or unchecked_refs)} → {len(key_references)} DOI")
 
         # Duplicate check
         is_duplicate = False
@@ -1003,10 +1007,16 @@ class EditorAgent:
             return False
         result = self.tools.execute("validate_doi", {"doi": doi})
         if hasattr(result, 'success'):
-            return result.success and result.data.get("valid", False)
+            _data = result.data if isinstance(result.data, dict) else {}
+            return result.success and _data.get("valid", False)
         try:
-            d = json.loads(result) if isinstance(result, str) else result
-            return d.get("valid", False)
+            if isinstance(result, str):
+                d = json.loads(result)
+                return d.get("valid", False)
+            _rdata = getattr(result, 'data', None)
+            if isinstance(_rdata, dict):
+                return _rdata.get("valid", False)
+            return False
         except Exception:
             return False
 

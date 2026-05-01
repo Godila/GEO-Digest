@@ -109,7 +109,7 @@ class OpenAICompatProvider(LLMProvider):
 
     # ── JSON Completion (with OpenRouter optimizations) ──────
 
-    def complete_json(self, prompt, system="", temperature=0.3, max_tokens=4096, **kwargs):
+    def complete_json(self, prompt: str, system: str = "", temperature: float = 0.3, max_tokens: int = 4096, **kwargs) -> str | dict | list:
         """Complete with guaranteed JSON output.
 
         When using OpenRouter:

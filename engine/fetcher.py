@@ -141,7 +141,7 @@ def download_pdf(
     cfg = config or FetcherConfig()
 
     # Ленивый импорт — модуль загружается даже без Scrapling
-    from scrapling.fetchers import Fetcher  # noqa: F811
+    from scrapling.fetchers import Fetcher  # type: ignore[import-untyped]  # noqa: F811
 
     # ---- Tier 1: Быстрый HTTP с TLS-имперсонацией ----
     try:
@@ -182,7 +182,7 @@ def download_pdf(
         # Продолжаем на Tier 2 при любой ошибке T1
 
     # ---- Tier 2: Stealth browser (Patchright + Chromium) ----
-    from scrapling.fetchers import StealthySession  # noqa: F811
+    from scrapling.fetchers import StealthySession  # type: ignore[import-untyped]  # noqa: F811
 
     log.info(f"[T2] Запуск StealthySession для {url[:60]}")
     try:
@@ -232,7 +232,7 @@ def fetch_json(url: str, timeout: int = 15, retries: int = 2) -> Optional[dict]:
     Returns:
         dict с распарсенным JSON или None при ошибке.
     """
-    from scrapling.fetchers import Fetcher  # noqa: F811
+    from scrapling.fetchers import Fetcher  # type: ignore[import-untyped]  # noqa: F811
 
     for attempt in range(retries + 1):
         try:

@@ -236,6 +236,8 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
             )
 
             # 4. Parse into ReviewedDraft (v2 extended)
+            if raw_review is None:
+                raw_review = {}
             reviewed = self._parse_review_v2(raw_review, article, round_number, article_type)
 
             self._log(
@@ -337,11 +339,14 @@ class ReviewerAgent(BaseAgent, LLMCallMixin):
     ) -> ReviewedDraft:
         """Parsim LLM-otvet v ReviewedDraft (v2 s dop polyami)."""
         if not isinstance(raw, dict):
+            import json
             try:
-                import json
                 raw = json.loads(raw) if isinstance(raw, str) else {}
             except (json.JSONDecodeError, TypeError):
                 raw = {}
+        # Ensure raw is a dict for type-checkers
+        if not isinstance(raw, dict):
+            raw = {}
 
         # Verdict
         verdict_str = raw.get("verdict", "NEEDS_REVISION").upper()

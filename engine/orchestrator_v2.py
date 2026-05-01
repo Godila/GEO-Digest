@@ -33,7 +33,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from engine.schemas import ReviewVerdict
+from engine.schemas import (
+    Edit, GroupType, ReviewVerdict, ReviewedDraft,
+    Severity, StructuredDraft, WrittenArticle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +174,9 @@ class EditorOrchestrator:
 
     # ── Job Lifecycle ──────────────────────────────────────
 
-    def create_job(self, topic: str, domain: str = None,
-                   user_comment: str = None,
-                   group_type: str = None) -> PipelineJob:
+    def create_job(self, topic: str, domain: Optional[str] = None,
+                   user_comment: Optional[str] = None,
+                   group_type: Optional[str] = None) -> PipelineJob:
         """Создаёт новый pipeline job в состоянии SCOUTING."""
         job = PipelineJob(
             job_id=self._gen_job_id(),
@@ -297,7 +300,7 @@ class EditorOrchestrator:
             scout_hint = self._build_scout_hint(job)
             if scout_hint:
                 user_instruction = f"{user_instruction}\n\n{scout_hint}" if user_instruction else scout_hint
-                logger.info(f"[orch] Enriched Editor with Scout data: {len(job.scout_result.get('top_articles', []))} groups")
+                logger.info(f"[orch] Enriched Editor with Scout data: {len((job.scout_result or {}).get('top_articles', []))} groups")
 
             result = self.editor.run(
                 topic=job.topic,
@@ -349,7 +352,7 @@ class EditorOrchestrator:
                 draft_data = self._serialize_draft(draft)
                 job.current_draft = draft_data
             except Exception as e:
-                self._log(f"Reader FAILED: {e}", level="ERROR")
+                logger.error(f"[orch] Reader FAILED: {e}")
                 job.current_draft = {"error": str(e), "proposal_summary": proposal.get("thesis", "")[:200]}
         else:
             job.current_draft = {"note": "No key references to read"}
@@ -390,7 +393,6 @@ class EditorOrchestrator:
                 # Check if develop() already ran Reader and stored a draft with rich_context
                 if isinstance(draft_data, dict) and draft_data.get('rich_context'):
                     logger.info("[orch] Reusing Reader draft from develop() phase")
-                    from engine.schemas import StructuredDraft, GroupType
                     try:
                         draft_data = StructuredDraft(**{k: v for k, v in draft_data.items() if k != 'error'})
                     except Exception:
@@ -398,7 +400,6 @@ class EditorOrchestrator:
                     needs_synthetic = not hasattr(draft_data, 'rich_context')
             
             if needs_synthetic:
-                from engine.schemas import StructuredDraft, GroupType
                 refs = proposal.get("key_references", [])
                 # refs can be strings ("DOI:...") or dicts ({"doi": "..."})
                 dois = []
@@ -417,7 +418,10 @@ class EditorOrchestrator:
                     try:
                         reader_result = self.reader.run(dois=dois, topic=job.topic)
                         reader_draft = reader_result.data if hasattr(reader_result, 'data') else reader_result
-                        if hasattr(reader_draft, 'rich_context') and reader_draft.rich_context:
+                        if reader_draft is None:
+                            logger.warning("[orch] Reader returned None data, falling back to synthetic draft")
+                            draft_data = None
+                        elif hasattr(reader_draft, 'rich_context') and reader_draft.rich_context:
                             draft_data = reader_draft
                             # Ensure group_type is set correctly
                             if not draft_data.group_type or draft_data.group_type == GroupType.REVIEW:
@@ -443,7 +447,6 @@ class EditorOrchestrator:
 
             # If draft_data is a dict (from JSON serialization), reconstruct StructuredDraft
             if isinstance(draft_data, dict):
-                from engine.schemas import StructuredDraft, GroupType
                 gt = draft_data.get("group_type", "review")
                 if isinstance(gt, str):
                     gt = GroupType(gt)
@@ -467,6 +470,9 @@ class EditorOrchestrator:
                 draft_data = StructuredDraft(**_filtered)
                 logger.info(f"[orch] Reconstructed StructuredDraft from dict (group={gt}, rich={len(draft_data.rich_context or '')} chars, evidence_blocks={len(draft_data.evidence_blocks or [])})")
 
+            # Ensure draft_data is StructuredDraft for writer
+            if not isinstance(draft_data, (StructuredDraft, type(None))):
+                draft_data = None
             result = self.writer.run(
                 draft=draft_data,
                 topic=proposal.get("title", job.topic),
@@ -552,7 +558,7 @@ class EditorOrchestrator:
                 # Run reviewer for this round
                 result = self.reviewer.run(
                     article=job.final_article,
-                    references=self._get_selected_proposal(job).get("key_references", [])
+                    references=(self._get_selected_proposal(job) or {}).get("key_references", [])
                               if self._get_selected_proposal(job) else [],
                     round_number=round_num,
                     previous_reviews=previous_reviews,
@@ -579,7 +585,7 @@ class EditorOrchestrator:
                             reviewed =ReviewedDraft(
                                 verdict=ReviewVerdict.NEEDS_REVISION,
                                 overall_score=0.3,
-                                issues=[Edit(section="system", description=f"Parser error: {reviewed[:200]}", seriousness="major")],
+                                issues=[Edit(location="system", reason=f"Parser error: {reviewed[:200]}", severity=Severity.MAJOR)],
                                 fact_checks=[],
                                 improvement_suggestions=["Review failed — manual review required"],
                             )
@@ -587,7 +593,7 @@ class EditorOrchestrator:
                         reviewed = ReviewedDraft(
                             verdict=ReviewVerdict.NEEDS_REVISION,
                             overall_score=0.3,
-                            issues=[Edit(section="system", description=f"Parser error: {reviewed[:200]}", seriousness="major")],
+                            issues=[Edit(location="system", reason=f"Parser error: {reviewed[:200]}", severity=Severity.MAJOR)],
                             fact_checks=[],
                             improvement_suggestions=["Review failed — manual review required"],
                         )
@@ -601,8 +607,13 @@ class EditorOrchestrator:
                     return default
 
                 # Store in history
-                review_dict = reviewed.to_dict() if hasattr(reviewed, 'to_dict') else \
-                    self._serialize_review(reviewed)
+                if not reviewed:
+                    logger.warning(f"[orch] Empty review in round {round_num}")
+                    continue
+                if hasattr(reviewed, 'to_dict') and callable(getattr(reviewed, 'to_dict', None)):
+                    review_dict = dict(reviewed.to_dict())  # type: ignore[union-attr, arg-type]
+                else:
+                    review_dict = self._serialize_review(reviewed)
                 job.review_history.append(review_dict)
                 job.review_result = review_dict
                 job.total_review_rounds = round_num
@@ -630,7 +641,7 @@ class EditorOrchestrator:
                 fa_text = ""
                 if isinstance(job.final_article, dict):
                     fa_text = job.final_article.get('text', '')
-                elif hasattr(job.final_article, 'text'):
+                elif job.final_article is not None and hasattr(job.final_article, 'text'):
                     fa_text = job.final_article.text
                 if len(fa_text.split()) > 7000:
                     logger.info(f"[orch] Article too large ({len(fa_text.split())} words), forced accept")
@@ -640,7 +651,7 @@ class EditorOrchestrator:
 
                 # Determine action based on verdict
                 verdict = _rv('verdict')
-                verdict_value = verdict.value if hasattr(verdict, 'value') else (verdict or "")
+                verdict_value = verdict.value if verdict is not None and hasattr(verdict, 'value') else (verdict or "")
 
                 # BUG FIX: was comparing to "approve" string — now uses proper enum values
                 if verdict_value in (ReviewVerdict.ACCEPT.value, ReviewVerdict.ACCEPT_WITH_MINOR.value):
@@ -664,7 +675,7 @@ class EditorOrchestrator:
                         # Build revision instructions using reviewer's helper
                         if hasattr(self.reviewer, '_build_revision_instructions'):
                             job.revision_instructions = \
-                                self.reviewer._build_revision_instructions(reviewed)
+                                self.reviewer._build_revision_instructions(reviewed)  # type: ignore[arg-type]
                         elif isinstance(reviewed, dict):
                             job.revision_instructions = reviewed.get('revision_instructions', '')
                         else:
@@ -712,14 +723,14 @@ class EditorOrchestrator:
                         # Max rounds reached — forced accept with warning
                         if isinstance(reviewed, dict):
                             reviewed['forced_accept'] = True
-                        elif hasattr(reviewed, 'forced_accept'):
-                            reviewed.forced_accept = True
+                        elif reviewed is not None and hasattr(reviewed, 'forced_accept'):
+                            reviewed.forced_accept = True  # type: ignore[union-attr]
                         job.forced_accept = True
                         job.review_result = self._serialize_review(reviewed)
                         job.state = PipelineState.DONE
                         logger.info(
                             f"[orch] Job {job.job_id}: FORCED ACCEPT after REJECT "
-                            f"(score={reviewed.overall_score:.2f}, {max_rounds} rounds)"
+                            f"(score={_rv('overall_score', 0):.2f}, {max_rounds} rounds)"
                         )
 
                 else:
@@ -785,7 +796,6 @@ class EditorOrchestrator:
             except (_json.JSONDecodeError, TypeError):
                 revised_data = {"rewritten_sections": [], "text": revised_json}
             
-            from engine.schemas import WrittenArticle
             
             if isinstance(revised_data, dict) and "rewritten_sections" in revised_data:
                 # ── TARGETED REWRITE: merge rewritten sections into original ──
@@ -1009,6 +1019,8 @@ class EditorOrchestrator:
                 if len(words) >= 2:
                     bridges_result = gt.graph_cross_topic(words[0], words[-1])
                     if bridges_result.success and bridges_result.data:
+                        if job.editor_result is None:
+                            job.editor_result = {}
                         job.editor_result["cross_topic_bridges"] = [
                             {"label": b["label"], "bridge_score": b["bridge_score"],
                              "direct_mention": b["direct_mention"]}
@@ -1074,7 +1086,7 @@ class EditorOrchestrator:
                 return p
         return None
 
-    def _resolve_group_type(self, proposal: dict, job: PipelineJob = None):
+    def _resolve_group_type(self, proposal: dict, job: Optional[PipelineJob] = None):
         """Determine GroupType from job override or proposal metadata.
 
         Priority:
@@ -1082,7 +1094,6 @@ class EditorOrchestrator:
           2. proposal.article_type — explicit type in editor output
           3. Heuristic based on reference count
         """
-        from engine.schemas import GroupType
 
         # 1. User-specified override from API (stored on job)
         if job and job.group_type:
@@ -1143,12 +1154,13 @@ class EditorOrchestrator:
         return {"raw": str(result)}
 
     @staticmethod
-    def _serialize_draft(draft) -> dict:
+    def _serialize_draft(draft) -> dict:  # type: ignore[type-arg]
         # Plain classes with to_dict() (StructuredDraft, WrittenArticle, etc.)
         if hasattr(draft, 'to_dict') and callable(draft.to_dict):
-            return draft.to_dict()
+            return dict(draft.to_dict())  # type: ignore[arg-type]
         if hasattr(draft, '__dataclass_fields__'):
-            return asdict(draft)
+            _d = asdict(draft)
+            return dict(_d)  # type: ignore[type-arg]
         if isinstance(draft, dict):
             return draft
         return {"content": str(draft)}
@@ -1200,12 +1212,13 @@ class EditorOrchestrator:
         return '\n'.join(parts)
 
     @staticmethod
-    def _serialize_article(article) -> dict:
+    def _serialize_article(article) -> dict:  # type: ignore[type-arg]
         if hasattr(article, 'to_dict') and callable(article.to_dict):
-            return article.to_dict()
+            return dict(article.to_dict())  # type: ignore[arg-type]
         if hasattr(article, '__dataclass_fields__'):
             from dataclasses import asdict
-            return asdict(article)
+            _a = asdict(article)
+            return dict(_a)  # type: ignore[type-arg]
         if isinstance(article, dict):
             return article
         # Last resort: try to extract text (fallback: 'content' key if no 'text')
