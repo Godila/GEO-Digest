@@ -1347,14 +1347,8 @@ def _get_editor() -> "EditorAgent":
     from engine.agents.editor import EditorAgent
     from engine.storage.jsonl_backend import JsonlStorage
     storage = JsonlStorage(data_dir=str(DATA_DIR))
-    from engine.llm.minimax import MiniMaxProvider
-    from engine.config import get_config
-    cfg = get_config()
-    llm = MiniMaxProvider(
-        api_key=cfg.llm.api_key,
-        model=cfg.llm.model,
-        base_url=cfg.llm.base_url,
-    )
+    from engine.llm.config import get_editor_llm
+    llm = get_editor_llm()
     return EditorAgent(storage=storage, llm=llm, jobs_dir=DATA_DIR / "jobs")
 
 
