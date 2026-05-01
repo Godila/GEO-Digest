@@ -864,11 +864,11 @@ class EditorOrchestrator:
                 
                 full_text = "\n".join(merged_parts)
                 
-                # ── LENGTH GUARD: reject rewrite if it shrinks article >15% ──
+                # ── LENGTH GUARD: reject rewrite if it shrinks article >10% ──
                 orig_words = len(article_text.split())
                 new_words = len(full_text.split())
                 shrink_pct = (orig_words - new_words) / max(orig_words, 1) * 100
-                if shrink_pct > 15 and new_words < 3000:
+                if shrink_pct > 10:
                     logger.warning(
                         f"[orch] Rewrite rejected: shrunk from {orig_words} → {new_words} words "
                         f"(-{shrink_pct:.0f}%). Keeping original."
