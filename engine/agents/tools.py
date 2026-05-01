@@ -464,6 +464,12 @@ class AgentTools:
         (headings, lists, tables). Falls back to empty string on error.
         """
         try:
+            # Silence pdfminer — it generates megabytes of DEBUG logs per PDF
+            import logging
+            for name in ("pdfminer", "pdfminer.psparser", "pdfminer.pdfdocument",
+                         "pdfminer.pdfinterp", "pdfminer.cmapdb", "pdfminer.converter"):
+                logging.getLogger(name).setLevel(logging.WARNING)
+
             from markitdown import MarkItDown  # type: ignore[import-untyped]
 
             md = MarkItDown(enable_plugins=False)
