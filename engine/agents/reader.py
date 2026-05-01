@@ -164,14 +164,20 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             # 3. LLM analiz
             draft = self._analyze_with_llm(group, articles, extracted)
 
-            # Build rich context for Writer — detailed analysis with facts, quotes, contradictions
-            try:
-                draft.rich_context = self._build_rich_context(
-                    extracted,
-                    group.group_type if group else GroupType.REVIEW
-                )
-            except Exception as e:
-                self._log(f"Rich context build warning: {e}")
+            # Build rich context for Writer — skip if many articles (slow)
+            # Evidence blocks are more valuable than rich_context for Writer quality
+            n_pdf = sum(1 for d in extracted.values() if d.get("source") == "pdf")
+            if n_pdf <= 5:
+                try:
+                    draft.rich_context = self._build_rich_context(
+                        extracted,
+                        group.group_type if group else GroupType.REVIEW
+                    )
+                except Exception as e:
+                    self._log(f"Rich context build warning: {e}")
+                    draft.rich_context = ""
+            else:
+                self._log(f"Skipping rich_context ({n_pdf} PDFs > 5), using evidence_blocks only")
                 draft.rich_context = ""
 
             # Extract structured evidence blocks for evidence-grounded writing
