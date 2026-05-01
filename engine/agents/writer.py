@@ -466,7 +466,7 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         result = self.call_llm(
             prompt=user,
             system=system,
-            max_tokens=32000,
+            max_tokens=64000,
             parse_json=True,
             temperature=0.3,
         )

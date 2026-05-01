@@ -859,6 +859,22 @@ class EditorOrchestrator:
                 
                 full_text = "\n".join(merged_parts)
                 
+                # ── LENGTH GUARD: reject rewrite if it shrinks article >15% ──
+                orig_words = len(article_text.split())
+                new_words = len(full_text.split())
+                shrink_pct = (orig_words - new_words) / max(orig_words, 1) * 100
+                if shrink_pct > 15 and new_words < 3000:
+                    logger.warning(
+                        f"[orch] Rewrite rejected: shrunk from {orig_words} → {new_words} words "
+                        f"(-{shrink_pct:.0f}%). Keeping original."
+                    )
+                    job.state = PipelineState.REVIEWING
+                    job.updated_at = now_iso()
+                    self._save_job(job)
+                    return job
+                if shrink_pct > 0:
+                    logger.info(f"[orch] Rewrite note: article shrunk by {shrink_pct:.0f}% ({orig_words} → {new_words})")
+                
                 logger.info(f"[orch] Targeted rewrite: replaced {replaced_count} sections, kept {len(orig_sections) - replaced_count} unchanged")
                 
                 article = WrittenArticle(

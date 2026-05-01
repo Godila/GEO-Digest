@@ -400,12 +400,14 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             source = data["source"]
 
             # Ogranichivaem dlinu teksta (LLM context limit)
-            # PDF: Gemini 1M kontext — ne obrezaem, polnyy tekst
-            # Abstract: ogranichivaem, tak kak i tak korotkiy
+            # PDF: DeepSeek 1M context — ne obrezaem, polnyy tekst
+            # Abstract+S2: uvelichen do 8000 dlya bolee glubokogo analiza
             if source == "pdf":
                 max_chars = len(text)  # Bez obrezki dlya PDF
+            elif "s2" in source:
+                max_chars = min(len(text), 8000)  # S2 enrichment — 8000 max
             else:
-                max_chars = min(len(text), 3000)  # Abstract fallback — 3000 max
+                max_chars = min(len(text), 5000)  # Abstract-only — 5000 max
             if len(text) > max_chars:
                 text = text[:max_chars]
 
