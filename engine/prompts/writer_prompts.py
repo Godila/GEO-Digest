@@ -79,7 +79,7 @@ def build_outline_user_prompt(draft, reader_context: str = "") -> str:
 
     context_block = ""
     if reader_context:
-        context_block = f"\n\nБОГАТЫЙ КОНТЕКСТ ИЗ ИСТОЧНИКОВ:\n{reader_context[:6000]}"
+        context_block = f"\n\nБОГАТЫЙ КОНТЕКСТ ИЗ ИСТОЧНИКОВ:\n{reader_context[:10000]}"
 
     return f"""Создай детальный план статьи на тему: {topic}
 
@@ -221,9 +221,9 @@ def extract_section_context(section_heading: str, rich_context: str) -> str:
             keywords = kws
             break
     
-    # If no keywords matched, return full context (up to 10K chars)
+    # If no keywords matched, return full context (up to 15K chars)
     if not keywords:
-        return rich_context[:10000]
+        return rich_context[:15000]
     
     # Split context into paragraphs and score each by keyword matches
     paragraphs = rich_context.split("\n\n")
@@ -240,8 +240,8 @@ def extract_section_context(section_heading: str, rich_context: str) -> str:
     result_paragraphs = matched + remaining
     result = "\n\n".join(result_paragraphs)
     
-    # Cap at 8000 chars per section (generous)
-    return result[:8000]
+    # Cap at 12000 chars per section (generous)
+    return result[:12000]
 
 
 def get_section_target(section_heading: str) -> dict:

@@ -353,7 +353,9 @@ class AgentTools:
                 pdf_url = data.get("first_oa_location", {}).get("url_for_pdf", "")
 
             if pdf_url:
-                article["oa_url"] = pdf_url
+                # Article wraps a dict — use _data for item assignment
+                if hasattr(article, '_data'):
+                    article._data['oa_url'] = pdf_url
                 print(f"  [Unpaywall] Found OA URL for {doi[:30]}...", file=sys.stderr)
 
         except Exception as e:
@@ -477,8 +479,67 @@ class AgentTools:
 
         return ""
     
+    def enrich_from_semantic_scholar(self, article: Article) -> str:
+        """
+        Enrich article with Semantic Scholar data (TLDR + extended abstract).
+
+        Used as fallback when PDF is unavailable (paywall or no OA URL).
+        Returns combined text (TLDR + abstract) or empty string.
+        Free API — 100 req/sec, no key needed.
+        Uses stdlib urllib (no Scrapling needed for plain API calls).
+        """
+        doi = article.get("doi", "")
+        if not doi:
+            return ""
+
+        try:
+            import urllib.parse
+            import urllib.request
+            import json as _json
+
+            encoded_doi = urllib.parse.quote(doi, safe="")
+            url = (
+                f"https://api.semanticscholar.org/graph/v1/paper/DOI:{encoded_doi}"
+                f"?fields=tldr,abstract,title"
+            )
+
+            req = urllib.request.Request(url, headers={"User-Agent": "GEO-Digest/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = _json.loads(resp.read().decode())
+
+            if not data or not isinstance(data, dict):
+                return ""
+
+            parts = []
+
+            # TLDR — concise AI-generated summary (very high quality)
+            tldr = data.get("tldr")
+            if tldr and isinstance(tldr, dict):
+                tldr_text = tldr.get("text", "")
+                if tldr_text:
+                    parts.append(f"[Semantic Scholar TLDR]: {tldr_text}")
+
+            # Extended abstract (often longer than original)
+            abstract = data.get("abstract", "")
+            if abstract:
+                parts.append(f"[Abstract]: {abstract}")
+
+            combined = "\n\n".join(parts)
+
+            if combined:
+                print(
+                    f"  [S2] Enriched {doi[:30]}... ({len(combined)} chars)",
+                    file=sys.stderr,
+                )
+
+            return combined
+
+        except Exception as e:
+            print(f"  [S2] Failed for {doi[:30]}...: {e}", file=sys.stderr)
+            return ""
+
     # ── Stats ──
-    
+
     def get_stats(self) -> dict:
         """Delegate to storage stats."""
         return self.storage.get_stats()

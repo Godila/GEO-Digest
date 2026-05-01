@@ -361,6 +361,19 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
                 source = "abstract"
                 self._log(f"    Abstract: {len(text)} simvolov")
 
+            # Semantic Scholar enrichment for paywall/no-PDF articles
+            # S2 TLDR + abstract is often richer than original abstract alone
+            if source != "pdf" and art.doi:
+                s2_text = tools.enrich_from_semantic_scholar(art)
+                if s2_text:
+                    # Combine: existing text + S2 enrichment
+                    if text:
+                        text = f"{text}\n\n--- Semantic Scholar Enrichment ---\n\n{s2_text}"
+                    else:
+                        text = s2_text
+                    source = source + "+s2" if source != "none" else "semantic_scholar"
+                    self._log(f"    S2 enrichment: {len(text)} total simvolov")
+
             result[key] = {
                 "article": art,
                 "text": text,
@@ -386,9 +399,14 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             source = data["source"]
 
             # Ogranichivaem dlinu teksta (LLM context limit)
-            max_chars = 15000
+            # PDF: Gemini 1M kontext — ne obrezaem, polnyy tekst
+            # Abstract: ogranichivaem, tak kak i tak korotkiy
+            if source == "pdf":
+                max_chars = len(text)  # Bez obrezki dlya PDF
+            else:
+                max_chars = min(len(text), 3000)  # Abstract fallback — 3000 max
             if len(text) > max_chars:
-                text = text[:max_chars] + "\n... [obrezano]"
+                text = text[:max_chars]
 
             extra = self._get_type_instructions(group_type)
             part = READER_ARTICLE_PROMPT.format(
@@ -492,8 +510,8 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
                     })
                 continue
 
-            # Truncate text for LLM (keep up to 15K chars for evidence extraction)
-            text_for_llm = text[:15000] if len(text) > 15000 else text
+            # PDF text — no truncation (Gemini 1M context); abstract stays as-is
+            text_for_llm = text
 
             prompt = f"""Статья: {art.title}
 Авторы: {art.authors or 'N/A'}
@@ -574,7 +592,7 @@ DOI: {art.doi or 'N/A'}
 Год: {art.year or 'N/A'}
 
 Текст статьи:
-{text[:12000]}
+{text[:18000]}
 
 Проведи детальный анализ для написания {group_type.value} статьи."""
 
