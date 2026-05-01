@@ -410,7 +410,7 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             # (DeepSeek 1M context podderzhivaet, no generatsiya medlennaya na >100K tokens)
             # Abstract+S2: uvelichen do 8000 dlya bolee glubokogo analiza
             if source == "pdf":
-                max_chars = min(len(text), 30000)  # 30K — balans glubiny i skorosti
+                max_chars = min(len(text), 15000)  # 15K — faster LLM processing
             elif "s2" in source:
                 max_chars = min(len(text), 8000)
             else:
@@ -474,8 +474,8 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         """
         import time as _t
         
-        # Batch: split into groups of max 5
-        BATCH_SIZE = 5
+        # Batch: split into groups of max 3
+        BATCH_SIZE = 3
         all_raw = []
         
         if len(parts) <= BATCH_SIZE:
