@@ -349,9 +349,14 @@ class EditorOrchestrator:
             dois = self._extract_dois(proposal["key_references"])
             try:
                 result = self.reader.run(dois=dois, topic=job.topic)
-                draft = result.data if hasattr(result, 'data') else result
-                draft_data = self._serialize_draft(draft)
-                job.current_draft = draft_data
+                if hasattr(result, 'success') and not result.success:
+                    err = getattr(result, 'error', 'Unknown error')
+                    logger.error(f"[orch] Reader returned failure: {err}")
+                    job.current_draft = {"error": f"Reader failed: {err}", "proposal_summary": proposal.get("thesis", "")[:200]}
+                else:
+                    draft = result.data if hasattr(result, 'data') else result
+                    draft_data = self._serialize_draft(draft)
+                    job.current_draft = draft_data
             except Exception as e:
                 logger.error(f"[orch] Reader FAILED: {e}")
                 job.current_draft = {"error": str(e), "proposal_summary": proposal.get("thesis", "")[:200]}

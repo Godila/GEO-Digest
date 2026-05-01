@@ -467,17 +467,38 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         group_type: GroupType,
         articles: list[Article],
     ) -> StructuredDraft:
-        """Analiziruet neskol'ko statey i agregiruet v odin draft."""
+        """Analiziruet neskol'ko statey i agregiruet v odin draft.
+        
+        Optimization: batch articles into groups of ≤5 to reduce LLM calls
+        and avoid OpenRouter rate limits.
+        """
+        import time as _t
+        
+        # Batch: split into groups of max 5
+        BATCH_SIZE = 5
         all_raw = []
-        for i, part in enumerate(parts):
-            self._log(f"  LLM analiz stat'i {i+1}/{len(parts)}")
-            raw = self.call_llm(prompt=part, system=READER_SYSTEM_PROMPT,
-                                max_tokens=4096, parse_json=True)
+        
+        if len(parts) <= BATCH_SIZE:
+            # Small batch — one LLM call with all articles combined
+            self._log(f"  Batch analysis: {len(parts)} articles in 1 call")
+            combined = "\n\n---\n\n".join(parts)
+            raw = self.call_llm(prompt=combined, system=READER_SYSTEM_PROMPT,
+                                max_tokens=8192, parse_json=True)
             all_raw.append(raw)
-            # Rate limit: pause between LLM calls to avoid OpenRouter 429
-            if i < len(parts) - 1:
-                import time as _t
-                _t.sleep(3)
+        else:
+            # Large batch — split into groups
+            for batch_start in range(0, len(parts), BATCH_SIZE):
+                batch = parts[batch_start:batch_start + BATCH_SIZE]
+                batch_num = batch_start // BATCH_SIZE + 1
+                total_batches = (len(parts) + BATCH_SIZE - 1) // BATCH_SIZE
+                self._log(f"  Batch {batch_num}/{total_batches}: {len(batch)} articles")
+                combined = "\n\n---\n\n".join(batch)
+                raw = self.call_llm(prompt=combined, system=READER_SYSTEM_PROMPT,
+                                    max_tokens=8192, parse_json=True)
+                all_raw.append(raw)
+                # Rate limit between batches
+                if batch_start + BATCH_SIZE < len(parts):
+                    _t.sleep(5)
 
         # Agregatsiya: berem pervuyu kak osnovu, dobavlyayem ostal'nye
         base = all_raw[0] if all_raw else {}
