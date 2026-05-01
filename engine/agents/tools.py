@@ -338,15 +338,14 @@ class AgentTools:
             return
 
         try:
-            import urllib.parse, json
+            import urllib.parse
+            from engine.fetcher import fetch_json
             email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
 
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
-            })
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
+            data = fetch_json(url)
+            if not data:
+                return
 
             # Best PDF URL from Unpaywall
             pdf_url = data.get("best_oa_location", {}).get("url_for_pdf", "")
@@ -419,7 +418,11 @@ class AgentTools:
         return None
     
     def _try_download_pdf(self, url: str, cache_key: str, timeout: int = 30) -> Optional[Path]:
-        """Attempt to download PDF from URL. Returns path or None."""
+        """Attempt to download PDF from URL using Scrapling (2-tier fallback).
+        
+        Tier 1: Fetcher (curl_cffi, TLS impersonation) — fast
+        Tier 2: StealthySession (Patchright + Chromium) — handles 403/WAF
+        """
         import hashlib
         
         safe_name = hashlib.md5((cache_key or "unknown").encode()).hexdigest()[:12]
@@ -430,23 +433,26 @@ class AgentTools:
             return cache_path
         
         try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (GEO-Digest Research Agent; contact@geo-digest.org)",
-                "Accept": "application/pdf,*/*",
-            })
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = resp.read()
+            from engine.fetcher import download_pdf, DownloadError
+            
+            result = download_pdf(url)
+            
+            if result and result.content:
+                cache_path.write_bytes(result.content)
+                tier_label = "T1(Fetcher)" if result.tier_used == 1 else "T2(Stealth)"
+                print(
+                    f"  [PDF] Downloaded via {tier_label}: "
+                    f"{len(result.content)} bytes from {url[:50]}",
+                    file=sys.stderr,
+                )
+                return cache_path
                 
-            # Validate it's actually a PDF
-            if len(data) < 1000 or not data.startswith(b"%PDF"):
-                return None
-            
-            cache_path.write_bytes(data)
-            return cache_path
-            
-        except Exception as e:
+        except DownloadError as e:
             print(f"  [PDF] Failed {url[:60]}...: {e}", file=sys.stderr)
-            return None
+        except Exception as e:
+            print(f"  [PDF] Error {url[:60]}...: {e}", file=sys.stderr)
+        
+        return None
     
     def extract_text_from_pdf(self, pdf_path: Path) -> str:
         """

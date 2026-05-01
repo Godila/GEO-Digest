@@ -18,6 +18,12 @@ RUN pip install --no-cache-dir \
     requests httpx \
     'markitdown[pdf]'
 
+# Scrapling + Chromium browser (Tier 2 stealth fetcher)
+RUN pip install --no-cache-dir "scrapling[fetchers]>=0.4.7" && \
+    python -m playwright install-deps chromium && \
+    python -m playwright install chromium && \
+    rm -rf /root/.cache/ms-playwright/.temp /tmp/*
+
 # Data volume (shared with dashboard)
 VOLUME ["/app/data"]
 

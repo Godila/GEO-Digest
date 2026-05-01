@@ -49,9 +49,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 4G
         reservations:
-          memory: 128M
+          memory: 256M
     networks:
       - geo-net
     healthcheck:

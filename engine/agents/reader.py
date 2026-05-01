@@ -244,15 +244,15 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
     
     def _enrich_pdf_url(self, doi: str, art: Article) -> None:
         """Enrich Article in-place with PDF URL from Unpaywall."""
-        import urllib.parse, json
+        import urllib.parse
         try:
             email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
-            })
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
+            
+            from engine.fetcher import fetch_json
+            data = fetch_json(url)
+            if not data:
+                return
             
             pdf_url = (data.get("best_oa_location") or {}).get("url_for_pdf", "")
             if not pdf_url:
@@ -270,7 +270,8 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
     
     def _resolve_doi_from_api(self, doi: str) -> Optional[Article]:
         """Create Article stub from DOI using Unpaywall + Crossref APIs."""
-        import urllib.parse, json
+        import urllib.parse
+        from engine.fetcher import fetch_json
         
         title = ""
         abstract = ""
@@ -282,18 +283,15 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         try:
             email = os.environ.get("UNPAYWALL_EMAIL", "geo-digest@research.bot")
             url = f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(email)}"
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
-            })
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-            title = data.get("title", "")
-            year = data.get("year")
-            pdf_url = (data.get("best_oa_location") or {}).get("url_for_pdf", "")
-            if not pdf_url:
-                pdf_url = (data.get("first_oa_location") or {}).get("url_for_pdf", "")
-            for a in (data.get("z_authors") or [])[:10]:
-                authors.append(a.get("given", "") + " " + a.get("family", ""))
+            data = fetch_json(url)
+            if data:
+                title = data.get("title", "")
+                year = data.get("year")
+                pdf_url = (data.get("best_oa_location") or {}).get("url_for_pdf", "")
+                if not pdf_url:
+                    pdf_url = (data.get("first_oa_location") or {}).get("url_for_pdf", "")
+                for a in (data.get("z_authors") or [])[:10]:
+                    authors.append(a.get("given", "") + " " + a.get("family", ""))
         except Exception:
             pass
         
@@ -301,17 +299,15 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
         if not title or not abstract:
             try:
                 url = f"https://api.crossref.org/works/{urllib.parse.quote(doi)}"
-                req = urllib.request.Request(url, headers={
-                    "User-Agent": "GEO-Digest/1.0 (mailto:geo-digest@research.bot)"
-                })
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    cr = json.loads(resp.read()).get("message", {})
-                if not title:
-                    title = cr.get("title", [""])[0]
-                abstract = cr.get("abstract", "")
-                if not year:
-                    dp = cr.get("published-print") or cr.get("published-online") or {}
-                    year = (dp.get("date-parts") or [[None]])[0][0]
+                cr_raw = fetch_json(url)
+                if cr_raw:
+                    cr = cr_raw.get("message", {})
+                    if not title:
+                        title = cr.get("title", [""])[0]
+                    abstract = cr.get("abstract", "")
+                    if not year:
+                        dp = cr.get("published-print") or cr.get("published-online") or {}
+                        year = (dp.get("date-parts") or [[None]])[0][0]
             except Exception:
                 pass
         
