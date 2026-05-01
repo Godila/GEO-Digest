@@ -1853,23 +1853,58 @@ async def pipeline_develop(job_id: str, request: Request):
         if not job:
             raise HTTPException(404, f"Job {job_id} not found")
 
+        # A3: Guard — reject if pipeline already running for this job
+        from engine.orchestrator_v2 import PipelineState
+        active_states = {PipelineState.DEVELOPING, PipelineState.WRITING, PipelineState.REVIEWING}
+        if job.state in active_states:
+            raise HTTPException(409, f"Job {job_id} already in state {job.state.value}")
+
         _job_obj = job
         _feedback = feedback
 
         def target():
+            import traceback as _tb
             try:
+                # A4: Heartbeat — update timestamp every 30s
+                import time as _time
+                import threading as _thr
+
+                _stop_hb = _thr.Event()
+
+                def _heartbeat():
+                    while not _stop_hb.is_set():
+                        _stop_hb.wait(30)
+                        if _stop_hb.is_set():
+                            break
+                        try:
+                            _job_obj.updated_at = now_iso()
+                            orch._save_job(_job_obj)
+                        except Exception:
+                            pass
+
+                _hb_thread = _thr.Thread(target=_heartbeat, daemon=True)
+                _hb_thread.start()
+
+                logger.info(f"[pipeline:{_job_obj.job_id}] Starting develop phase")
+
                 orch.develop(_job_obj, user_feedback=_feedback or "")
-                # Auto-continue: develop (Reader) → write (Writer) → review (Reviewer)
-                logger.info(f"[pipeline] Develop done, auto-starting write for {_job_obj.job_id}")
+                logger.info(f"[pipeline:{_job_obj.job_id}] Develop done, auto-starting write")
+
                 orch.write(_job_obj)
-                logger.info(f"[pipeline] Write done, auto-starting review for {_job_obj.job_id}")
+                logger.info(f"[pipeline:{_job_obj.job_id}] Write done, auto-starting review")
+
                 orch.review(_job_obj)
-                logger.info(f"[pipeline] Pipeline complete for {_job_obj.job_id}")
+                logger.info(f"[pipeline:{_job_obj.job_id}] Pipeline complete")
+
+                _stop_hb.set()
+
             except Exception as e:
-                logger.error(f"Pipeline develop FAILED: {e}", exc_info=True)
+                _stop_hb.set()
+                _tb_str = _tb.format_exc()
+                logger.error(f"[pipeline:{_job_obj.job_id}] FAILED: {e}\n{_tb_str}")
                 try:
                     _job_obj.state = PipelineState.FAILED
-                    _job_obj.error = f"Develop failed: {e}"
+                    _job_obj.error = f"Pipeline failed: {e}\n{_tb_str[-2000:]}"
                     orch._save_job(_job_obj)
                 except Exception:
                     pass

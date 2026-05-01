@@ -355,7 +355,7 @@ class EditorAgent:
             result = EditorResult(
                 job_id=state.job_id,
                 topic=topic,
-                status="done",
+                status="complete",
                 analysis=discovery.to_dict(),
                 discovery=discovery,
                 proposals=validated,
@@ -989,7 +989,7 @@ class EditorAgent:
         return EditorResult(
             job_id=state_data["job_id"],
             topic=state_data.get("topic", ""),
-            status=state_data.get("phase", "unknown"),
+            status="complete" if state_data.get("phase") == "done" else state_data.get("phase", "unknown"),
             analysis=dd,
             discovery=discovery,
             proposals=proposals,

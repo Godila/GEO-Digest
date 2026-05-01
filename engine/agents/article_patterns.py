@@ -239,16 +239,16 @@ SECTION_TRANSITIONS = {
 ARTICLE_TYPES = {
     "original_research": {
         "label": "Оригинальное исследование (IMRaD)",
-        "word_range": [3500, 5500],
-        "target_words": 4500,
+        "word_range": [5000, 8000],
+        "target_words": 6500,
         "target_refs": [30, 50],
         "sections": ["introduction", "methods", "results", "discussion", "conclusion", "references"],
         "key_criteria": ["новизна данных", "валидность методов", "конкретные цифры", "глубокое обсуждение"],
     },
     "review": {
         "label": "Обзорная статья",
-        "word_range": [5000, 8000],
-        "target_words": 6000,
+        "word_range": [8000, 15000],
+        "target_words": 12000,
         "target_refs": [40, 70],
         "sections": ["introduction", "systematic_review", "results", "discussion", "future_directions", "conclusion", "references"],
         "key_criteria": ["полнота охвата литературы", "критический анализ", "систематичность", "сравнительные таблицы"],

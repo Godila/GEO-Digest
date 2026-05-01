@@ -257,7 +257,7 @@ class TestDataModels(unittest.TestCase):
         self.assertEqual(dr.proposal_count_hint, 1)
 
     def test_editor_result_to_dict(self):
-        r = EditorResult(job_id="j1", topic="test", status="done")
+        r = EditorResult(job_id="j1", topic="test", status="complete")
         d = r.to_dict()
         self.assertEqual(d["job_id"], "j1")
         self.assertIsNone(d["error"])
@@ -285,7 +285,7 @@ class TestEditorAgentRun(unittest.TestCase):
 
     def test_run_returns_proposals(self):
         result = self.editor.run(topic="test topic")
-        self.assertEqual(result.status, "done")
+        self.assertEqual(result.status, "complete")
         self.assertGreaterEqual(len(result.proposals), 1)
         for p in result.proposals:
             self.assertIsInstance(p, ArticleProposal)
@@ -547,7 +547,7 @@ class TestResume(unittest.TestCase):
     def test_resume_completed_job(self):
         result = self.editor.run(topic="resume test")
         resumed = self.editor.resume(result.job_id)
-        self.assertEqual(resumed.status, "done")
+        self.assertEqual(resumed.status, "complete")
         self.assertEqual(resumed.job_id, result.job_id)
 
     def test_resume_nonexistent_raises(self):

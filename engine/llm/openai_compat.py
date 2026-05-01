@@ -35,7 +35,8 @@ class OpenAICompatProvider(LLMProvider):
         name = self.model.lower()
         return any(x in name for x in [
             "gemini-3", "gemini-2.5", "o1", "o3", "o4",
-            "deepseek-r1", "claude-3.7", "claude-4",
+            "deepseek-r1", "deepseek-v4",
+            "claude-3.7", "claude-4",
             "glm-5",
         ])
 
