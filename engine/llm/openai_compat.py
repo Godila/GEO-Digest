@@ -86,7 +86,7 @@ class OpenAICompatProvider(LLMProvider):
         return self._request(payload)
 
     def _request(self, payload):
-        """Execute API request with retries."""
+        """Execute API request with retries. Longer backoff on 429 rate limit."""
         url = f"{self.base_url}/chat/completions"
         data = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
@@ -99,7 +99,11 @@ class OpenAICompatProvider(LLMProvider):
             except Exception as e:
                 last_err = e
                 if attempt < self.retries:
-                    time.sleep(2 ** attempt)
+                    # 429 rate limit — longer backoff (10, 20, 40s)
+                    err_str = str(e).lower()
+                    is_rate_limit = "429" in err_str or "rate" in err_str
+                    delay = (10 * 2 ** attempt) if is_rate_limit else (2 ** attempt)
+                    time.sleep(delay)
         raise RuntimeError(f"OpenAI API error: {last_err}")
 
     def health_check(self):
@@ -288,7 +292,10 @@ class OpenAICompatProvider(LLMProvider):
             except Exception as e:
                 last_err = e
                 if attempt < self.retries:
-                    time.sleep(2 ** attempt)
+                    err_str = str(e).lower()
+                    is_rate_limit = "429" in err_str or "rate" in err_str
+                    delay = (10 * 2 ** attempt) if is_rate_limit else (2 ** attempt)
+                    time.sleep(delay)
         raise RuntimeError(f"OpenAI API error after {self.retries + 1} attempts: {last_err}")
 
     # ── Format Conversion Helpers ───────────────────────────────

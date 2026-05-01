@@ -474,6 +474,10 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             raw = self.call_llm(prompt=part, system=READER_SYSTEM_PROMPT,
                                 max_tokens=4096, parse_json=True)
             all_raw.append(raw)
+            # Rate limit: pause between LLM calls to avoid OpenRouter 429
+            if i < len(parts) - 1:
+                import time as _t
+                _t.sleep(3)
 
         # Agregatsiya: berem pervuyu kak osnovu, dobavlyayem ostal'nye
         base = all_raw[0] if all_raw else {}
