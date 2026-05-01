@@ -1268,6 +1268,12 @@ class EditorOrchestrator:
                     dois.append(clean)
             elif isinstance(ref, dict):
                 doi = ref.get("doi", ref.get("id", ""))
-                if doi and doi_pattern.match(doi.strip()):
-                    dois.append(doi.strip())
+                if doi:
+                    # Strip DOI:/doi: prefix before matching
+                    doi = doi.replace("DOI:", "").replace("doi:", "").strip()
+                    # Strip trailing markdown/punctuation
+                    import re as _re
+                    doi = _re.sub(r'[*`"\'.,;:)\]}>]+$', '', doi).strip()
+                    if doi_pattern.match(doi):
+                        dois.append(doi)
         return dois
