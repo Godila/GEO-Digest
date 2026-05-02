@@ -168,9 +168,20 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             # Evidence blocks provide sufficient context for Writer
             draft.rich_context = ""
 
-            # Evidence blocks — extracted inline in single LLM call above
-            # No separate _extract_evidence_blocks call (was causing N extra LLM calls)
-            draft.evidence_blocks = []
+            # Evidence blocks — single batch call for all PDFs
+            pdf_extracted = {k: v for k, v in extracted.items() if v.get("source") == "pdf"}
+            if pdf_extracted:
+                try:
+                    draft.evidence_blocks = self._extract_evidence_blocks_batch(
+                        pdf_extracted,
+                        group.group_type if group else GroupType.REVIEW
+                    )
+                    self._log(f"Evidence blocks: {len(draft.evidence_blocks)} sources extracted")
+                except Exception as e:
+                    self._log(f"Evidence extraction warning: {e}")
+                    draft.evidence_blocks = []
+            else:
+                draft.evidence_blocks = []
 
             return AgentResult(
                 agent_name=self.name,
@@ -411,31 +422,9 @@ class ReaderAgent(BaseAgent, LLMCallMixin):
             )
             parts.append(part)
 
-        # Single LLM call for all articles — concatenate with truncation
-        # This reduces N calls to 1, avoiding OpenRouter rate limits and timeouts
-        MAX_CHARS_PER_ARTICLE = 5000
-        truncated_parts = []
-        for part in parts:
-            if len(part) > MAX_CHARS_PER_ARTICLE:
-                truncated_parts.append(part[:MAX_CHARS_PER_ARTICLE] + "\n...[truncated]")
-            else:
-                truncated_parts.append(part)
-        
-        combined = "\n\n===NEXT ARTICLE===\n\n".join(truncated_parts)
-        combined_prompt = f"""Analyze ALL {len(articles)} research articles below (separated by ===NEXT ARTICLE===).
-For the FULL collection, extract a SINGLE unified analysis with:
-1. Main themes and research landscape
-2. Key methods used across articles
-3. Important findings and quantitative results (with exact numbers)
-4. Trends in the field
-5. Research gaps and open questions
-6. For each article: key verbatim quotes with context (for evidence-grounded writing)
-
-{combined}"""
-        
-        raw = self.call_llm(prompt=combined_prompt, system=READER_SYSTEM_PROMPT,
-                            max_tokens=8192, parse_json=True)
-        return self._parse_draft(raw, group_type, articles, combined)
+        # Batch analysis — 2 LLM calls max (batch of 5)
+        # Restores quality lost in single-call approach while keeping speed
+        return self._analyze_multiple(parts, group_type, articles)
 
     def _get_type_instructions(self, group_type: GroupType) -> str:
         """Dopolnitel'nye instruktsii dlya konkretnogo tipa."""
@@ -512,6 +501,58 @@ For the FULL collection, extract a SINGLE unified analysis with:
 
         draft.articles_covered = len(articles)
         return draft
+
+    def _extract_evidence_blocks_batch(
+        self, extracted: dict, group_type: 'GroupType'
+    ) -> list[dict]:
+        """Extract evidence blocks for ALL PDFs in a single LLM call.
+        
+        Replaces per-PDF _extract_evidence_blocks which caused N LLM calls.
+        Combines truncated texts from all PDFs into one prompt.
+        """
+        import json as _json
+        
+        # Build combined prompt with all PDF texts (truncated to 8K chars each)
+        articles_text = []
+        for key, data in extracted.items():
+            art = data["article"]
+            text = data["text"]
+            if not text or len(text) < 500:
+                if art.abstract:
+                    articles_text.append(f"---\nArticle: {art.title}\nDOI: {art.doi}\nSource: abstract\n{text[:1000]}\n")
+                continue
+            text_for_llm = text[:8000] if len(text) > 8000 else text
+            articles_text.append(f"---\nArticle: {art.title}\nDOI: {art.doi or 'N/A'}\nSource: full text\n{text_for_llm}\n")
+        
+        if not articles_text:
+            return []
+        
+        combined = "\n".join(articles_text)
+        prompt = f"""Для КАЖДОЙ статьи ниже извлеки structured evidence в JSON формате.
+Верни JSON array, где каждый элемент содержит:
+- "source": "Авторы, год"
+- "doi": DOI статьи
+- "title": название статьи  
+- "summary": краткое резюме (2-3 предложения)
+- "methodology_summary": описание методов (1-2 предложения)
+- "key_numbers": список конкретных числовых результатов ["результат 1", "результат 2"]
+- "quotes": список verbatim цитат [{"text": "цитата", "context": "контекст"}]
+
+СТАТЬИ:
+{combined}"""
+        
+        raw = self.call_llm(prompt=prompt, system="Ты научный аналитик. Извлеки evidence из каждой статьи. Верни JSON array.",
+                           max_tokens=4096, parse_json=True)
+        
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            # Might be wrapped in an object
+            for key in ("evidence", "blocks", "articles", "results", "data"):
+                if key in raw and isinstance(raw[key], list):
+                    return raw[key]
+            return [raw]
+        return []
 
     def _extract_evidence_blocks(
         self, extracted: dict, group_type: 'GroupType'
