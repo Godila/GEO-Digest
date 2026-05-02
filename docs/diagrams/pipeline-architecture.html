@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO-Digest · Pipeline Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600;700&display=swap');
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #e8e8e8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+
+  .frame {
+    background: #f5f5f5;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.06);
+    padding: 2rem;
+    max-width: 1240px;
+    width: 100%;
+  }
+
+  svg { width: 100%; height: auto; display: block; }
+</style>
+</head>
+<body>
+<div class="frame">
+<svg viewBox="0 0 1200 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Muted arrowhead -->
+    <marker id="arr-m" viewBox="0 0 10 7" refX="10" refY="3.5"
+            markerWidth="10" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4f5d75"/>
+    </marker>
+    <!-- Accent arrowhead -->
+    <marker id="arr-a" viewBox="0 0 10 7" refX="10" refY="3.5"
+            markerWidth="10" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#eb6c36"/>
+    </marker>
+  </defs>
+
+  <style>
+    .tag        { font-family:'Geist Mono',monospace; font-size:7.5px; font-weight:500; letter-spacing:.6px; }
+    .node-title { font-family:'Geist',sans-serif; font-size:12.5px; font-weight:600; }
+    .node-sub   { font-family:'Geist Mono',monospace; font-size:8.5px; fill:#4f5d75; }
+    .node-det   { font-family:'Geist Mono',monospace; font-size:7.5px; fill:#4f5d75; opacity:.7; }
+    .arr-label  { font-family:'Geist Mono',monospace; font-size:7.5px; font-weight:500; fill:#4f5d75; }
+    .arr-label-a{ font-family:'Geist Mono',monospace; font-size:7.5px; font-weight:600; fill:#eb6c36; }
+    .diag-title { font-family:'Instrument Serif',serif; font-size:22px; fill:#2d3142; }
+    .legend-txt { font-family:'Geist',sans-serif; font-size:9px; fill:#4f5d75; }
+    .footer-txt { font-family:'Geist',sans-serif; font-size:8.5px; fill:#4f5d75; opacity:.5; }
+  </style>
+
+  <!-- ──────────────────── TITLE ──────────────────── -->
+  <text x="60" y="36" class="diag-title">GEO-Digest · Pipeline Architecture</text>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       ARROWS  — drawn BEFORE nodes so nodes paint on top (z-order)
+       ════════════════════════════════════════════════════════════════ -->
+  <g id="arrows">
+
+    <!-- 1 · User → Scout : TOPIC ───────────────────────── -->
+    <line x1="180" y1="152" x2="220" y2="152"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <rect x="182" y="130" width="36" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="200" y="140" text-anchor="middle" class="arr-label">TOPIC</text>
+
+    <!-- 2 · Scout → Editor : TOP 10 ────────────────────── -->
+    <line x1="340" y1="152" x2="380" y2="152"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <rect x="338" y="130" width="44" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="360" y="140" text-anchor="middle" class="arr-label">TOP 10</text>
+
+    <!-- 3 · Editor → Reader : 20 DOIs  + SELECT badge ──── -->
+    <line x1="500" y1="152" x2="540" y2="152"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <rect x="496" y="130" width="48" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="520" y="140" text-anchor="middle" class="arr-label">20 DOIs</text>
+    <!-- SELECT pill (user interaction) -->
+    <rect x="504" y="160" width="34" height="12" rx="3" fill="#2e5aa8"/>
+    <text x="521" y="169" text-anchor="middle"
+          style="font-family:'Geist Mono',monospace;font-size:6.5px;fill:#fff;letter-spacing:.5px;font-weight:500;">SELECT</text>
+
+    <!-- 4 · Reader → Writer : EVIDENCE ──────────────────── -->
+    <line x1="660" y1="152" x2="700" y2="152"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <rect x="652" y="130" width="56" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="680" y="140" text-anchor="middle" class="arr-label">EVIDENCE</text>
+
+    <!-- 5 · Writer → Reviewer : DRAFT ───────────────────── -->
+    <line x1="820" y1="152" x2="860" y2="152"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <rect x="822" y="130" width="36" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="840" y="140" text-anchor="middle" class="arr-label">DRAFT</text>
+
+    <!-- 6 · Reviewer → Writer : REJECT ×3  (feedback loop) -->
+    <path d="M 920,108 C 920,44 760,44 760,108" fill="none"
+          stroke="#eb6c36" stroke-width="1.5" stroke-dasharray="8 4"
+          marker-end="url(#arr-a)"/>
+    <rect x="810" y="42" width="60" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="840" y="52" text-anchor="middle" class="arr-label-a">REJECT ×3</text>
+
+    <!-- 7 · Reviewer → Final Article : ACCEPT  (primary flow, accent) -->
+    <line x1="980" y1="152" x2="1020" y2="152"
+          stroke="#eb6c36" stroke-width="2" marker-end="url(#arr-a)"/>
+    <rect x="976" y="130" width="44" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="998" y="140" text-anchor="middle" class="arr-label-a">ACCEPT</text>
+
+    <!-- 8 · Writer → Knowledge Graph : ENTITIES  (side-channel down) -->
+    <line x1="760" y1="196" x2="760" y2="268"
+          stroke="#4f5d75" stroke-width="1.5" stroke-dasharray="6 4"
+          marker-end="url(#arr-m)"/>
+    <rect x="768" y="222" width="52" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="794" y="232" text-anchor="middle" class="arr-label">ENTITIES</text>
+
+    <!-- 9 · Knowledge Graph → Editor : HINTS  (side-channel up) -->
+    <path d="M 696,296 C 560,280 480,248 440,196" fill="none"
+          stroke="#4f5d75" stroke-width="1.5" stroke-dasharray="6 4"
+          marker-end="url(#arr-m)"/>
+    <rect x="524" y="250" width="36" height="14" rx="3" fill="#f5f5f5"/>
+    <text x="542" y="260" text-anchor="middle" class="arr-label">HINTS</text>
+  </g>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       NODES
+       ════════════════════════════════════════════════════════════════ -->
+  <g id="nodes">
+
+    <!-- 1 · User  [INPUT]  muted fill ───────────────────── -->
+    <g>
+      <rect x="60" y="108" width="120" height="88" rx="8"
+            fill="#4f5d75" fill-opacity=".08" stroke="#4f5d75" stroke-width="1.5"/>
+      <rect x="68" y="116" width="40" height="14" rx="3" fill="#4f5d75"/>
+      <text x="88" y="126" text-anchor="middle" class="tag" fill="#fff">INPUT</text>
+      <text x="120" y="157" text-anchor="middle" class="node-title" fill="#2d3142">User</text>
+      <text x="120" y="173" text-anchor="middle" class="node-sub">HTTP Client</text>
+    </g>
+
+    <!-- 2 · Scout Agent  [AGENT] ────────────────────────── -->
+    <g>
+      <rect x="220" y="108" width="120" height="88" rx="8"
+            fill="#fff" stroke="#2d3142" stroke-width="1.5"/>
+      <rect x="228" y="116" width="44" height="14" rx="3" fill="#2d3142"/>
+      <text x="250" y="126" text-anchor="middle" class="tag" fill="#fff">AGENT</text>
+      <text x="280" y="153" text-anchor="middle" class="node-title" fill="#2d3142">Scout</text>
+      <text x="280" y="169" text-anchor="middle" class="node-sub">MiniMax M2.7</text>
+      <text x="280" y="183" text-anchor="middle" class="node-det">Semantic Scholar</text>
+    </g>
+
+    <!-- 3 · Editor Agent  [AGENT] ───────────────────────── -->
+    <g>
+      <rect x="380" y="108" width="120" height="88" rx="8"
+            fill="#fff" stroke="#2d3142" stroke-width="1.5"/>
+      <rect x="388" y="116" width="44" height="14" rx="3" fill="#2d3142"/>
+      <text x="410" y="126" text-anchor="middle" class="tag" fill="#fff">AGENT</text>
+      <text x="440" y="153" text-anchor="middle" class="node-title" fill="#2d3142">Editor</text>
+      <text x="440" y="169" text-anchor="middle" class="node-sub">DeepSeek V4 Flash</text>
+      <text x="440" y="183" text-anchor="middle" class="node-det">2 proposals · 20 DOIs</text>
+    </g>
+
+    <!-- 4 · Reader Agent  [AGENT] ────────────────────────── -->
+    <g>
+      <rect x="540" y="108" width="120" height="88" rx="8"
+            fill="#fff" stroke="#2d3142" stroke-width="1.5"/>
+      <rect x="548" y="116" width="44" height="14" rx="3" fill="#2d3142"/>
+      <text x="570" y="126" text-anchor="middle" class="tag" fill="#fff">AGENT</text>
+      <text x="600" y="153" text-anchor="middle" class="node-title" fill="#2d3142">Reader</text>
+      <text x="600" y="169" text-anchor="middle" class="node-sub">DeepSeek V4 Flash</text>
+      <text x="600" y="183" text-anchor="middle" class="node-det">PDF · Evidence blocks</text>
+    </g>
+
+    <!-- 5 · Writer Agent  [AGENT]  ★ FOCAL ──────────────── -->
+    <g>
+      <rect x="700" y="108" width="120" height="88" rx="8"
+            fill="#eb6c36" fill-opacity=".08" stroke="#eb6c36" stroke-width="2"/>
+      <rect x="708" y="116" width="44" height="14" rx="3" fill="#eb6c36"/>
+      <text x="730" y="126" text-anchor="middle" class="tag" fill="#fff">AGENT</text>
+      <text x="760" y="153" text-anchor="middle" class="node-title" fill="#eb6c36">Writer</text>
+      <text x="760" y="169" text-anchor="middle" class="node-sub">DeepSeek V4 Pro</text>
+      <text x="760" y="183" text-anchor="middle" class="node-det">384K · multi-pass</text>
+    </g>
+
+    <!-- 6 · Reviewer Agent  [AGENT] ──────────────────────── -->
+    <g>
+      <rect x="860" y="108" width="120" height="88" rx="8"
+            fill="#fff" stroke="#2d3142" stroke-width="1.5"/>
+      <rect x="868" y="116" width="44" height="14" rx="3" fill="#2d3142"/>
+      <text x="890" y="126" text-anchor="middle" class="tag" fill="#fff">AGENT</text>
+      <text x="920" y="153" text-anchor="middle" class="node-title" fill="#2d3142">Reviewer</text>
+      <text x="920" y="169" text-anchor="middle" class="node-sub">Gemini 3.1 Pro</text>
+      <text x="920" y="183" text-anchor="middle" class="node-det">ACCEPT / REJECT</text>
+    </g>
+
+    <!-- 7 · Final Article  [OUTPUT]  ★ FOCAL ────────────── -->
+    <g>
+      <rect x="1020" y="108" width="120" height="88" rx="8"
+            fill="#eb6c36" fill-opacity=".08" stroke="#eb6c36" stroke-width="2"/>
+      <rect x="1028" y="116" width="52" height="14" rx="3" fill="#eb6c36"/>
+      <text x="1054" y="126" text-anchor="middle" class="tag" fill="#fff">OUTPUT</text>
+      <text x="1080" y="150" text-anchor="middle" class="node-title" fill="#eb6c36">Final Article</text>
+      <text x="1080" y="166" text-anchor="middle" class="node-sub">10K+ words</text>
+      <text x="1080" y="180" text-anchor="middle" class="node-det">80+ citations · 12+ tables</text>
+    </g>
+
+    <!-- 8 · Knowledge Graph  [STORE] ─────────────────────── -->
+    <g>
+      <rect x="696" y="268" width="128" height="64" rx="8"
+            fill="#2d3142" fill-opacity=".05" stroke="#4f5d75" stroke-width="1.5"/>
+      <rect x="704" y="276" width="40" height="14" rx="3" fill="#4f5d75"/>
+      <text x="724" y="286" text-anchor="middle" class="tag" fill="#fff">STORE</text>
+      <text x="760" y="310" text-anchor="middle" class="node-title" fill="#2d3142">Knowledge Graph</text>
+    </g>
+  </g>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       LEGEND
+       ════════════════════════════════════════════════════════════════ -->
+  <line x1="60" y1="396" x2="1140" y2="396"
+        stroke="#2d3142" stroke-width=".5" stroke-opacity=".15"/>
+
+  <g transform="translate(60,420)">
+    <!-- Focal element -->
+    <rect x="0" y="0" width="20" height="12" rx="3"
+          fill="#eb6c36" fill-opacity=".08" stroke="#eb6c36" stroke-width="1.5"/>
+    <text x="28" y="10" class="legend-txt">Focal element</text>
+
+    <!-- Solid arrow = data flow -->
+    <line x1="148" y1="6" x2="176" y2="6"
+          stroke="#4f5d75" stroke-width="1.5" marker-end="url(#arr-m)"/>
+    <text x="184" y="10" class="legend-txt">Data flow</text>
+
+    <!-- Dashed accent = feedback loop -->
+    <line x1="280" y1="6" x2="308" y2="6"
+          stroke="#eb6c36" stroke-width="1.5" stroke-dasharray="6 3"
+          marker-end="url(#arr-a)"/>
+    <text x="316" y="10" class="legend-txt">Feedback loop</text>
+
+    <!-- Dashed muted = side channel -->
+    <line x1="440" y1="6" x2="468" y2="6"
+          stroke="#4f5d75" stroke-width="1.5" stroke-dasharray="6 3"
+          marker-end="url(#arr-m)"/>
+    <text x="476" y="10" class="legend-txt">Side channel</text>
+
+    <!-- SELECT badge -->
+    <rect x="588" y="0" width="34" height="12" rx="3" fill="#2e5aa8"/>
+    <text x="605" y="9" text-anchor="middle"
+          style="font-family:'Geist Mono',monospace;font-size:6px;fill:#fff;letter-spacing:.4px;">SELECT</text>
+    <text x="630" y="10" class="legend-txt">User action</text>
+  </g>
+
+  <!-- Footer -->
+  <text x="600" y="468" text-anchor="middle" class="footer-txt">
+    Multi-agent research pipeline  ·  Semantic Scholar API  ·  LLM orchestration  ·  Docker deployment
+  </text>
+</svg>
+</div>
+</body>
+</html>

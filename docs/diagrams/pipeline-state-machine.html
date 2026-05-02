@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline State Machine — GEO-Digest</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #f5f5f5; font-family: 'Geist', sans-serif; padding: 2rem; }
+  .page { max-width: 960px; margin: 0 auto; }
+  .eyebrow { font-family: 'Geist Mono', monospace; font-size: 8px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: #4f5d75; margin-bottom: 4px; }
+  h1 { font-family: 'Instrument Serif', serif; font-size: 1.75rem; font-weight: 400; color: #2d3142; margin-bottom: 0.25rem; }
+  .subtitle { font-family: 'Geist', sans-serif; font-size: 13px; color: #4f5d75; margin-bottom: 1.5rem; }
+  svg { display: block; width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">State Machine · GEO-Digest</p>
+  <h1>PipelineJob Lifecycle</h1>
+  <p class="subtitle">Eight states, thirteen transitions — from topic to published article</p>
+
+<svg viewBox="0 0 920 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+    </marker>
+    <marker id="arrow-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#7a8399"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+  <!-- ═══ ARROWS (drawn first for z-order) ═══ -->
+
+  <!-- Start dot → created -->
+  <line x1="48" y1="120" x2="76" y2="120" stroke="#2d3142" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- created → scouting -->
+  <line x1="208" y1="120" x2="260" y2="120" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="212" y="104" width="40" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="232" y="114" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">/RUN</text>
+
+  <!-- scouting → editing -->
+  <line x1="392" y1="120" x2="444" y2="120" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="394" y="104" width="44" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="416" y="114" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FOUND</text>
+
+  <!-- scouting → failed (down) -->
+  <line x1="328" y1="152" x2="328" y2="420" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow-muted)"/>
+  <rect x="332" y="260" width="56" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="360" y="270" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">0 ARTICLES</text>
+
+  <!-- editing → selecting -->
+  <line x1="576" y1="120" x2="628" y2="120" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="578" y="104" width="44" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="600" y="114" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READY</text>
+
+  <!-- editing → failed (down-right curve) -->
+  <path d="M 540 152 Q 540 420 608 420" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" fill="none" marker-end="url(#arrow-muted)"/>
+  <rect x="544" y="280" width="32" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="560" y="290" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ERROR</text>
+
+  <!-- selecting → developing (down curve) -->
+  <path d="M 760 152 L 760 260 Q 760 280 740 280 L 208 280" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="748" y="192" width="44" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="770" y="202" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">/SELECT</text>
+
+  <!-- developing → reviewing -->
+  <line x1="208" y1="280" x2="412" y2="280" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="280" y="264" width="44" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="302" y="274" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DRAFT</text>
+
+  <!-- reviewing → done -->
+  <line x1="576" y1="280" x2="628" y2="280" stroke="#eb6c36" stroke-width="1" marker-end="url(#arrow-accent)"/>
+  <rect x="584" y="264" width="44" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="604" y="274" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em" font-weight="600">ACCEPT</text>
+
+  <!-- reviewing → developing (feedback loop — curves above) -->
+  <path d="M 476 248 Q 476 196 400 196 Q 280 196 140 248" stroke="#eb6c36" stroke-width="1" stroke-dasharray="5,4" fill="none" marker-end="url(#arrow-accent)"/>
+  <rect x="340" y="186" width="80" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="380" y="196" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">REVISION ×3</text>
+
+  <!-- developing self-loop: Pass 2b -->
+  <path d="M 104 248 Q 104 208 140 208 Q 176 208 176 248" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" fill="none" marker-end="url(#arrow-muted)"/>
+  <rect x="108" y="204" width="56" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="136" y="214" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EXPAND</text>
+
+  <!-- done → end dot -->
+  <line x1="760" y1="280" x2="800" y2="280" stroke="#2d3142" stroke-width="1"/>
+
+  <!-- failed → end dot -->
+  <line x1="740" y1="420" x2="800" y2="420" stroke="#2d3142" stroke-width="1"/>
+
+  <!-- ═══ NODES ═══ -->
+
+  <!-- Start dot -->
+  <circle cx="36" cy="120" r="6" fill="#2d3142"/>
+
+  <!-- created -->
+  <rect x="76" y="88" width="132" height="64" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <text x="142" y="116" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">created</text>
+  <text x="142" y="134" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">initial</text>
+
+  <!-- scouting -->
+  <rect x="260" y="88" width="132" height="64" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <text x="326" y="116" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">scouting</text>
+  <text x="326" y="134" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">MiniMax M2.7</text>
+
+  <!-- editing -->
+  <rect x="444" y="88" width="132" height="64" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <text x="510" y="116" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">editing</text>
+  <text x="510" y="134" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">DS V4 Flash</text>
+
+  <!-- selecting -->
+  <rect x="628" y="88" width="132" height="64" rx="8" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+  <text x="694" y="116" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">selecting</text>
+  <text x="694" y="134" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">user choice</text>
+
+  <!-- developing (focal area) -->
+  <rect x="76" y="248" width="132" height="64" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <text x="142" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">developing</text>
+  <text x="142" y="294" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Reader+Writer</text>
+
+  <!-- reviewing -->
+  <rect x="444" y="248" width="132" height="64" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <text x="510" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">reviewing</text>
+  <text x="510" y="294" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Gemini 3.1 Pro</text>
+
+  <!-- done (focal — accent) -->
+  <rect x="628" y="248" width="132" height="64" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+  <text x="694" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">done</text>
+  <text x="694" y="294" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">10K+ words</text>
+  <!-- End dot after done -->
+  <circle cx="816" cy="280" r="8" fill="none" stroke="#2d3142" stroke-width="1"/>
+  <circle cx="816" cy="280" r="5" fill="#2d3142"/>
+
+  <!-- failed -->
+  <rect x="608" y="388" width="132" height="64" rx="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+  <text x="674" y="416" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">failed</text>
+  <text x="674" y="434" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">error logged</text>
+  <!-- End dot after failed -->
+  <circle cx="816" cy="420" r="8" fill="none" stroke="#2d3142" stroke-width="1"/>
+  <circle cx="816" cy="420" r="5" fill="#2d3142"/>
+
+  <!-- ═══ LEGEND ═══ -->
+  <line x1="40" y1="488" x2="880" y2="488" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+  <text x="40" y="512" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+  <!-- Accent outline = final state -->
+  <rect x="120" y="500" width="32" height="16" rx="4" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+  <text x="160" y="512" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif">Final state</text>
+
+  <!-- Solid arrow = forward -->
+  <line x1="236" y1="508" x2="272" y2="508" stroke="#4f5d75" stroke-width="1" marker-end="url(#arrow)"/>
+  <text x="284" y="512" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif">Forward transition</text>
+
+  <!-- Dashed accent = feedback -->
+  <line x1="416" y1="508" x2="452" y2="508" stroke="#eb6c36" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow-accent)"/>
+  <text x="464" y="512" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif">Feedback / revision loop</text>
+
+  <!-- Dashed muted = error -->
+  <line x1="624" y1="508" x2="660" y2="508" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow-muted)"/>
+  <text x="672" y="512" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif">Error path</text>
+
+  <!-- Input state -->
+  <rect x="776" y="500" width="32" height="16" rx="4" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+  <text x="816" y="512" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif">User input</text>
+</svg>
+</div>
+</body>
+</html>
