@@ -21,6 +21,7 @@ from engine.prompts.writer_prompts import (
     build_outline_system_prompt, build_outline_user_prompt,
     build_expand_system_prompt, build_expand_user_prompt,
     build_target_word_count, build_length_instruction, build_max_tokens,
+    get_section_target, build_expand_short_section_prompt,
 )
 
 
@@ -116,6 +117,9 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             ev_blocks = getattr(draft, 'evidence_blocks', [])
             expanded = self._pass_expand_sections(outline, full_context, group_type, language, format_,
                                                    evidence_blocks=ev_blocks)
+
+            # ─── PASS 2b: EXPAND SHORT SECTIONS ──────────────
+            expanded = self._pass_expand_short_sections(expanded, ev_blocks)
 
             # ─── SKIP PASS 3 (POLISH) for section-by-section ───
             # Section-by-section уже производит качественный текст.
@@ -295,6 +299,103 @@ class WriterAgent(BaseAgent, LLMCallMixin):
             "sections": expanded_sections,
         }, ensure_ascii=False, indent=2)
 
+    # ─────────────────────────────────────────────────────────
+    #  PASS 2b: EXPAND SHORT SECTIONS
+    # ─────────────────────────────────────────────────────────
+
+    def _pass_expand_short_sections(self, expanded_json: str, evidence_blocks: list | None = None) -> str:
+        """Re-expand sections that fell short of their target word count.
+
+        Checks each section's content word count against the minimum target
+        from ``get_section_target()``.  Short sections are sent back to the
+        LLM with a prompt that asks to *extend* (not rewrite) the existing
+        text.  At most 4 sections are expanded per run to limit cost.
+
+        Returns:
+            Updated *expanded_json* string with replaced section contents.
+        """
+        import json
+
+        try:
+            data = json.loads(expanded_json) if isinstance(expanded_json, str) else expanded_json
+        except (json.JSONDecodeError, TypeError):
+            self._log("Pass 2b: не удалось распарсить expanded_json — пропуск")
+            return expanded_json
+
+        sections = data.get("sections", [])
+        if not sections:
+            return expanded_json
+
+        ev_blocks = evidence_blocks or []
+        expansions_done = 0
+        MAX_EXPANSIONS = 4
+
+        for sec in sections:
+            if expansions_done >= MAX_EXPANSIONS:
+                break
+
+            heading = sec.get("heading", "")
+            content = sec.get("content", "")
+            if not content:
+                continue
+
+            current_words = len(content.split())
+            target_info = get_section_target(heading)
+            target_words = target_info["words"][0]  # minimum target
+            target_tokens = target_info["tokens"]
+
+            if current_words >= target_words:
+                continue
+
+            # Section is too short — expand
+            self._log(f"Pass 2b: Расширение '{heading}' {current_words}→{target_words} слов")
+
+            # Build evidence context for this section
+            evidence_ctx = ""
+            if ev_blocks:
+                section_evidence = self._gather_section_evidence(heading, ev_blocks)
+                if section_evidence:
+                    evidence_ctx = section_evidence
+
+            prompts = build_expand_short_section_prompt(
+                heading=heading,
+                current_text=content,
+                target_words=target_words,
+                evidence_context=evidence_ctx,
+            )
+            system = prompts["system"]
+            user = prompts["user"]
+
+            try:
+                result = self.call_llm(
+                    prompt=user,
+                    system=system,
+                    max_tokens=target_tokens,
+                    parse_json=True,
+                    temperature=0.3,
+                )
+            except (TimeoutError, Exception) as e:
+                self._log(f"Pass 2b: ⚠ Ошибка расширения '{heading}': {e}")
+                continue
+
+            # Extract expanded content from LLM response
+            if isinstance(result, dict):
+                new_content = result.get("content", "")
+            else:
+                new_content = str(result)
+
+            if new_content and len(new_content.split()) > current_words:
+                sec["content"] = new_content
+                expansions_done += 1
+                self._log(f"Pass 2b: ✓ '{heading}' расширено до {len(new_content.split())} слов")
+            else:
+                self._log(f"Pass 2b: ⚠ Расширение '{heading}' не дало улучшения — пропуск")
+
+        if expansions_done:
+            self._log(f"Pass 2b: расширено {expansions_done}/{MAX_EXPANSIONS} секций")
+
+        return json.dumps(data, ensure_ascii=False, indent=2)
+
     def _parse_outline_sections(self, outline: str) -> dict:
         """Parse outline JSON into section list."""
         import json
@@ -400,12 +501,12 @@ class WriterAgent(BaseAgent, LLMCallMixin):
         from engine.agents.tools import AgentTools
         tools = AgentTools(self.storage)
         
-        dois = getattr(draft, 'source_articles', []) or getattr(draft, 'key_references', []) or []
+        _raw_dois = getattr(draft, 'source_articles', []) or getattr(draft, 'key_references', []) or []
+        dois = list(dict.fromkeys(d.strip().strip('`').strip('*"') for d in _raw_dois if d))
         refs = []
         
         for doi in dois[:25]:
-            doi_clean = doi.strip().strip('`').strip('*"')
-            art = tools.search_by_doi(doi_clean)
+            art = tools.search_by_doi(doi)
             if art:
                 # Build bibliographic entry
                 authors = getattr(art, 'authors', '') or ''
@@ -428,13 +529,13 @@ class WriterAgent(BaseAgent, LLMCallMixin):
                     entry += f", {volume}"
                 if pages:
                     entry += f", {pages}"
-                entry += f" DOI: {doi_clean}"
+                entry += f" DOI: {doi}"
                 
                 if entry.strip():
                     refs.append(entry.strip())
             else:
                 # Fallback: just DOI
-                refs.append(f"DOI: {doi_clean}")
+                refs.append(f"DOI: {doi}")
         
         return refs
 

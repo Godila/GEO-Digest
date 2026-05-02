@@ -310,7 +310,7 @@ REVIEW_CRITERIA = {
             ("section_order_correct", "Порядок секций соответствует IMRaD"),
             ("abstract_compliant", "Аннотация 250-300 слов со структурой: актуальность→цель→методы→результаты→выводы"),
             ("keywords_adequate", "5-8 ключевых слов"),
-            ("volume_adequate", "Объём статьи соответствует типу (3000-5500 слов для original research)"),
+            ("volume_adequate", "Объём статьи адекватен типу (5000-12000+ слов для review, 3000-5500 для original research)"),
         ],
     },
     "content_quality": {
@@ -328,7 +328,7 @@ REVIEW_CRITERIA = {
         "weight": 0.25,
         "checks": [
             ("fact_check_pass", "Утверждения соответствуют источникам"),
-            ("citations_adequate", "Минимум 25-30 ссылок, плотность 8-10/1000 слов"),
+            ("citations_adequate", "Минимум 10-20 ссылок для review-type, плотность 5-8/1000 слов"),
             ("citation_style_correct", "Стиль цитирования: [Автор и др., год]"),
             ("no_plagiarism_indicators", "Нет парафразы без ссылки"),
             ("limitations_stated", "Ограничения исследования указаны"),
@@ -362,13 +362,13 @@ REVIEW_CRITERIA = {
 
 REVISION_CONFIG = {
     "max_rounds": 3,
-    "auto_accept_threshold": 0.80,
-    "minor_accept_threshold": 0.65,
+    "auto_accept_threshold": 0.70,
+    "minor_accept_threshold": 0.50,
     "force_accept_after_max_rounds": True,
     "critical_blocking": True,
-    "round_1_strictness": 4,
-    "round_2_strictness": 3,
-    "round_3_strictness": 2,
+    "round_1_strictness": 3,
+    "round_2_strictness": 2,
+    "round_3_strictness": 1,
 }
 
 
