@@ -102,14 +102,6 @@ class _EditorAPITestBase(unittest.TestCase):
 
         self.mock_editor.run.side_effect = _mock_run
 
-        mock_resume_result = _build_mock_result(job_id="resume_test")
-        def _mock_resume(job_id):
-            # Write checkpoint for resume too
-            self._write_checkpoint(mock_resume_result, job_id=job_id)
-            return mock_resume_result
-
-        self.mock_editor.resume.side_effect = _mock_resume
-
         self._get_editor_patch = patch("worker.server._get_editor", return_value=self.mock_editor)
         self._get_editor_patch.start()
 
@@ -126,11 +118,11 @@ class _EditorAPITestBase(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _create_job(self, topic="test"):
-        """Helper: create a job via analyze endpoint."""
-        resp = self.client.post("/api/editor/analyze", json={"topic": topic})
-        if resp.status_code == 200:
-            return resp.json()["job_id"]
-        raise RuntimeError(f"analyze failed: {resp.status_code} {resp.text}")
+        """Helper: create a job by writing a checkpoint file directly."""
+        import uuid
+        job_id = f"test_{uuid.uuid4().hex[:8]}"
+        self._write_checkpoint(self.mock_result, job_id=job_id)
+        return job_id
 
     def _write_checkpoint(self, result, job_id=None):
         """Write a checkpoint JSON file to disk (mimics EditorAgent._save_checkpoint)."""
@@ -155,47 +147,6 @@ class _EditorAPITestBase(unittest.TestCase):
 
 
 # ── Test: Analyze Endpoint ────────────────────────────────────────
-
-class TestEditorAnalyzeEndpoint(_EditorAPITestBase):
-
-    def test_analyze_success(self):
-        resp = self.client.post("/api/editor/analyze", json={
-            "topic": "Arctic methane",
-            "max_proposals": 3,
-        })
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn("job_id", data)
-        self.assertEqual(data["status"], "done")
-        self.assertGreaterEqual(data["proposals_count"], 1)
-
-    def test_analyze_requires_topic_or_domain(self):
-        resp = self.client.post("/api/editor/analyze", json={})
-        self.assertEqual(resp.status_code, 400)
-
-    def test_analyze_with_domain(self):
-        resp = self.client.post("/api/editor/analyze", json={
-            "domain": "climate change",
-            "max_proposals": 2,
-        })
-        self.assertEqual(resp.status_code, 200)
-
-    def test_analyze_with_instruction(self):
-        resp = self.client.post("/api/editor/analyze", json={
-            "topic": "methane",
-            "user_instruction": "Focus on 2024-2025 studies only",
-        })
-        self.assertEqual(resp.status_code, 200)
-
-    def test_analyze_returns_duration(self):
-        resp = self.client.post("/api/editor/analyze", json={"topic": "test"})
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("duration_sec", resp.json())
-
-    def test_analyze_calls_editor_run(self):
-        self.client.post("/api/editor/analyze", json={"topic": "test"})
-        self.mock_editor.run.assert_called_once()
-
 
 # ── Test: Jobs List Endpoint ──────────────────────────────────────
 
@@ -240,52 +191,6 @@ class TestEditorGetJobEndpoint(_EditorAPITestBase):
         self.assertEqual(resp.status_code, 404)
 
 
-# ── Test: Resume Endpoint ─────────────────────────────────────────
-
-class TestEditorResumeEndpoint(_EditorAPITestBase):
-
-    def test_resume_existing_job(self):
-        job_id = self._create_job()
-
-        r2 = self.client.post(f"/api/editor/jobs/{job_id}/resume")
-        self.assertEqual(r2.status_code, 200)
-        data = r2.json()
-        # Resume should return data for the same job
-        self.assertIn("job_id", data)
-
-    def test_resume_nonexistent_404(self):
-        self.mock_editor.resume.side_effect = ValueError("not found")
-        resp = self.client.post("/api/editor/jobs/fake/resume")
-        self.assertEqual(resp.status_code, 404)
-
-
-# ── Test: Select Proposal Endpoint ────────────────────────────────
-
-class TestEditorSelectProposalEndpoint(_EditorAPITestBase):
-
-    def test_select_proposal(self):
-        job_id = self._create_job()
-
-        r2 = self.client.get(f"/api/editor/jobs/{job_id}")
-        props = r2.json().get("proposals", [])
-        self.assertGreater(len(props), 0)
-        prop_id = props[0]["id"]
-
-        r3 = self.client.post(f"/api/editor/jobs/{job_id}/select/{prop_id}")
-        self.assertEqual(r3.status_code, 200)
-        self.assertEqual(r3.json()["status"], "selected")
-
-        # Verify persisted
-        r4 = self.client.get(f"/api/editor/jobs/{job_id}")
-        self.assertEqual(r4.json().get("selected_proposal_id"), prop_id)
-
-    def test_select_nonexistent_proposal(self):
-        job_id = self._create_job()
-
-        resp = self.client.post(f"/api/editor/jobs/{job_id}/select/fake_proposal_id")
-        self.assertEqual(resp.status_code, 404)
-
-
 # ── Test: Delete Endpoint ─────────────────────────────────────────
 
 class TestEditorDeleteEndpoint(_EditorAPITestBase):
@@ -304,27 +209,6 @@ class TestEditorDeleteEndpoint(_EditorAPITestBase):
     def test_delete_nonexistent(self):
         resp = self.client.delete("/api/editor/jobs/nonexistent_12345")
         self.assertEqual(resp.status_code, 200)  # idempotent
-
-
-# ── Test: Logs SSE Endpoint ───────────────────────────────────────
-
-class TestEditorLogsSSEEndpoint(_EditorAPITestBase):
-
-    def test_logs_stream(self):
-        job_id = self._create_job()
-
-        resp = self.client.get(f"/api/editor/jobs/{job_id}/logs")
-        self.assertEqual(resp.status_code, 200)
-        content_type = resp.headers.get("content-type", "")
-        self.assertIn("event-stream", content_type)
-
-        data = resp.text
-        self.assertIn("data:", data)
-        self.assertIn("[DONE]", data)
-
-    def test_logs_404_nonexistent(self):
-        resp = self.client.get("/api/editor/jobs/fake/logs")
-        self.assertEqual(resp.status_code, 404)
 
 
 if __name__ == "__main__":

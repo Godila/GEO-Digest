@@ -464,83 +464,9 @@ async def api_graph_status():
     return _worker_get("/api/graph/status")
 
 
-# ── Engine Proxy Routes ──────────────────────────────────────────
-
-@app.post("/api/engine/scout")
-async def api_engine_scout(request: Request):
-    """Scout for new sources → proxy to worker."""
-    body = None
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    return _worker_post("/api/engine/scout", json_body=body)
-
-
-@app.get("/api/engine/jobs")
-async def api_engine_jobs():
-    """List engine jobs → proxy to worker."""
-    return _worker_get("/api/engine/jobs")
-
-
-@app.get("/api/engine/jobs/{job_id}")
-async def api_engine_job_detail(job_id: str):
-    """Engine job detail → proxy to worker."""
-    return _worker_get(f"/api/engine/jobs/{job_id}")
-
-
-@app.get("/api/engine/status")
-async def api_engine_status():
-    """Poll engine status -> proxy to worker."""
-    return _worker_get("/api/engine/status")
-
-
-@app.delete("/api/engine/jobs/{job_id}")
-async def api_engine_cancel_job(job_id: str):
-    """Cancel engine job -> proxy to worker."""
-    return _worker_request("DELETE", f"/api/engine/jobs/{job_id}")
-
-
-@app.get("/api/engine/jobs/{job_id}/logs")
-async def api_engine_job_logs(job_id: str):
-    """SSE stream of job logs -> proxy to worker."""
-    return _worker_request("GET", f"/api/engine/jobs/{job_id}/logs", timeout=120)
-
-
-# ── Orchestrator Proxy Routes (full pipeline) ──────────────────
-
-@app.post("/api/orchestrator/job")
-async def api_orch_create_job(request: Request):
-    """Create + start pipeline job -> proxy to worker."""
-    body = await request.json()
-    return _worker_post("/api/orchestrator/job", json_body=body, timeout=30)
-
-@app.get("/api/orchestrator/jobs")
-async def api_orch_list_jobs():
-    """List orchestrator jobs -> proxy to worker."""
-    return _worker_get("/api/orchestrator/jobs")
-
-@app.get("/api/orchestrator/jobs/{job_id}")
-async def api_orch_get_job(job_id: str):
-    """Get orchestrator job state -> proxy to worker."""
-    return _worker_get(f"/api/orchestrator/jobs/{job_id}")
-
-@app.delete("/api/orchestrator/jobs/{job_id}")
-async def api_orch_cancel_job(job_id: str):
-    """Cancel pipeline job -> proxy to worker."""
-    return _worker_request("DELETE", f"/api/orchestrator/jobs/{job_id}")
-
-
 # ══════════════════════════════════════════════════════════════════
-#  EDITOR AGENT PROXY (Tool-Use Architecture)
+#  EDITOR AGENT PROXY (minimal — list/get/delete only)
 # ══════════════════════════════════════════════════════════════════
-
-@app.post("/api/editor/analyze")
-async def api_editor_analyze(request: Request):
-    """Запуск Editor Agent -> proxy to worker."""
-    body = await request.json()
-    return _worker_post("/api/editor/analyze", json_body=body, timeout=320)
-
 
 @app.get("/api/editor/jobs")
 async def api_editor_list_jobs():
@@ -554,40 +480,10 @@ async def api_editor_get_job(job_id: str):
     return _worker_get(f"/api/editor/jobs/{job_id}")
 
 
-@app.post("/api/editor/jobs/{job_id}/resume")
-async def api_editor_resume_job(job_id: str):
-    """Возобновить editor job -> proxy to worker."""
-    return _worker_post(f"/api/editor/jobs/{job_id}/resume", timeout=60)
-
-
-@app.post("/api/editor/jobs/{job_id}/select/{prop_id}")
-async def api_editor_select_proposal(job_id: str, prop_id: str):
-    """Выбрать proposal -> proxy to worker."""
-    return _worker_post(f"/api/editor/jobs/{job_id}/select/{prop_id}", timeout=15)
-
-
 @app.delete("/api/editor/jobs/{job_id}")
 async def api_editor_delete_job(job_id: str):
     """Удалить editor job -> proxy to worker."""
     return _worker_request("DELETE", f"/api/editor/jobs/{job_id}")
-
-
-@app.get("/api/editor/jobs/{job_id}/logs")
-async def api_editor_logs(job_id: str):
-    """SSE логи editor job -> proxy to worker (streaming)."""
-    import httpx
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"{WORKER_URL}/api/editor/jobs/{job_id}/logs",
-            headers={"Accept": "text/event-stream"},
-        )
-        from fastapi.responses import StreamingResponse, Response
-        return StreamingResponse(
-            iter([resp.content]),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
 
 
 # ══════════════════════════════════════════════════════════════════

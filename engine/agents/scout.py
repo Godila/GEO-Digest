@@ -260,31 +260,6 @@ class ScoutAgent(BaseAgent, LLMCallMixin):
                 unique.append(k)
         return unique[:6]
 
-    def _collect_candidates(
-        self, topic: str, max_articles: int, mode: str
-    ) -> list[Article]:
-        """Legacy method — collect without scoring. Used by old pipeline v1."""
-        tools = AgentTools(self.storage)
-        articles = []
-
-        if mode in ("storage", "mixed"):
-            stored = tools.search(topic, limit=max_articles)
-            articles.extend(stored)
-            self._log(f"From storage: {len(stored)}")
-
-        if mode in ("fresh", "mixed") and len(articles) < max_articles:
-            remaining = max_articles - len(articles)
-            self._log(f"Fresh search: need {remaining} more")
-            fresh = tools.search_fresh(
-                query=topic,
-                limit=remaining,
-                save_to_storage=True,
-            )
-            articles.extend(fresh)
-            self._log(f"Fresh results: {len(fresh)}")
-
-        return articles[:max_articles]
-
     def _classify_articles(
         self, topic: str, articles: list[Article]
     ) -> list[ArticleGroup]:

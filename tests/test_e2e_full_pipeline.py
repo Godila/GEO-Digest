@@ -129,87 +129,6 @@ def editor_client(data_dir):
 
 
 # ════════════════════════════════════════════════
-#  Сценарий 1: Полный цикл Editor → Proposals (API)
-# ════════════════════════════════════════════════
-
-class TestFullEditorPipeline:
-    """Сценарий 1: Анализ → proposals → выбор через API."""
-
-    def test_analyze_creates_job(self, editor_client):
-        """POST /api/editor/analyze создаёт job."""
-        r = editor_client.post("/api/editor/analyze", json={
-            "topic": "Arctic permafrost methane emissions",
-            "max_proposals": 3,
-        })
-        assert r.status_code == 200, f"Got {r.status_code}: {r.text}"
-        data = r.json()
-        assert "job_id" in data
-        assert data["status"] == "done"
-        assert data["proposals_count"] >= 1
-
-    def test_list_jobs_after_analyze(self, editor_client):
-        """GET /api/editor/jobs показывает созданный job."""
-        r = editor_client.post("/api/editor/analyze", json={
-            "topic": "Arctic permafrost methane emissions",
-        })
-        job_id = r.json()["job_id"]
-
-        r2 = editor_client.get("/api/editor/jobs")
-        assert r2.status_code == 200
-        jobs = r2.json().get("jobs", [])
-        assert len(jobs) >= 1
-        assert any(j["job_id"] == job_id for j in jobs)
-
-    def test_job_detail_has_proposals(self, editor_client):
-        """GET /api/editor/jobs/{id} возвращает proposals с правильной структурой."""
-        r = editor_client.post("/api/editor/analyze", json={
-            "topic": "Arctic permafrost methane emissions",
-        })
-        job_id = r.json()["job_id"]
-
-        r2 = editor_client.get(f"/api/editor/jobs/{job_id}")
-        assert r2.status_code == 200, f"Got {r2.status_code}: {r2.text}"
-        data = r2.json()
-
-        proposals = data.get("proposals", [])
-        assert len(proposals) >= 1
-
-        p = proposals[0]
-        assert "id" in p and p["id"]
-        assert "title" in p and len(p["title"]) > 5
-        assert "thesis" in p and len(p["thesis"]) > 20
-        assert "confidence" in p and 0 <= p["confidence"] <= 1
-        assert "key_references" in p
-
-    def test_select_proposal(self, editor_client):
-        """POST select выбирает proposal."""
-        r = editor_client.post("/api/editor/analyze", json={
-            "topic": "Arctic permafrost methane emissions",
-        })
-        job_id = r.json()["job_id"]
-
-        r2 = editor_client.get(f"/api/editor/jobs/{job_id}")
-        props = r2.json().get("proposals", [])
-        assert len(props) >= 1
-        prop_id = props[0]["id"]
-
-        r3 = editor_client.post(f"/api/editor/jobs/{job_id}/select/{prop_id}")
-        assert r3.status_code == 200
-        assert r3.json().get("status") == "selected"
-
-    def test_delete_job(self, editor_client):
-        """DELETE job удаляет его."""
-        r = editor_client.post("/api/editor/analyze", json={"topic": "delete me"})
-        job_id = r.json()["job_id"]
-
-        r2 = editor_client.delete(f"/api/editor/jobs/{job_id}")
-        assert r2.status_code == 200
-
-        r3 = editor_client.get(f"/api/editor/jobs/{job_id}")
-        assert r3.status_code == 404
-
-
-# ════════════════════════════════════════════════
 #  Сценарий 2: Orchestrator v2 State Machine
 # ════════════════════════════════════════════════
 
@@ -330,33 +249,10 @@ class TestOrchestratorV2E2E:
 class TestEdgeCases:
     """Сценарий 3: Граничные случаи."""
 
-    def test_empty_topic_rejected(self, editor_client):
-        """Пустая тема -> 400."""
-        r = editor_client.post("/api/editor/analyze", json={})
-        assert r.status_code == 400
-
     def test_get_nonexistent_job_404(self, editor_client):
         """Несуществующий job -> 404."""
         r = editor_client.get("/api/editor/jobs/nonexistent_xyz")
         assert r.status_code == 404
-
-    def test_select_nonexistent_proposal_404(self, editor_client):
-        """Несуществующий proposal -> 404."""
-        r = editor_client.post("/api/editor/analyze", json={"topic": "test"})
-        job_id = r.json()["job_id"]
-        r2 = editor_client.post(f"/api/editor/jobs/{job_id}/select/nonexistent_prop")
-        assert r2.status_code == 404
-
-    def test_resume_nonexistent_404(self, editor_client):
-        """Resume несуществующего job -> 404 или 500.
-
-        editor.resume() поднимает ValueError когда нет checkpoint -> 404.
-        Мок может возвращать 200 если не настроен — проверяем оба варианта.
-        """
-        r = editor_client.post("/api/editor/jobs/no_such_job/resume")
-        # Реальный EditorAgent.resume поднимает ValueError -> HTTPException(404)
-        # Если мок этого не делает, 200 тоже acceptable (мок ограничен)
-        assert r.status_code in (200, 404, 500)
 
     def test_cancel_from_any_state(self, data_dir):
         """Cancel работает из любого состояния."""
@@ -388,15 +284,6 @@ class TestEdgeCases:
 
 class TestPersistence:
     """Сценарий 4: Checkpoint persistence."""
-
-    def test_editor_checkpoint_created(self, editor_client):
-        """После analyze job доступен через API."""
-        r = editor_client.post("/api/editor/analyze", json={"topic": "persistence test"})
-        job_id = r.json()["job_id"]
-
-        r2 = editor_client.get(f"/api/editor/jobs/{job_id}")
-        assert r2.status_code == 200
-        assert r2.json()["job_id"] == job_id
 
     def test_orchestrator_persists_all_states(self, data_dir):
         """Каждое состояние сохраняется и восстанавливается."""

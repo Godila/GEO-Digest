@@ -2005,8 +2005,6 @@ async function api(path, method = 'GET', body = null, timeoutSec = 120) {
         opts.headers = {'Content-Type': 'application/json'};
         opts.body = JSON.stringify(body);
     }
-    // Editor analyze needs longer timeout (up to 5 min server-side)
-    if (path.includes('/editor/analyze')) timeoutSec = 360;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
     opts.signal = controller.signal;
@@ -3380,7 +3378,7 @@ switchTab = function(tabName, el) {
 /** Load orchestrator jobs list */
 async function loadOrchJobs() {
     try {
-        const data = await api('/orchestrator/jobs');
+        const data = await api('/pipeline/jobs');
         const jobs = data.jobs || [];
         const el = document.getElementById('orchJobsList');
 
@@ -3413,7 +3411,7 @@ async function loadOrchJobs() {
 /** Show orchestrator job detail */
 async function showOrchJobDetail(jobId) {
     try {
-        const job = await api(`/orchestrator/jobs/${jobId}`);
+        const job = await api(`/pipeline/jobs/${jobId}`);
         const s = (job.status || '').toLowerCase();
         const isRunning = s.includes('scouting') || s.includes('reading') || s.includes('writing') || s.includes('editing');
         const isDone = s.includes('complete');
@@ -3442,7 +3440,7 @@ async function showOrchJobDetail(jobId) {
         }
 
         if (isRunning) {
-            detailHtml += `<div style="margin-top:10px"><button class="btn-warn btn-sm" onclick="api('/orchestrator/jobs/${jobId}','DELETE').then(()=>{loadOrchJobs();loadAgentJobs()}).catch(e=>toast('Ошибка остановки: '+e.message,'error'))">⏹ Остановить</button></div>`;
+            detailHtml += `<div style="margin-top:10px"><button class="btn-warn btn-sm" onclick="api('/pipeline/jobs/${jobId}','DELETE').then(()=>{loadOrchJobs();loadAgentJobs()}).catch(e=>toast('Ошибка остановки: '+e.message,'error'))">⏹ Остановить</button></div>`;
         }
 
         detailHtml += '</div>';

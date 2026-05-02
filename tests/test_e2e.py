@@ -204,40 +204,6 @@ def test_storage():
 
 
 
-def test_orchestrator():
-    """Test orchestrator job lifecycle."""
-    separator("7. ORCHESTRATOR")
-
-    from engine.orchestrator import Orchestrator
-    from engine.schemas import JobStatus
-
-    orc = Orchestrator()
-
-    # Create job
-    job = orc.create_job(topic="E2E test topic")
-    assert job.status == JobStatus.CREATED
-    job_id = job.job_id
-    print(f"  [OK] Created: {job_id}")
-
-    # Load it back
-    loaded = orc.load_state(job_id)
-    assert loaded.job_id == job_id
-    assert loaded.input_topic == "E2E test topic"
-    print(f"  [OK] Loaded back")
-
-    # List jobs
-    jobs = orc.list_jobs()
-    assert len(jobs) >= 1
-    print(f"  [OK] Jobs list: {len(jobs)} jobs")
-
-    # Cancel
-    cancelled = orc.cancel_job(job_id)
-    assert cancelled.status == JobStatus.CANCELLED
-    print(f"  [OK] Cancelled")
-
-    return True
-
-
 def run_all():
     """Run all E2E tests."""
     print("=" * 60)
@@ -251,7 +217,6 @@ def run_all():
         ("Agents", test_agents),
         ("API", test_api),
         ("CLI", test_cli),
-        ("Orchestrator", test_orchestrator),
     ]
 
     passed = 0
